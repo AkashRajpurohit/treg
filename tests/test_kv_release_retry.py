@@ -123,7 +123,7 @@ async def test_renew_reply_lost_after_pexpire_retries_only_the_existing_owner(lo
             raise redis_errors.TimeoutError("reply lost after PEXPIRE")
         return result
 
-    assert await _store_with(lost_reply).renew_lease(key, "owner", 3000) == "renewed"
+    assert await _store_with(lost_reply).renew_lease(key, "owner", 3000) == "recovered"
     assert len(calls) == 2 and calls[0] == calls[1]
     assert await real._client.get(key) == "owner"
     assert await real.acquire_lease(key, "competitor", 3000) == "busy"
@@ -248,13 +248,15 @@ async def test_one_transient_failure_is_retried_with_same_owner(error_type, phas
         return 1
 
     result = await _invoke_retry(_store_with(command), phase, "private-key", "private-token")
-    assert result == {"renew": "renewed", "release": "released"}[phase]
+    assert result == {"renew": "recovered", "release": "released"}[phase]
     assert len(calls) == 2
     assert calls[0] == calls[1]
     row, = kv.drain_lease_errors()
     assert row["phase"] == phase and row["count"] == 1
     timings = {row["outcome"]: row for row in kv.drain_lease_timings()}
-    assert timings[result]["retry_count"] == 1
+    # The attempt gauge keeps its fixed outcome; recovery is the retried `renewed` attempt.
+    success = {"renew": "renewed", "release": "released"}[phase]
+    assert timings[success]["retry_count"] == 1
     assert timings["unavailable"]["count"] == 1
 
 

@@ -351,6 +351,8 @@ Confirmed validity exhausted before an attempt, by its validity timeout, or by t
 timeout reports `deadline_expired`, not KV unavailability. The admission summary counts it once
 per scope alongside `lease_lost`, without increasing `kv_errors`. Actual command failures still
 retain their diagnostic rows if the validity deadline also expires during failure cleanup.
+`lease_lost` is also split by its first cause (`late`, `not_owned`, `unavailable`), and a renewal
+confirmed by its retry reports `recovered` from the store and counts as `renew_recovered`.
 
 A lease whose SET lands as the acquisition deadline expires, whether its reply arrives late or
 never, ends in `wait_timeout`; its token was recorded before SET, so the fallback cleanup deletes

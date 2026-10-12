@@ -31,6 +31,9 @@ _BALANCE_OPS = frozenset({"reserve", "release"})
 _MODES = frozenset({"disabled", "redis", "fallback"})
 _REASONS = frozenset({"wait_timeout", "kv_unavailable", "kv_not_configured",
                       "lease_lost", "missing_identity", "gate_error"})
+# late: confirmed validity ran out; not_owned: the store found another or no owner;
+# unavailable: renewal could not reach the store.
+_LOSS_REASONS = ("late", "not_owned", "unavailable")
 _BOUNDS_MS = (10, 50, 100, 250, 1000, 5000)
 # Equal jitter keeps a nonzero delay while spreading competing processes' retries.
 _BUSY_RETRY_INITIAL_S = 0.006
@@ -58,8 +61,10 @@ class _Window:
     lease_lost: int = 0
     deadline_expired: int = 0
     kv_errors: int = 0
+    renew_recovered: int = 0
     buckets: list[int] = field(default_factory=lambda: [0] * (len(_BOUNDS_MS) + 1))
     fallbacks: dict[str, int] = field(default_factory=dict)
+    losses: dict[str, int] = field(default_factory=dict)
 
 
 _windows: dict[tuple[str, str], _Window] = {}
@@ -75,8 +80,10 @@ class _Observation:
         self.entered: float | None = None
         self.reason: str | None = None
         self.lease_lost = 0
+        self.loss_reason: str | None = None
         self.deadline_expired = 0
         self.kv_errors = 0
+        self.renew_recovered = 0
         try:
             self.started = _clock()
         except Exception:  # noqa: BLE001
@@ -132,6 +139,9 @@ class _Observation:
                 row.lease_lost += self.lease_lost
                 row.deadline_expired += self.deadline_expired
                 row.kv_errors += self.kv_errors
+                row.renew_recovered += self.renew_recovered
+                if self.lease_lost and self.loss_reason in _LOSS_REASONS:
+                    row.losses[self.loss_reason] = row.losses.get(self.loss_reason, 0) + 1
                 if self.reason in _REASONS:
                     row.fallbacks[self.reason] = row.fallbacks.get(self.reason, 0) + 1
         except Exception:  # noqa: BLE001
@@ -166,10 +176,15 @@ class _Gate:
         self.renewer: asyncio.Task | None = None
         self.lost = False
 
+    def _lose(self, reason: str) -> None:
+        self.lost = True
+        self.observation.lease_lost = 1
+        if self.observation.loss_reason is None:
+            self.observation.loss_reason = reason  # The first observed cause names the scope.
+
     def _ownership_lost(self) -> bool:
         if not self.lost and any(time.monotonic() >= end for end in self.valid_until.values()):
-            self.lost = True
-            self.observation.lease_lost = 1
+            self._lose("late")
             self.observation.deadline_expired = 1
         return self.lost
 
@@ -232,21 +247,26 @@ class _Gate:
                         if not validity_timeout.expired():
                             raise  # A store-raised timeout is still a KV failure.
                         result = "deadline_expired"
-                    if result != "renewed" or self._ownership_lost():
+                    renewed = result in ("renewed", "recovered")
+                    if not renewed or self._ownership_lost():
                         if result == "unavailable":
                             self.observation.kv_errors += 1
+                            self._lose("unavailable")
                         elif result == "deadline_expired":
                             self.observation.deadline_expired = 1
-                        self.lost = True
-                        self.observation.lease_lost = 1
+                            self._lose("late")
+                        elif result == "lost":
+                            self._lose("not_owned")
+                        else:
+                            self._lose("late")  # A renewal reply observed after validity.
                         return  # Do not cancel the transaction or reacquire a lost lease.
+                    self.observation.renew_recovered += result == "recovered"
                     self.valid_until[key] = started + self.ttl_ms / 1000
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - lost isolation, never a reason to interrupt accounting
             self.observation.kv_errors += 1
-            self.observation.lease_lost = 1
-            self.lost = True
+            self._lose("unavailable")
 
     async def release(self) -> None:
         if self.renewer is not None:
@@ -262,7 +282,9 @@ class _Gate:
                             self.observation.kv_errors += 1
                         elif result == "lost" and (key, token) in self.leases:
                             # A paused event loop can outlive the TTL before renewal runs.
-                            self.observation.lease_lost = 1
+                            end = self.valid_until.get(key)
+                            self._lose("late" if end is not None and time.monotonic() >= end
+                                       else "not_owned")
                     except Exception:  # noqa: BLE001 - TTL remains the last cleanup bound
                         self.observation.kv_errors += 1
         finally:
@@ -393,9 +415,12 @@ def snapshot() -> list[dict]:
             **{name: round(getattr(window, name), 3) for name in (
                 "completed", "failed", "cancelled", "wait_total_ms", "wait_max_ms",
                 "execution_total_ms", "execution_max_ms", "total_total_ms", "total_max_ms",
-                "waiting_peak", "active_peak", "lease_lost", "deadline_expired", "kv_errors")},
+                "waiting_peak", "active_peak", "lease_lost", "deadline_expired", "kv_errors",
+                "renew_recovered")},
             **current.get((operation, mode), {"waiting": 0, "active": 0}),
         }
+        for reason in _LOSS_REASONS:
+            props[f"lease_lost_{reason}"] = window.losses.get(reason, 0)
         for i, bound in enumerate(_BOUNDS_MS):
             props[f"wait_bucket_le_{bound}_ms"] = window.buckets[i]
         props["wait_bucket_gt_5000_ms"] = window.buckets[-1]

@@ -947,3 +947,104 @@ async def test_client_disconnect_while_queued_drops_the_waiter_and_takes_no_leas
     rows = completed()
     assert sum(row["cancelled"] for row in rows) == 1
     assert all(row["waiting"] == row["active"] == 0 for row in rows)
+
+
+async def test_renewal_recovered_by_its_retry_is_counted_and_keeps_ownership(gate, monkeypatch):
+    _, store = gate
+    original = store.renew_lease
+    recovered = asyncio.Event()
+
+    async def renew(*args, **kwargs):
+        assert await original(*args, **kwargs) == "renewed"
+        if recovered.is_set():
+            return "renewed"
+        recovered.set()
+        return "recovered"
+
+    monkeypatch.setattr(store, "renew_lease", renew)
+    async with admission.admit([7], operation="close"):
+        await asyncio.wait_for(recovered.wait(), 1)
+        await asyncio.sleep(0)
+        assert store.values["money-admission:org:7"][1] > time.monotonic()
+    [row] = completed()
+    assert row["renew_recovered"] == 1
+    assert row["lease_lost"] == 0 and row["kv_errors"] == 0
+    assert all(row[f"lease_lost_{reason}"] == 0 for reason in admission._LOSS_REASONS)
+
+
+async def test_redis_renewal_retry_after_a_transient_failure_reports_renew_recovered(monkeypatch):
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    monkeypatch.setattr(admission, "_windows", {})
+    monkeypatch.setattr(admission, "_current", {})
+    calls = []
+
+    async def command(*args):
+        calls.append(args)
+        if len(calls) == 1:
+            raise RedisConnectionError("transient")
+        return 1
+
+    store = kv.RedisStore.__new__(kv.RedisStore)
+    store._client = SimpleNamespace(eval=command)
+    observation = admission._Observation("close")
+    owned = admission._Gate(observation, 3)
+    owned.store = store
+    owned.leases = [("org:7", "token")]
+    owned.valid_until = {"org:7": time.monotonic() + 3}
+    wakeups = 0
+
+    async def wake(_):
+        nonlocal wakeups
+        wakeups += 1
+        if wakeups > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(admission, "asyncio", SimpleNamespace(
+        sleep=wake, timeout=asyncio.timeout, CancelledError=asyncio.CancelledError))
+    with pytest.raises(asyncio.CancelledError):
+        await owned._renew()
+    assert len(calls) == 2 and calls[0] == calls[1]
+    assert observation.renew_recovered == 1
+    assert not owned.lost and observation.lease_lost == 0 and observation.kv_errors == 0
+    kv.drain_lease_errors()
+    kv.drain_lease_timings()
+
+
+@pytest.mark.parametrize("reason", ("late", "not_owned", "unavailable"))
+async def test_lease_lost_is_split_by_reason(gate, monkeypatch, reason):
+    _, store = gate
+    if reason == "late":
+        async def expired(*args, **kwargs):
+            store.renewed.set()
+            return "deadline_expired"
+        monkeypatch.setattr(store, "renew_lease", expired)
+    elif reason == "not_owned":
+        store.lose_on_renew = True
+    async with admission.admit([7], operation="close"):
+        if reason == "unavailable":
+            store.unavailable = True
+        await asyncio.wait_for(store.renewed.wait(), 1)
+        await asyncio.sleep(0)
+        assert admission._local_lock(7).locked()  # Loss never cancels the session.
+    [row] = completed()
+    assert row["lease_lost"] == 1 and row["failed"] == 0
+    assert {r: row[f"lease_lost_{r}"] for r in admission._LOSS_REASONS} == {
+        r: int(r == reason) for r in admission._LOSS_REASONS}
+    assert (row["kv_errors"] >= 1) == (reason == "unavailable")
+    assert row["deadline_expired"] == (reason == "late")
+
+
+async def test_lease_lost_reason_found_at_release_is_not_owned_or_late(gate, monkeypatch):
+    _, store = gate
+    async with admission.admit([7], operation="close"):
+        store.values["money-admission:org:7"] = ("new-owner", time.monotonic() + 10)
+    later = time.monotonic() + 60
+    async with admission.admit([8], operation="close"):
+        # No await between: the loop pause outlives the TTL before renewal or release runs.
+        monkeypatch.setattr(admission, "time", SimpleNamespace(monotonic=lambda: later))
+        store.values["money-admission:org:8"] = ("new-owner", 0)
+    [row] = completed()
+    assert row["lease_lost"] == 2
+    assert row["lease_lost_not_owned"] == 1 and row["lease_lost_late"] == 1
+    assert row["lease_lost_unavailable"] == 0
