@@ -850,3 +850,100 @@ async def test_delayed_busy_sleep_cannot_dispatch_after_deadline(gate, monkeypat
         assert attempts == 1
     [row] = completed()
     assert row["fallback_wait_timeout"] == 1
+
+
+@pytest.mark.parametrize("race", ("reply_after_deadline", "deadline_during_set"))
+async def test_lease_acquired_at_the_deadline_is_released_by_its_token(gate, monkeypatch, race):
+    settings, store = gate
+    settings.money_admission_wait_s = 0.02
+    granted, released = [], []
+    original_acquire, original_release = store.acquire_lease, store.release_lease
+
+    async def acquire(key, token, ttl_ms):
+        assert await original_acquire(key, token, ttl_ms) == "acquired"
+        granted.append((key, token))
+        if race == "reply_after_deadline":
+            time.sleep(0.03)  # The reply lands after the deadline, before its timer can fire.
+            return "acquired"
+        await asyncio.Event().wait()  # Redis applied SET; the reply never arrives in time.
+
+    async def release(key, token):
+        released.append((key, token))
+        return await original_release(key, token)
+
+    monkeypatch.setattr(store, "acquire_lease", acquire)
+    monkeypatch.setattr(store, "release_lease", release)
+    async with admission.admit([7], operation="reserve"):
+        assert not store.values
+        assert not admission._local_lock(7).locked()
+    assert granted and released == granted
+    assert not store.values
+    [row] = completed()
+    assert row["mode"] == "fallback" and row["fallback_wait_timeout"] == 1
+    assert row["lease_lost"] == 0 and row["kv_errors"] == 0
+    assert row["waiting"] == row["active"] == 0
+
+
+@pytest.mark.parametrize("queued", ("behind_local_holder", "polling_foreign_owner"))
+async def test_client_disconnect_while_queued_drops_the_waiter_and_takes_no_lease(
+    gate, monkeypatch, queued,
+):
+    settings, store = gate
+    settings.money_admission_wait_s = 5
+    entered, leave = asyncio.Event(), asyncio.Event()
+    polling = asyncio.Event()
+    foreign = ("other-process", time.monotonic() + 10)
+
+    async def holding():
+        async with admission.admit([7], operation="reserve"):
+            entered.set()
+            await leave.wait()
+
+    holder = None
+    if queued == "behind_local_holder":
+        holder = asyncio.create_task(holding())
+        await entered.wait()
+    else:
+        store.values["money-admission:org:7"] = foreign
+        original = store.acquire_lease
+
+        async def acquire(*args):
+            result = await original(*args)
+            polling.set()
+            return result
+
+        monkeypatch.setattr(store, "acquire_lease", acquire)
+    owned_before = dict(store.values)
+    acquires_before = sum(action == "acquire" for action, _ in store.calls)
+
+    async def request():
+        async with admission.admit([7], operation="reserve"):
+            pytest.fail("a disconnected request must not enter")
+
+    waiter = asyncio.create_task(request())
+    if queued == "behind_local_holder":
+        await asyncio.sleep(0)
+        assert admission._local_lock(7)._waiters
+    else:
+        await polling.wait()
+    waiter.cancel()  # What the server does to a request task whose client went away.
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert store.values == owned_before
+    if queued == "behind_local_holder":
+        assert sum(action == "acquire" for action, _ in store.calls) == acquires_before
+        assert not admission._local_lock(7)._waiters
+        assert admission._local_lock(7).locked()
+        leave.set()
+        await holder
+    else:
+        assert store.values["money-admission:org:7"] == foreign
+        del store.values["money-admission:org:7"]
+    assert not admission._local_lock(7).locked()
+    assert not store.values
+    async with admission.admit([7], operation="reserve"):
+        assert list(store.values) == ["money-admission:org:7"]
+    assert not store.values
+    rows = completed()
+    assert sum(row["cancelled"] for row in rows) == 1
+    assert all(row["waiting"] == row["active"] == 0 for row in rows)

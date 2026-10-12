@@ -352,6 +352,11 @@ timeout reports `deadline_expired`, not KV unavailability. The admission summary
 per scope alongside `lease_lost`, without increasing `kv_errors`. Actual command failures still
 retain their diagnostic rows if the validity deadline also expires during failure cleanup.
 
+A lease whose SET lands as the acquisition deadline expires, whether its reply arrives late or
+never, ends in `wait_timeout`; its token was recorded before SET, so the fallback cleanup deletes
+it by token before the original database path runs. A cancelled waiter (for example a request
+whose client disconnected) leaves the local queue and holds no lease.
+
 Lease cleanup retries a transient timeout/connection failure at most once, always with the same
 token-checked Lua delete. Each attempt keeps its 200 ms deadline within a shared 400 ms per-key
 budget; authentication/permission errors and cancellation do not retry. These are asyncio time

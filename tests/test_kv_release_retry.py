@@ -446,3 +446,37 @@ async def test_retry_timing_is_per_attempt_and_drain_starts_a_new_window(monkeyp
     next_row, = kv.drain_lease_timings()
     assert next_row["count"] == 1 and next_row["retry_count"] == 0
     assert rows["not_owned"]["count"] == 1
+
+
+async def test_real_lease_set_at_the_admission_deadline_is_deleted_by_token(local_redis, monkeypatch):
+    from treg.infra import money_admission as admission
+
+    real, key = local_redis
+    org_id = uuid4().int % 10**9 + 1
+    org_key = f"money-admission:org:{org_id}"
+    applied = []
+    real_set = real._client.set
+
+    async def set_then_stall(name, value, **kwargs):
+        result = await real_set(name, value, **kwargs)
+        applied.append(value)
+        await asyncio.Event().wait()  # SET is durable in Redis; the reply misses the deadline.
+        return result
+
+    monkeypatch.setattr(real._client, "set", set_then_stall)
+    monkeypatch.setattr(admission, "get_settings", lambda: SimpleNamespace(
+        money_admission_enabled=True, money_admission_org_ids=[],
+        money_admission_wait_s=0.05, money_admission_lease_s=15))
+    monkeypatch.setattr(kv, "configured", lambda: True)
+    monkeypatch.setattr(kv, "store", lambda: real)
+    monkeypatch.setattr(admission, "_windows", {})
+    monkeypatch.setattr(admission, "_current", {})
+    try:
+        async with admission.admit([org_id], operation="reserve"):
+            assert await real._client.get(org_key) is None
+        assert len(applied) == 1
+        assert await real._client.exists(org_key) == 0
+        [row] = [r for r in admission.snapshot() if r["completed"]]
+        assert row["fallback_wait_timeout"] == 1 and row["kv_errors"] == 0
+    finally:
+        await real._client.delete(org_key)
