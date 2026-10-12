@@ -49,6 +49,7 @@ sources:
   - tests/test_money_admission_postgres.py
   - tests/test_archive_batch_postgres.py
   - scripts/bench_money_admission.py
+  - scripts/bench_money_admission_contention.py
   - tests/test_marketplace_call.py
   - tests/test_asynctasks.py
 related:
@@ -274,11 +275,20 @@ nor accounting behavior.
 ### Optional admission before the settlement session
 
 `infra.money_admission.admit` optionally queues same-org balance work by payer Org before the
-application opens a database session. A process-local async lock limits Redis polling within that
-process; contended Redis acquisition retries after a random 3–10 ms async delay. A token-owned,
-expiring Redis lease coordinates participating processes. Multi-org batches
-acquire eligible Org leases in sorted ID order. The scope surrounds session acquisition, ledger
-work, commit or rollback, and session cleanup; it releases leases only after that scope exits.
+application opens a database session. A process-local `asyncio.Lock` queues each org's waiters,
+so only the local head competes for its token-owned, expiring Redis lease. The first Redis
+attempt is immediate; only a `busy` result retries with capped exponential equal jitter:
+random 3–6 ms, then 6–12 ms on subsequent failures. This nonzero jitter spreads competing
+processes while limiting polling work. Each org starts at the initial interval, within one
+absolute acquisition deadline for local waiting and all Redis leases in the batch; cancellable
+sleeps never refresh that deadline. Unavailability still falls back immediately. These retries
+never repeat accounting or an upstream request. The algorithm
+follows the [AWS jitter comparison](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/)
+and [Redis's retry randomization guidance](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/#retry-on-failure);
+the latter's multi-node Redlock protocol is not used here. Multi-org batches
+acquire local locks, then eligible Org leases, in sorted ID order. Neither Redis retries nor
+local queueing promise global FIFO or starvation freedom. The scope surrounds session acquisition,
+ledger work, commit or rollback, and session cleanup; it releases leases only after that scope exits.
 `infra.money_session.money_session` joins the session's close/rollback task even under repeated
 cancellation before allowing the admission scope to exit, then propagates cancellation or the
 original failure. It does not introduce a commit or change the application's commit boundaries.
@@ -355,7 +365,9 @@ upstream work. The admission acquisition budget still defaults to five seconds; 
 separately from execution in the existing scope totals.
 
 This is best-effort contention isolation, not a global money concurrency cap, durable queue or
-promise of FIFO across processes. Serializing the entire application session also serializes work
+promise of FIFO across processes. Another process can overtake a backed-off head waiter; bounded
+waiting can still end in database fallback. The fixed-dimension waiting/active metrics count all
+scopes, independently of the retry policy. Serializing the entire application session also serializes work
 such as Hold claims and session cleanup that previously could overlap; even without polling
 delay, hot-org throughput can regress. Moving waiters out of the database reduces their connection
 occupancy, not necessarily their total latency. Redis round trips add cost, and fallback traffic

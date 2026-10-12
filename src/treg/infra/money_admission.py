@@ -32,6 +32,9 @@ _MODES = frozenset({"disabled", "redis", "fallback"})
 _REASONS = frozenset({"wait_timeout", "kv_unavailable", "kv_not_configured",
                       "lease_lost", "missing_identity", "gate_error"})
 _BOUNDS_MS = (10, 50, 100, 250, 1000, 5000)
+# Equal jitter keeps a nonzero delay while spreading competing processes' retries.
+_BUSY_RETRY_INITIAL_S = 0.006
+_BUSY_RETRY_CAP_S = 0.012
 _local_locks: weakref.WeakValueDictionary[int, asyncio.Lock] = weakref.WeakValueDictionary()
 _local_loop = None
 _clock = time.monotonic
@@ -171,7 +174,9 @@ class _Gate:
         return self.lost
 
     async def acquire(self, ids: list[int], wait_s: float) -> str | None:
-        async with asyncio.timeout(wait_s):
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_s
+        async with asyncio.timeout_at(deadline):
             for org_id in ids:
                 lock = _local_lock(org_id)
                 await lock.acquire()
@@ -182,9 +187,12 @@ class _Gate:
             for org_id in ids:
                 key, token = f"money-admission:org:{org_id}", uuid.uuid4().hex
                 self.attempted.append((key, token))
+                retry_s = _BUSY_RETRY_INITIAL_S
                 while True:
                     if self._ownership_lost():
                         return "lease_lost"
+                    if loop.time() >= deadline:
+                        return "wait_timeout"
                     started = time.monotonic()
                     result = await self.store.acquire_lease(key, token, self.ttl_ms)
                     if result == "acquired":
@@ -192,15 +200,18 @@ class _Gate:
                         self.valid_until[key] = started + self.ttl_ms / 1000
                         if self._ownership_lost():
                             return "lease_lost"
+                        if loop.time() >= deadline:
+                            return "wait_timeout"
                         if self.renewer is None:
                             self.renewer = asyncio.create_task(self._renew())
                         break
                     if result != "busy":
                         self.observation.kv_errors += 1
                         return "kv_unavailable"
-                    # Only the local head waiter polls Redis for an org. Keep handoff delay
-                    # short relative to a money transaction without a request-wide poll storm.
-                    await asyncio.sleep(random.uniform(0.003, 0.010))
+                    # Busy only: unavailable still falls back immediately. This cancellable
+                    # sleep stays inside the single acquisition deadline for the whole batch.
+                    await asyncio.sleep(random.uniform(retry_s / 2, retry_s))
+                    retry_s = min(retry_s * 2, _BUSY_RETRY_CAP_S)
             return "lease_lost" if self._ownership_lost() else None
 
     async def _renew(self) -> None:

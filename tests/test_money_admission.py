@@ -81,8 +81,9 @@ async def test_disabled_baseline_never_contacts_kv_or_locks(gate, monkeypatch):
     assert not store.calls
 
 
-async def test_empty_release_is_excluded_from_baseline(gate):
-    async with admission.admit([], operation="close"):
+@pytest.mark.parametrize("operation", ["close", "deferred", "async", "hub"])
+async def test_empty_non_balance_scope_is_excluded_from_baseline(gate, operation):
+    async with admission.admit([], operation=operation):
         pass
     assert admission.snapshot() == []
 
@@ -182,6 +183,52 @@ async def test_same_org_waits_outside_scope_but_other_org_can_run(gate):
     assert second_entered.is_set() and not store.values
     [row] = completed()
     assert row["waiting"] == row["active"] == 0
+
+
+async def test_only_local_head_competes_with_a_foreign_redis_owner(gate):
+    _, store = gate
+    owner = ("other-process", time.monotonic() + 10)
+    store.values["money-admission:org:7"] = owner
+
+    async def waiting():
+        async with admission.admit([7], operation="close"):
+            pytest.fail("foreign owner still holds the lease")
+
+    tasks = [asyncio.create_task(waiting()) for _ in range(16)]
+    try:
+        await asyncio.sleep(0)
+        assert [call for call in store.calls if call[0] == "acquire"] == [
+            ("acquire", "money-admission:org:7")]
+        [row] = admission.snapshot()
+        assert row["waiting"] == 16 and row["active"] == 0
+    finally:
+        for task in tasks:
+            task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    assert all(isinstance(result, asyncio.CancelledError) for result in results)
+    assert store.values["money-admission:org:7"] == owner
+    [row] = completed()
+    assert row["cancelled"] == 16 and row["waiting"] == row["active"] == 0
+    assert not admission._local_lock(7).locked()
+
+
+async def test_cancel_partial_local_batch_before_redis_releases_local_locks(gate):
+    _, store = gate
+    async with admission.admit([9], operation="close"):
+        async def waiting():
+            async with admission.admit([9, 3], operation="deferred"):
+                pytest.fail("cancelled local batch must not enter")
+
+        task = asyncio.create_task(waiting())
+        await asyncio.sleep(0)
+        assert admission._local_lock(3).locked()
+        assert list(store.values) == ["money-admission:org:9"]
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not admission._local_lock(3).locked()
+        assert admission._local_lock(9).locked()
+    assert not store.values
 
 
 async def test_org_order_is_sorted_deduplicated_and_idle_locks_are_reclaimed(gate):
@@ -673,3 +720,133 @@ async def test_metrics_are_fixed_dimension_and_execution_excludes_wait_and_clean
     assert "org_id" not in row and "call_id" not in row
     assert sum(v for k, v in row.items() if k.startswith("wait_bucket_")) == 100
     assert admission.snapshot() == []
+
+
+async def test_busy_backoff_grows_caps_and_restarts_for_each_org(gate, monkeypatch):
+    settings, store = gate
+    settings.money_admission_lease_s = 15
+    attempts, bounds, sleeps = {}, [], []
+    original_acquire, original_sleep = store.acquire_lease, asyncio.sleep
+
+    async def contended(key, *args):
+        attempts[key] = attempts.get(key, 0) + 1
+        if attempts[key] <= 8:
+            return "busy"
+        return await original_acquire(key, *args)
+
+    def jitter(low, high):
+        bounds.append((low, high))
+        return low
+
+    async def sleep(delay):
+        if delay >= 1:  # Renewal cadence stays real and cancellable.
+            return await original_sleep(delay)
+        sleeps.append(delay)
+        await original_sleep(0)
+
+    monkeypatch.setattr(store, "acquire_lease", contended)
+    monkeypatch.setattr(admission.random, "uniform", jitter)
+    monkeypatch.setattr(admission, "asyncio", SimpleNamespace(**(vars(asyncio) | {"sleep": sleep})))
+    async with admission.admit([9, 3], operation="deferred"):
+        assert len(store.values) == 2
+    expected = [min(admission._BUSY_RETRY_INITIAL_S * 2**i, admission._BUSY_RETRY_CAP_S)
+                for i in range(8)] * 2
+    assert bounds == [(ceiling / 2, ceiling) for ceiling in expected]
+    assert sleeps == [ceiling / 2 for ceiling in expected]
+    assert min(sleeps) > 0
+    assert list(attempts.values()) == [9, 9]
+    assert not store.values
+
+
+async def test_unavailable_after_busy_does_not_retry_or_sleep_again(gate, monkeypatch):
+    _, store = gate
+    calls = 0
+
+    async def acquire(*_):
+        nonlocal calls
+        calls += 1
+        return "busy" if calls == 1 else "unavailable"
+
+    monkeypatch.setattr(store, "acquire_lease", acquire)
+    async with admission.admit([7], operation="reserve"):
+        assert calls == 2
+    [row] = completed()
+    assert row["fallback_kv_unavailable"] == 1 and row["kv_errors"] == 1
+
+
+async def test_cancelling_busy_sleep_releases_partial_leases(gate, monkeypatch):
+    _, store = gate
+    busy = asyncio.Event()
+    original = store.acquire_lease
+    store.values["money-admission:org:9"] = ("other-owner", time.monotonic() + 10)
+
+    async def acquire(key, *args):
+        result = await original(key, *args)
+        if result == "busy":
+            busy.set()
+        return result
+
+    monkeypatch.setattr(store, "acquire_lease", acquire)
+    monkeypatch.setattr(admission.random, "uniform", lambda *_: 10)
+
+    async def work():
+        async with admission.admit([9, 3], operation="deferred"):
+            pytest.fail("cancelled waiter must not enter")
+
+    task = asyncio.create_task(work())
+    await busy.wait()
+    assert len(store.values) == 2
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, 0.2)
+    assert list(store.values) == ["money-admission:org:9"]
+    [row] = completed()
+    assert row["cancelled"] == 1 and row["waiting"] == row["active"] == 0
+
+
+async def test_deadline_is_not_refreshed_by_retries_or_another_org(gate, monkeypatch):
+    settings, store = gate
+    settings.money_admission_wait_s = 0.03
+    deadlines, calls = [], []
+    original_timeout, original_acquire = asyncio.timeout_at, store.acquire_lease
+
+    def timeout_at(deadline):
+        deadlines.append(deadline)
+        return original_timeout(deadline)
+
+    async def acquire(key, *args):
+        calls.append(key)
+        if key.endswith(":9"):
+            return "busy"
+        await asyncio.sleep(0.01)
+        return await original_acquire(key, *args)
+
+    monkeypatch.setattr(store, "acquire_lease", acquire)
+    monkeypatch.setattr(admission, "asyncio", SimpleNamespace(**(vars(asyncio) | {"timeout_at": timeout_at})))
+    async with admission.admit([9, 3], operation="deferred"):
+        assert not store.values
+    assert len(deadlines) == 1
+    assert calls[0].endswith(":3") and all(key.endswith(":9") for key in calls[1:])
+    [row] = completed()
+    assert row["fallback_wait_timeout"] == 1 and row["waiting"] == 0
+
+
+async def test_delayed_busy_sleep_cannot_dispatch_after_deadline(gate, monkeypatch):
+    settings, store = gate
+    settings.money_admission_wait_s = 0.01
+    attempts = 0
+
+    async def busy(*_):
+        nonlocal attempts
+        attempts += 1
+        return "busy"
+
+    async def stall(_):
+        time.sleep(0.02)  # A loop stall delays the cooperative timeout callback.
+
+    monkeypatch.setattr(store, "acquire_lease", busy)
+    monkeypatch.setattr(admission, "asyncio", SimpleNamespace(**(vars(asyncio) | {"sleep": stall})))
+    async with admission.admit([7], operation="close"):
+        assert attempts == 1
+    [row] = completed()
+    assert row["fallback_wait_timeout"] == 1
