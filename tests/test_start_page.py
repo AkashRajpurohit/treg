@@ -37,7 +37,7 @@ async def test_start_copy_keeps_the_public_promises(clients: AsyncClient):
     assert "monid" not in html.lower()
     # The page only sells: one action, and the per-call prices it quotes come from real runs.
     assert len(re.findall(r'<button[^>]* data-cta="', html)) == 3
-    assert "$0.00015" in html and "$238" in html
+    assert "Clay $0.88" in html and "13.2 credits" in html and "$238" in html
     # Retired or mismatched comparisons must not come back: X dropped its subscription tiers, and
     # SpyFu researches Google ads, not Meta's.
     assert "$200" not in html and "SpyFu" not in html and "$471" not in html
