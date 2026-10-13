@@ -41,6 +41,8 @@ async def test_start_copy_keeps_the_public_promises(clients: AsyncClient):
     # Retired or mismatched comparisons must not come back: X dropped its subscription tiers, and
     # SpyFu researches Google ads, not Meta's.
     assert "$200" not in html and "SpyFu" not in html and "$471" not in html
+    # One price per vendor: the bill quotes Apollo Basic at $49 and Semrush at $139.95.
+    assert "$59" not in html and "$139/" not in html and "$139 " not in html
     # The custom page-view event is sent from the page script, so the tracker must load before it.
     assert html.index('<script src="/sitetrack.js">') < html.index("track('start_viewed'")
 

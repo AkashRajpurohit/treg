@@ -233,7 +233,7 @@
   <h2 id="stepsH">Set up once. Then just ask.</h2>
   <p class="lede">You need an AI agent like Claude Code, Codex, Cursor or Claude.ai. Nothing else to install by hand.</p>
   <div class="steps">
-    <div class="step"><div class="n">01</div><h3>Sign up free</h3><p id="step1">Click <b>Start free</b> and continue with Google. You get $1 of credit. No card.</p></div>
+    <div class="step"><div class="n">01</div><h3>Sign up free</h3><p>Click <b>Start free</b> and continue with Google. You get $1 of credit. No card.</p></div>
     <div class="step"><div class="n">02</div><h3>Paste your setup line</h3><p>Pick your agent and we show you one line with your key. Paste it into your agent's chat and press Enter, and it sets itself up. On Claude.ai you add treg.to as a connector instead, in two clicks.</p></div>
     <div class="step"><div class="n">03</div><h3>Ask for what you need</h3><p>In the same chat, type the job: <span id="stepAsk">"Find dentists in Sydney with phone number and website."</span> Your agent runs it and tells you what it cost.</p></div>
   </div>
@@ -294,12 +294,12 @@
      Every run below happened on 12 Oct 2026; the figures are what treg.to returned and charged. */
   var JOBS = {
     leads: {
-      h1: 'Lead lists from your AI agent. <span class="no">No Apollo seat.</span>',
+      h1: 'Lead lists from your AI agent. <span class="no">Cents, not a monthly seat.</span>',
       ask: 'Find dentists in Sydney with phone number and website, save as leads.csv',
       tool: 'Google Maps places',
       out: ['✓ Saved leads.csv', '  100 dentists · 98 with phone · 96 with website'],
-      cost: '$0.00015', was: 'Apollo $59/mo',
-      close: 'Get your next lead list from your agent. Skip the $59 Apollo seat.',
+      cost: '$0.00015', was: '',
+      close: 'Get your next lead list from your agent, for cents.',
       sub: 'Ask Claude Code, Codex or Cursor for a lead list in plain English. It finds the businesses with phone numbers and websites, and can look up work emails too. You pay cents per job instead of a monthly seat.'
     },
     seo: {
@@ -307,8 +307,8 @@
       ask: 'Monthly Google searches and CPC for: crm for dentists, dental practice software, dental crm',
       tool: 'Google keyword volume',
       out: ['  dental practice software   390/mo   CPC $19.06', '  crm for dentists           140/mo   CPC $21.08', '  dental crm                 140/mo   CPC $21.08'],
-      cost: '$0.09', was: 'Semrush $139/mo',
-      close: 'Get keyword data from your agent. Skip the $139 Semrush plan.',
+      cost: '$0.09', was: 'Semrush $139.95/mo',
+      close: 'Get keyword data from your agent. Skip the $139.95 Semrush plan.',
       sub: 'Ask Claude Code, Codex or Cursor for search volume, CPC and the live Google results for your keywords. You pay cents per lookup instead of a monthly plan.'
     },
     ads: {
