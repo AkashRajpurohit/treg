@@ -1005,6 +1005,23 @@
       "GET",
       "HEAD"
     ],
+    "name": "start_page",
+    "path": "/start"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "start_send_link",
+    "path": "/start/send-link"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
     "name": "leads_signals_page",
     "path": "/leads-signals"
   },

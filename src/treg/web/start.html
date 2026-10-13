@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get the data in your AI agent, cancel the subscriptions | treg.to</title>
+<meta name="description" content="Connect Claude Code, Codex or Cursor to lead lists, work emails, keyword data, competitor ads and social posts with one key. Pay cents per job, not a monthly plan. $1 free credit.">
+<meta name="robots" content="noindex">
+<link rel="icon" href="/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #FDFCFB;
+    --card: #F5F4F1;
+    --ink: #101010;
+    --ink-2: #43413E;
+    --muted: #8A8885;
+    --line: #E9E7E2;
+    --green: #118453;
+    --red: #C0362F;
+    --term: #141413;
+    --term-ink: #EDEBE6;
+    --term-dim: #8C887F;
+    --display: "Inter Tight", "Inter", ui-sans-serif, system-ui, sans-serif;
+    --text: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--text); font-size: 16px; line-height: 1.55;
+    -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  ::selection { background: rgba(17,132,83,.22); }
+  a { color: inherit; }
+  a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  .cta {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    font-family: var(--text); font-weight: 600; font-size: 17px; line-height: 1;
+    padding: 17px 30px; border-radius: 999px; border: 0; cursor: pointer; text-decoration: none;
+    background: var(--ink); color: #fff; box-shadow: 0 10px 30px -14px rgba(16,16,16,.6);
+  }
+  .cta:hover { background: #2b2b2a; }
+  .cta .arr { transition: transform .2s; }
+  .cta:hover .arr { transform: translateX(3px); }
+  .under { margin-top: 14px; font-size: 13.5px; color: var(--muted); }
+
+  /* ---------- nav ---------- */
+  .nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; max-width: 1180px; margin: 0 auto; }
+  .wordmark { display: flex; align-items: center; gap: 9px; font-family: var(--display); font-weight: 600; font-size: 16px; text-decoration: none; }
+  .wordmark img { width: 24px; height: 24px; border-radius: 6px; }
+  .nav button { background: none; border: 0; font-family: var(--text); font-size: 14px; font-weight: 500; color: var(--ink-2); cursor: pointer; padding: 8px 4px; }
+  .nav button:hover { color: var(--ink); }
+
+  /* ---------- hero ---------- */
+  .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 56px; align-items: center; padding-top: 48px; padding-bottom: 72px; }
+  .hero h1 {
+    font-family: var(--display); font-weight: 500; letter-spacing: -.035em; line-height: 1.02;
+    font-size: clamp(40px, 5.6vw, 66px); margin: 0 0 22px; text-wrap: balance;
+  }
+  .hero h1 .no { color: var(--muted); }
+  .hero .sub { font-size: 19px; color: var(--ink-2); margin: 0 0 32px; max-width: 34em; text-wrap: pretty; }
+  .works { display: flex; align-items: center; gap: 12px; margin-top: 30px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .works .logos { display: flex; gap: 10px; align-items: center; }
+  .works .logos img { width: 22px; height: 22px; opacity: .9; }
+
+  .term {
+    background: var(--term); color: var(--term-ink); border-radius: 18px; overflow: hidden;
+    box-shadow: 0 40px 90px -50px rgba(20,18,12,.75), 0 0 0 1px rgba(255,255,255,.04) inset;
+    font-family: var(--mono); font-size: 13.5px; line-height: 1.65;
+  }
+  .term-bar { display: flex; align-items: center; gap: 7px; padding: 12px 16px; border-bottom: 1px solid #262522; color: var(--term-dim); font-size: 12px; }
+  .term-bar i { width: 10px; height: 10px; border-radius: 50%; background: #3A3936; display: inline-block; }
+  .term-bar span { margin-left: 8px; display: inline-flex; align-items: center; gap: 7px; }
+  .term-bar img { width: 14px; height: 14px; }
+  .term-body { padding: 20px 20px 22px; min-height: 248px; }
+  .term-body .ln { white-space: pre-wrap; overflow-wrap: anywhere; opacity: 0; transform: translateY(4px); transition: opacity .35s, transform .35s; }
+  .term-body .ln.in { opacity: 1; transform: none; }
+  .term-body .ask { color: #fff; }
+  .term-body .ask b { color: var(--term-dim); font-weight: 400; }
+  .term-body .tool { color: var(--term-dim); margin-top: 14px; }
+  .term-body .tool em { color: #E7B36A; font-style: normal; }
+  .term-body .ok { color: #8FD3AE; margin-top: 8px; }
+  .term-body .row { color: var(--term-ink); }
+  .term-body .cost { margin-top: 14px; display: inline-flex; gap: 10px; align-items: center; padding: 6px 12px; border-radius: 999px; background: rgba(143,211,174,.12); color: #8FD3AE; }
+  .term-body .cost s { color: var(--term-dim); text-decoration-color: var(--red); text-decoration-thickness: 2px; }
+  .term-note { font-size: 12px; color: var(--muted); margin-top: 10px; text-align: right; }
+  @media (prefers-reduced-motion: reduce) { .term-body .ln { opacity: 1; transform: none; transition: none; } }
+
+  /* ---------- the bill ---------- */
+  .band { background: var(--card); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 80px 0; }
+  .band h2, .sec h2 {
+    font-family: var(--display); font-weight: 500; letter-spacing: -.025em; line-height: 1.1;
+    font-size: clamp(30px, 4.2vw, 44px); margin: 0 0 12px; text-align: center; text-wrap: balance;
+  }
+  .lede { text-align: center; color: var(--ink-2); font-size: 17px; max-width: 40em; margin: 0 auto 40px; text-wrap: balance; }
+  .bill { max-width: 820px; margin: 0 auto; background: #fff; border: 1px solid var(--line); border-radius: 20px; padding: 10px 28px; }
+  .brow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 18px; align-items: center; padding: 16px 0; border-bottom: 1px dashed var(--line); }
+  .brow:last-child { border-bottom: 0; }
+  .brow.mine { margin: 6px -14px; padding: 16px 14px; border: 1px solid rgba(17,132,83,.35); border-radius: 12px; background: rgba(17,132,83,.06); }
+  .brow .what b { display: block; font-weight: 600; font-size: 15.5px; }
+  .brow .what span { font-size: 13px; color: var(--muted); }
+  .brow .was { font-family: var(--mono); font-size: 14px; color: var(--muted); position: relative; white-space: nowrap; }
+  .brow .was::after { content: ""; position: absolute; left: -4px; right: -4px; top: 50%; height: 2px; background: var(--red); transform: scaleX(0); transform-origin: left; transition: transform .45s cubic-bezier(.3,.7,.3,1); }
+  .seen .brow .was::after { transform: scaleX(1); }
+  .seen .brow:nth-child(2) .was::after { transition-delay: .12s; } .seen .brow:nth-child(3) .was::after { transition-delay: .24s; }
+  .seen .brow:nth-child(4) .was::after { transition-delay: .36s; } .seen .brow:nth-child(5) .was::after { transition-delay: .48s; }
+  .brow .per { font-family: var(--mono); font-size: 14px; font-weight: 500; color: var(--green); white-space: nowrap; text-align: right; min-width: 128px; }
+  .total { max-width: 820px; margin: 22px auto 0; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; padding: 0 6px; }
+  .total .t { font-family: var(--display); font-size: 22px; font-weight: 500; letter-spacing: -.01em; }
+  .total .t s { color: var(--muted); text-decoration-color: var(--red); text-decoration-thickness: 2px; }
+  .total .t b { color: var(--green); font-weight: 600; }
+  .fine { max-width: 820px; margin: 14px auto 0; font-size: 12px; color: var(--muted); padding: 0 6px; }
+
+  /* ---------- steps, quotes, trust ---------- */
+  .sec { padding: 84px 0 0; }
+  .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; max-width: 980px; margin: 0 auto; }
+  .step { padding: 24px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
+  .step .n { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .step h3 { font-family: var(--display); font-weight: 600; font-size: 19px; margin: 8px 0 6px; letter-spacing: -.01em; }
+  .step p { margin: 0; color: var(--ink-2); font-size: 15px; }
+  .step code { font-family: var(--mono); font-size: 12.5px; background: var(--card); padding: 2px 6px; border-radius: 6px; }
+  .quotes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; max-width: 1040px; margin: 72px auto 0; }
+  .quote { display: flex; flex-direction: column; gap: 14px; padding: 24px; border-radius: 18px; background: #fff; border: 1px solid var(--line); text-decoration: none; }
+  .quote:hover { border-color: #cfccc5; }
+  .quote q { font-size: 17px; line-height: 1.45; font-family: var(--display); letter-spacing: -.005em; }
+  .quote .by { margin-top: auto; font-size: 13px; color: var(--muted); }
+  .trust { display: flex; justify-content: center; gap: 12px 30px; flex-wrap: wrap; margin: 64px auto 0; max-width: 980px; font-size: 14.5px; color: var(--ink-2); }
+  .trust span { display: inline-flex; align-items: center; gap: 8px; }
+  .trust span::before { content: "✓"; color: var(--green); font-weight: 600; }
+  .final { text-align: center; padding: 96px 24px 104px; }
+  .final h2 { font-family: var(--display); font-weight: 500; letter-spacing: -.03em; font-size: clamp(32px, 4.6vw, 50px); margin: 0 0 26px; line-height: 1.06; text-wrap: balance; }
+  footer { border-top: 1px solid var(--line); padding: 22px 24px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--muted); max-width: 1180px; margin: 0 auto; }
+  footer a { color: var(--muted); text-decoration: none; margin-left: 18px; }
+  footer a:hover { color: var(--ink); }
+
+  /* ---------- sign-in modal (same doors as every launch page) ---------- */
+  .scrim { position: fixed; inset: 0; background: rgba(26,26,26,.55); display: none; place-items: center; z-index: 200; padding: 20px; backdrop-filter: blur(6px); }
+  .scrim.open { display: grid; }
+  .smodal { width: min(400px, 94vw); background: #fff; border-radius: 20px; padding: 30px 28px; text-align: center; position: relative; box-shadow: 0 30px 90px -38px rgba(20,18,12,.4); }
+  .smodal .cls { position: absolute; top: 12px; right: 15px; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  .smodal h3 { font-family: var(--display); font-weight: 600; font-size: 22px; margin: 4px 0 6px; letter-spacing: -.015em; }
+  .smodal p { font-size: 13px; color: var(--muted); margin: 0 0 16px; }
+  .pill { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 9px; font-weight: 500; font-size: 14px; font-family: var(--text); padding: 11px 20px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); text-decoration: none; cursor: pointer; }
+  .pill:hover { background: var(--card); }
+  .pill.dark { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .pill.dark:hover { background: #2b2b2a; }
+  .smodal .div { display: flex; align-items: center; gap: 10px; margin: 16px 0 6px; color: var(--muted); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; }
+  .smodal .div::before, .smodal .div::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+  .smodal input { width: 100%; margin-top: 9px; background: var(--card); border: 1px solid var(--line); color: var(--ink); border-radius: 10px; padding: 11px 13px; font-family: var(--mono); font-size: 13px; outline: none; }
+  .smodal input:focus { border-color: var(--ink); }
+  .smodal .err { color: var(--red); font-size: 12px; margin-top: 10px; min-height: 14px; }
+
+  /* ---------- phones: treg.to runs in an agent on a computer, so a phone visitor is sent the link ---------- */
+  .touch-only { display: none; }
+  @media (hover: none) and (pointer: coarse) {
+    .desk-only { display: none; }
+    .touch-only { display: block; }
+  }
+  .sendf .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .sendf input {
+    flex: 1 1 220px; min-width: 0; font-family: var(--text); font-size: 16px; color: var(--ink);
+    padding: 15px 20px; border-radius: 999px; border: 1px solid #D9D6CF; background: #fff; outline: none;
+  }
+  .sendf input:focus { border-color: var(--ink); }
+  .sendf .cta { flex: 1 1 auto; }
+  .sendf .cta:disabled { opacity: .6; cursor: default; }
+  .sendf .msg { font-size: 13.5px; margin-top: 10px; }
+  .sendf .msg:empty { display: none; }
+  .sendf .msg.err { color: var(--red); }
+  .sendf.sent .row { display: none; }
+  .sendf.sent .msg { margin-top: 0; padding: 14px 18px; border-radius: 14px; background: rgba(17,132,83,.08); color: var(--green); font-size: 15px; font-weight: 500; }
+  .here { background: none; border: 0; padding: 0; margin-top: 14px; font-family: var(--text); font-size: 14px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+  .smodal .sendf { text-align: left; }
+  .stick {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 150;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+    background: rgba(253,252,251,.94); backdrop-filter: blur(8px); border-top: 1px solid var(--line);
+    transform: translateY(110%); transition: transform .25s;
+  }
+  .stick.on { transform: none; }
+  .stick .cta { width: 100%; }
+
+  @media (max-width: 920px) {
+    .hero { grid-template-columns: minmax(0, 1fr); gap: 40px; padding-top: 24px; padding-bottom: 56px; }
+    .steps, .quotes { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px; }
+    .nav { padding: 14px 16px; }
+    .hero .sub { font-size: 17px; }
+    .cta { width: 100%; }
+    .term { font-size: 12.5px; }
+    .band { padding: 60px 0; }
+    .bill { padding: 4px 16px; }
+    .brow { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; }
+    .brow .what { grid-column: 1 / -1; }
+    .brow .per { min-width: 0; }
+    .brow .was { justify-self: start; }
+    .sec { padding-top: 64px; }
+    .final { padding: 72px 16px 80px; }
+    footer a { margin: 0 16px 0 0; }
+  }
+</style>
+</head>
+<body data-page="start">
+
+<nav class="nav" aria-label="treg.to">
+  <a class="wordmark" href="/"><img src="/favicon.svg" alt="">treg.to</a>
+  <button type="button" id="navSignin">Sign in</button>
+</nav>
+
+<main>
+<section class="wrap hero">
+  <div>
+    <h1 id="heroH1">Your AI agent gets the data. <span class="no">You cancel the subscriptions.</span></h1>
+    <p class="sub" id="heroSub">Connect Claude Code, Codex or Cursor to lead lists, work emails, keyword data, competitor ads and social posts. Ask in plain English and pay cents per job instead of a monthly plan.</p>
+    <div class="desk-only">
+      <button class="cta" type="button" data-cta="hero">Start free <span class="arr" aria-hidden="true">→</span></button>
+      <div class="under">$1 free credit · no card · about 2 minutes to set up</div>
+    </div>
+    <form class="sendf touch-only" id="heroSend" data-where="hero" novalidate>
+      <div class="row">
+        <input type="email" placeholder="you@work.com" autocomplete="email" aria-label="Your email">
+        <button class="cta" type="submit">Email me the setup link</button>
+      </div>
+      <div class="msg" role="status"></div>
+      <div class="under">treg.to runs in an AI agent on your computer, so we send the link there. $1 free credit · no card.</div>
+      <button class="here" type="button" data-here>Or sign up on this phone</button>
+    </form>
+    <div class="works">
+      <span class="logos">
+        <img src="https://unpkg.com/@lobehub/icons-static-png@latest/light/claudecode-color.png" alt="Claude Code" title="Claude Code">
+        <img src="https://unpkg.com/@lobehub/icons-static-png@latest/light/codex-color.png" alt="Codex" title="Codex">
+        <img src="https://unpkg.com/@lobehub/icons-static-png@latest/light/cursor.png" alt="Cursor" title="Cursor">
+        <img src="https://unpkg.com/@lobehub/icons-static-png@latest/light/claude-color.png" alt="Claude.ai" title="Claude.ai">
+      </span>
+      <span>Works in Claude Code, Codex, Cursor and more</span>
+    </div>
+  </div>
+  <div>
+    <div class="term" aria-label="An agent using treg.to">
+      <div class="term-bar"><i></i><i></i><i></i><span><img src="https://unpkg.com/@lobehub/icons-static-png@latest/light/claudecode-color.png" alt="">Claude Code</span></div>
+      <div class="term-body" id="term"></div>
+    </div>
+    <div class="term-note">A real run on 12 Oct 2026.</div>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="billH">
+  <div class="wrap">
+    <h2 id="billH">Stop paying monthly for tools you use twice a week.</h2>
+    <p class="lede">Each tool below charges a monthly plan. Through treg.to your agent gets the same kind of data, and you pay only for the jobs it runs.</p>
+    <div class="bill" id="bill">
+      <div class="brow" data-job="leads"><div class="what"><b>Find a work email</b><span>instead of an Apollo seat</span></div><div class="was">$59/mo</div><div class="per">$0.005 / email</div></div>
+      <div class="brow" data-job="seo"><div class="what"><b>Keyword volume and CPC</b><span>instead of a Semrush plan</span></div><div class="was">$139/mo</div><div class="per">$0.09 / keyword list</div></div>
+      <div class="brow" data-job="ads"><div class="what"><b>A competitor's live Meta ads</b><span>instead of an ad-spy tool like SpyFu</span></div><div class="was">$39/mo</div><div class="per">$0.0019 / competitor</div></div>
+      <div class="brow" data-job="social"><div class="what"><b>Search X posts</b><span>instead of the X API Basic tier</span></div><div class="was">$200/mo</div><div class="per">$0.0006 / search</div></div>
+      <div class="brow"><div class="what"><b>Check an email will deliver</b><span>instead of a Hunter plan</span></div><div class="was">$34/mo</div><div class="per">$0 / check</div></div>
+    </div>
+    <div class="total">
+      <div class="t">All five: <s>$471 a month</s> &nbsp;→&nbsp; <b>cents per job</b></div>
+      <button class="cta" type="button" data-cta="bill">Start free <span class="arr" aria-hidden="true">→</span></button>
+    </div>
+    <p class="fine">Monthly prices are each vendor's entry plan, October 2026. Per-job prices are what treg.to charged on real runs on 12 Oct 2026, with no markup; another provider can cost more. Already pay for one of these tools? Connect your key and treg.to won't charge for those jobs.</p>
+  </div>
+</section>
+
+<section class="sec wrap" aria-labelledby="stepsH">
+  <h2 id="stepsH">Set up once. Then just ask.</h2>
+  <p class="lede">You need an AI agent like Claude Code, Codex, Cursor or Claude.ai. Nothing else to install by hand.</p>
+  <div class="steps">
+    <div class="step"><div class="n">01</div><h3>Sign up free</h3><p id="step1">Click <b>Start free</b> and continue with Google. You get $1 of credit. No card.</p></div>
+    <div class="step"><div class="n">02</div><h3>Paste your setup line</h3><p>Pick your agent and we show you one line with your key. Paste it into your agent's chat and press Enter. It sets itself up in about 30 seconds.</p></div>
+    <div class="step"><div class="n">03</div><h3>Ask for what you need</h3><p>In the same chat, type the job: <span id="stepAsk">"Find dentists in Sydney with phone number and website."</span> Your agent runs it and tells you what it cost.</p></div>
+  </div>
+
+  <div class="quotes">
+    <a class="quote" href="https://www.linkedin.com/posts/daviscon_i-replaced-apollo-and-clay-with-a-tool-that-activity-7511811289363464192-GcVX" target="_blank" rel="noopener"><q>Under 3 minutes: 1,000 businesses, 953 phone numbers, 713 websites, 300+ emails. Total cost: $3.75</q><span class="by">Connor Davis, founder of Outbox · LinkedIn</span></a>
+    <a class="quote" href="https://x.com/jesse_altman/status/2108909681657651426" target="_blank" rel="noopener"><q>nuked 4 monthly subs… saving 5 figs a year</q><span class="by">@jesse_altman, GTM across a VC portfolio · X</span></a>
+    <a class="quote" href="https://x.com/pfernan95dev/status/2102856122054979988" target="_blank" rel="noopener"><q>First result was me. The next six are people I actually want to talk to</q><span class="by">@pfernan95dev, indie iOS developer · X</span></a>
+  </div>
+
+  <div class="trust">
+    <span>No card to start</span><span>Prepaid credit, so no surprise bills</span><span>Use your own keys at no extra charge</span><span>Open source</span>
+  </div>
+</section>
+
+<section class="final" id="final">
+  <h2 id="finalH">Let your agent get the data. Stop paying monthly for it.</h2>
+  <button class="cta" type="button" data-cta="final">Start free <span class="arr" aria-hidden="true">→</span></button>
+  <div class="under">$1 free credit · no card</div>
+</section>
+</main>
+
+<footer>
+  <span>© 2026 treg.to · open source</span>
+  <span><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="https://github.com/superdesigndev/treg" target="_blank" rel="noopener">GitHub</a></span>
+</footer>
+
+<div class="scrim" id="signin-scrim">
+  <div class="smodal" role="dialog" aria-modal="true" aria-labelledby="signinH">
+    <button class="cls" id="signinClose" type="button" aria-label="Close">✕</button>
+    <h3 id="signinH">Start free</h3>
+    <p>Your first sign-in creates your account with $1 of free credit.</p>
+    <a class="pill dark" href="/auth/google" data-method="google">Continue with Google</a>
+    <a class="pill" href="/auth/github" data-method="github">Continue with GitHub</a>
+    <div class="div">or email a code</div>
+    <div id="em-step1">
+      <input id="em-input" type="email" placeholder="you@work.com" autocomplete="email"/>
+      <button class="pill" id="em-btn1" type="button">Email me a sign-in code</button>
+    </div>
+    <div id="em-step2" style="display:none">
+      <input id="em-code" inputmode="numeric" placeholder="6-digit code" autocomplete="one-time-code"/>
+      <button class="pill dark" id="em-btn2" type="button">Sign in</button>
+    </div>
+    <div class="err" id="em-err"></div>
+  </div>
+</div>
+
+<div class="scrim" id="send-scrim">
+  <div class="smodal" role="dialog" aria-modal="true" aria-labelledby="sendH">
+    <button class="cls" id="sendClose" type="button" aria-label="Close">✕</button>
+    <h3 id="sendH">Set up on your computer</h3>
+    <p>treg.to runs in an AI agent like Claude Code, Codex or Cursor. We'll email you the link to open there. $1 free credit, no card.</p>
+    <form class="sendf" id="sheetSend" data-where="sheet" novalidate>
+      <div class="row">
+        <input type="email" placeholder="you@work.com" autocomplete="email" aria-label="Your email">
+        <button class="cta" type="submit">Email me the setup link</button>
+      </div>
+      <div class="msg" role="status"></div>
+    </form>
+    <button class="here" type="button" data-here>Or sign up on this phone</button>
+  </div>
+</div>
+
+<div class="stick touch-only" id="stick">
+  <button class="cta" type="button" id="stickBtn" tabindex="-1">Email me the setup link</button>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  function $(id) { return document.getElementById(id); }
+  function track(ev, props) { try { if (window.TregTracking) window.TregTracking.capture(ev, props || {}); } catch (e) {} }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  /* ---------- one headline and one real run per ad group (?job=) ----------
+     Every run below happened on 12 Oct 2026; the figures are what treg.to returned and charged. */
+  var JOBS = {
+    leads: {
+      h1: 'Lead lists from your AI agent. <span class="no">No Apollo seat.</span>',
+      ask: 'Find dentists in Sydney with phone number and website, save as leads.csv',
+      tool: 'Google Maps places',
+      out: ['✓ Saved leads.csv', '  100 dentists · 98 with phone · 96 with website'],
+      cost: '$0.00015', was: 'Apollo $59/mo',
+      close: 'Get your next lead list from your agent. Skip the $59 Apollo seat.',
+      sub: 'Ask Claude Code, Codex or Cursor for a lead list in plain English. It finds the businesses, phone numbers, websites and work emails, and you pay cents per job instead of a monthly seat.'
+    },
+    seo: {
+      h1: 'Keyword data from your AI agent. <span class="no">No Semrush plan.</span>',
+      ask: 'Monthly Google searches and CPC for: crm for dentists, dental practice software, dental crm',
+      tool: 'Google keyword volume',
+      out: ['  dental practice software   390/mo   CPC $19.06', '  crm for dentists           140/mo   CPC $21.08', '  dental crm                 140/mo   CPC $21.08'],
+      cost: '$0.09', was: 'Semrush $139/mo',
+      close: 'Get keyword data from your agent. Skip the $139 Semrush plan.',
+      sub: 'Ask Claude Code, Codex or Cursor for search volume, CPC and the live Google results for your keywords. You pay cents per lookup instead of a monthly plan.'
+    },
+    ads: {
+      h1: 'Competitor ads from your AI agent. <span class="no">No ad-spy subscription.</span>',
+      ask: 'Pull every ad Notion is running on Facebook and Instagram, save as ads.csv',
+      tool: 'Meta Ad Library',
+      out: ['✓ Saved ads.csv', '  30 live ads · copy, landing page, start date'],
+      cost: '$0.0019', was: 'SpyFu $39/mo',
+      close: 'See what your competitors run, from your agent. Skip the ad-spy subscription.',
+      sub: 'Ask Claude Code, Codex or Cursor for every ad a competitor runs on Facebook, Instagram and Google, with copy and landing pages. You pay cents per competitor instead of a monthly plan.'
+    },
+    social: {
+      h1: 'X and TikTok data from your AI agent. <span class="no">No $200 X API.</span>',
+      ask: "Find today's X posts about AI agents, with author, followers and likes",
+      tool: 'X search',
+      out: ['✓ 20 posts', '  author · followers · likes · link'],
+      cost: '$0.0006', was: 'X API $200/mo',
+      close: 'Get X and TikTok data from your agent. Skip the $200 X API.',
+      sub: 'Ask Claude Code, Codex or Cursor for the posts, creators and trends on X and TikTok. You pay fractions of a cent per search instead of $200 a month.'
+    }
+  };
+  var key = new URLSearchParams(location.search).get('job');
+  var job = JOBS[key] || JOBS.leads;
+  if (JOBS[key]) {
+    $('heroH1').innerHTML = job.h1; $('heroSub').textContent = job.sub; $('finalH').textContent = job.close;
+    /* the bill leads with the row this visitor came for */
+    var mine = document.querySelector('.brow[data-job="' + key + '"]');
+    if (mine) { mine.classList.add('mine'); mine.parentNode.insertBefore(mine, mine.parentNode.firstChild); }
+  }
+  $('stepAsk').textContent = '"' + job.ask.replace(/, save as [a-z]+\.csv$/, '') + '."';
+
+  var lines = [
+    '<div class="ln ask"><b>&gt;</b> ' + esc(job.ask) + '</div>',
+    '<div class="ln tool">⏺ treg.to · <em>' + esc(job.tool) + '</em></div>'
+  ].concat(job.out.map(function (l, i) { return '<div class="ln ' + (i === 0 && l.charAt(0) === '✓' ? 'ok' : 'row') + '">' + esc(l) + '</div>'; }))
+   .concat(['<div class="ln"><span class="cost">cost ' + esc(job.cost) + ' <s>' + esc(job.was) + '</s></span></div>']);
+  var term = $('term');
+  term.innerHTML = lines.join('');
+  var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  term.querySelectorAll('.ln').forEach(function (el, i) {
+    if (reduced) el.classList.add('in');
+    else setTimeout(function () { el.classList.add('in'); }, 250 + i * (i < 2 ? 700 : 380));
+  });
+
+  /* the strike-through runs when the bill scrolls into view */
+  var bill = $('bill');
+  if ('IntersectionObserver' in window && !reduced) {
+    new IntersectionObserver(function (es, o) { es.forEach(function (e) { if (e.isIntersecting) { bill.classList.add('seen'); o.disconnect(); } }); }, { threshold: .4 }).observe(bill);
+  } else bill.classList.add('seen');
+
+  /* ---------- the only action: Start free. Signed in → the dashboard's setup; otherwise sign in. ---------- */
+  var scrim = $('signin-scrim');
+  function openSignin(where) {
+    scrim.classList.add('open'); track('start_signin_opened', { where: where, job: key || 'none' });
+    setTimeout(function () { var g = scrim.querySelector('.pill.dark'); if (g) g.focus(); }, 30);
+  }
+  function closeSignin() { scrim.classList.remove('open'); }
+  function start(where) {
+    track('start_cta_clicked', { where: where, job: key || 'none' });
+    fetch('/auth/me', { credentials: 'same-origin' })
+      .then(function (r) { if (r.ok) location.href = '/app'; else openSignin(where); })
+      .catch(function () { openSignin(where); });
+  }
+  /* ---------- phones: the action is "email me the setup link", to open where an agent runs ---------- */
+  var touch = matchMedia('(hover: none) and (pointer: coarse)').matches;
+  var sendScrim = $('send-scrim'), sent = false;
+  function openSend(where) {
+    $('sheetSend').setAttribute('data-where', where);
+    sendScrim.classList.add('open'); track('start_send_opened', { where: where, job: key || 'none' });
+    setTimeout(function () { var i = $('sheetSend').querySelector('input'); if (i && !sent) i.focus(); }, 30);
+  }
+  function closeSend() { sendScrim.classList.remove('open'); }
+  function sendLink(form) {
+    var input = form.querySelector('input'), msg = form.querySelector('.msg'), btn = form.querySelector('button[type=submit]');
+    var em = input.value.trim(), where = form.getAttribute('data-where');
+    if (!em) { msg.className = 'msg err'; msg.textContent = 'Enter your email address.'; input.focus(); return; }
+    btn.disabled = true; btn.textContent = 'Sending…'; msg.textContent = '';
+    fetch('/start/send-link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: em, job: key || '' }) })
+      .then(readJson)
+      .then(function (d) {
+        sent = true; updateStick();
+        document.querySelectorAll('.sendf').forEach(function (f) {
+          f.classList.add('sent');
+          f.querySelector('.msg').className = 'msg';
+          f.querySelector('.msg').textContent = 'Sent to ' + em + '. Open it on your computer to set up.';
+        });
+        if (d.dev_link) console.log('[start] dev link', d.dev_link);
+        track('start_link_sent', { where: where, job: key || 'none' });
+      })
+      .catch(function (e2) { msg.className = 'msg err'; msg.textContent = e2.message; track('start_link_failed', { where: where }); })
+      .then(function () { btn.disabled = false; btn.textContent = 'Email me the setup link'; });
+  }
+  document.querySelectorAll('.sendf').forEach(function (f) {
+    f.addEventListener('submit', function (e) { e.preventDefault(); sendLink(f); });
+  });
+  document.querySelectorAll('[data-here]').forEach(function (b) {
+    b.addEventListener('click', function () { closeSend(); start('phone-here'); });
+  });
+  $('sendClose').addEventListener('click', closeSend);
+  sendScrim.addEventListener('click', function (e) { if (e.target === sendScrim) closeSend(); });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSend(); });
+
+  if (touch) $('step1').innerHTML = 'On your computer, open the link we email you and continue with Google. You get $1 of credit. No card.';
+  document.querySelectorAll('[data-cta]').forEach(function (b) {
+    if (touch) b.innerHTML = 'Email me the setup link';
+    b.addEventListener('click', function () { var w = b.getAttribute('data-cta'); if (touch) openSend(w); else start(w); });
+  });
+
+  /* the sticky bar: on phones, once the hero form has scrolled away, whenever no other button is on screen */
+  var stick = $('stick'), heroGone = false, inView = {};
+  function updateStick() {
+    var other = Object.keys(inView).some(function (k) { return inView[k]; });
+    stick.classList.toggle('on', touch && heroGone && !other && !sent);
+  }
+  if (touch && 'IntersectionObserver' in window) {
+    new IntersectionObserver(function (es) { es.forEach(function (e) { heroGone = !e.isIntersecting && e.boundingClientRect.top < 0; }); updateStick(); }).observe($('heroSend'));
+    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { inView[e.target.getAttribute('data-cta')] = e.isIntersecting; }); updateStick(); });
+    document.querySelectorAll('[data-cta="bill"], [data-cta="final"]').forEach(function (b) { io.observe(b); });
+  }
+  $('stickBtn').addEventListener('click', function () { openSend('sticky'); });
+  $('navSignin').addEventListener('click', function () { start('nav'); });
+  $('signinClose').addEventListener('click', closeSignin);
+  scrim.addEventListener('click', function (e) { if (e.target === scrim) closeSignin(); });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSignin(); });
+  scrim.querySelectorAll('[data-method]').forEach(function (a) { a.addEventListener('click', function () { track('start_signin_method', { method: a.getAttribute('data-method') }); }); });
+
+  function readJson(r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) throw new Error(d.detail || ('error ' + r.status)); return d; }); }
+  function emailStart() {
+    var em = $('em-input').value.trim(), err = $('em-err');
+    if (!em) { err.textContent = 'Enter your email address.'; return; }
+    $('em-btn1').textContent = 'Sending…'; err.textContent = '';
+    track('start_signin_method', { method: 'email' });
+    fetch('/auth/email/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: em }) })
+      .then(readJson)
+      .then(function (d) {
+        $('em-step1').style.display = 'none'; $('em-step2').style.display = 'block';
+        if (d.dev_code) { $('em-code').value = d.dev_code; err.style.color = 'var(--green)'; err.textContent = 'dev mode: your code is ' + d.dev_code; }
+        else { err.style.color = ''; }
+        $('em-code').focus();
+      })
+      .catch(function (e2) { err.textContent = e2.message; $('em-btn1').textContent = 'Email me a sign-in code'; });
+  }
+  function emailVerify() {
+    var em = $('em-input').value.trim(), code = $('em-code').value.trim(), err = $('em-err');
+    if (!code) return;
+    $('em-btn2').textContent = 'Verifying…'; err.textContent = '';
+    fetch('/auth/email/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: em, code: code }) })
+      .then(readJson)
+      .then(function () { location.href = '/app'; })
+      .catch(function (e2) { err.textContent = e2.message || "That code didn't work."; $('em-btn2').textContent = 'Sign in'; });
+  }
+  $('em-btn1').addEventListener('click', emailStart);
+  $('em-input').addEventListener('keyup', function (e) { if (e.key === 'Enter') emailStart(); });
+  $('em-btn2').addEventListener('click', emailVerify);
+  $('em-code').addEventListener('keyup', function (e) { if (e.key === 'Enter') emailVerify(); });
+
+  track('start_viewed', { job: key || 'none', device: touch ? 'touch' : 'desktop' });
+})();
+</script>
+<script src="/sitetrack.js"></script>
+<script src="/adtrack.js"></script>
+<script src="/gtag.js"></script>
+</body>
+</html>

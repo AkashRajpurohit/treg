@@ -3912,6 +3912,71 @@ async def people_search_page(request: Request):
     return _static_page("people-search.html", request)
 
 
+@app.get("/start", include_in_schema=False)
+async def start_page(request: Request):
+    """The paid-traffic landing page. It only sells: use data in your agent, drop the monthly
+    subscriptions, one action (Start free → sign in → /app). `?job=` comes from the ad group so the
+    headline, the real run and the bill arrive matched to the search. Hosted-only (it quotes treg.to's
+    free credit and vendor plans), `noindex` and out of the sitemap: an ad destination, not a search page."""
+    if not _hosted():
+        raise HTTPException(status_code=404)
+    resp = _static_page("start.html", request)
+    resp.headers["X-Robots-Tag"] = "noindex"
+    return resp
+
+
+# The example ask each /start job ends its email on; the same jobs, in the same words, as the page.
+_START_ASKS = {
+    "leads": "Find dentists in Sydney with phone number and website",
+    "seo": "Monthly Google searches and CPC for: crm for dentists, dental practice software, dental crm",
+    "ads": "Pull every ad Notion is running on Facebook and Instagram",
+    "social": "Find today's X posts about AI agents, with author, followers and likes",
+}
+_START_LINK_NS = "start_link"
+_EMAIL_SHAPE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+@app.post("/start/send-link", include_in_schema=False)
+async def start_send_link(request: Request, db: AsyncSession = Depends(get_session)):
+    """A phone visitor asks for the setup link by email, to open on their computer: treg.to runs in
+    an agent on a computer, and a phone signup lands on a setup screen they cannot use. No account is
+    made here; the link is /start again, so they sign up where they can paste. It mails any address
+    unauthenticated, so the same refusals as the sign-in code apply, plus per-address, per-IP and
+    global sliding windows: it must not become a way to send treg.to mail to strangers."""
+    from .. import email as email_sender, ratestore
+    from ..application import signup
+    from ..domain.identity.access import _is_machine_email, _norm_email
+    from .auth import _client_ip
+
+    if not _hosted():
+        raise HTTPException(status_code=404)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    email = _norm_email(str(body.get("email") or ""))
+    job = str(body.get("job") or "")
+    if not _EMAIL_SHAPE.match(email) or len(email) > 254:
+        raise HTTPException(status_code=400, detail="Enter a valid email address.")
+    if _is_machine_email(email) or signup.blocked_email(email, "start_link"):
+        raise HTTPException(status_code=403, detail="We can't send to that address.")
+    ok = await ratestore.rate_check(
+        db, _START_LINK_NS,
+        [(f"e:{email}", 2), (f"i:{_client_ip(request)}", 5), ("all", 500)], window_s=3600)
+    await db.commit()
+    if not ok:
+        raise HTTPException(status_code=429, detail="Already sent. Check your inbox, or try again in an hour.")
+    base = get_settings().public_url.rstrip("/")
+    link = f"{base}/start?{'job=' + job + '&' if job in _START_ASKS else ''}utm_source=start-email&utm_medium=email"
+    if get_settings().expose_dev_code:
+        print(f"[start-link] {email} -> {link}")
+        return {"sent": True, "dev_link": link}
+    if not await email_sender.send_setup_link(email, link, _START_ASKS.get(job, "")):
+        raise HTTPException(status_code=502, detail="We couldn't send that. Try again in a minute.")
+    return {"sent": True}
+
+
 @app.get("/leads-signals", include_in_schema=False)
 async def leads_signals_page(request: Request):
     """Landing page for the buyer-signals launch ("Claude for Monitor Leads Signal"). Built from the
