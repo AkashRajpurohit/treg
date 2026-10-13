@@ -386,7 +386,9 @@ AGENTS: dict[str, dict] = {
         # {n} is interpolated from the catalog count at render time.
         "install_steps": [
             "Give ChatGPT this line: <b>set up treg — https://treg.to/llms.txt</b>",
-            "ChatGPT reads the skill, signs you in, and is ready to call {n} APIs.",
+            "ChatGPT reads it and tells you the one step it cannot do itself: in ChatGPT's settings, "
+            "add <code>https://treg.to/mcp/</code> as a custom connector, choose OAuth and sign in. "
+            "That connects it to {n} APIs.",
             "Ask for what you want done. ChatGPT searches the catalog, tells you the price, and "
             "calls the endpoint. You never hold a provider key.",
         ],
@@ -648,10 +650,12 @@ AGENTS["claude"] = {
         "accounts to open."),
     "install_steps": [
         "In Claude, send this in the chat: <code>set up treg &mdash; https://treg.to/llms.txt</code>",
-        "It reads that page and sets itself up. If it asks for a key, give it your team token from "
-        "the treg.to dashboard (header <code>X-Treg-Token</code>).",
-        "Your first team starts with $1.00 of free calls. No card, no subscription, no seats.",
-        "Ask for what you want done. Claude searches the catalog, tells you the price, and calls the "
+        "Claude reads it and points you to the one step it cannot do from the cloud: "
+        "<b>Settings &rarr; Connectors &rarr; Add custom connector</b>, name it treg, paste "
+        "<code>https://treg.to/mcp/</code> and click Connect.",
+        "Sign in on treg.to's consent screen and pick the team it spends from. Your first team "
+        "starts with $1.00 of free calls.",
+        "Turn the treg connector on in a chat's tools menu, then ask for what you want done. Claude searches the catalog, tells you the price, and calls the "
         "endpoint. You never hold a provider key.",
     ],
     "install_image": None,
@@ -696,9 +700,9 @@ AGENTS["claude-code"] = {
         "keys at the provider's rate with $0.000 markup, and your own keys are never metered."),
     "install_steps": [
         "In Claude Code, send this in the chat: <code>set up treg &mdash; https://treg.to/llms.txt</code>",
-        "It reads that page and registers treg.to as an MCP server for you. Prefer to do it "
-        "yourself? <code>curl -fsSL https://treg.to/install.sh | sh</code> then "
-        "<code>treg login</code> and <code>treg mcp install</code>.",
+        "It installs the treg CLI and skill and signs you in. Run <code>treg mcp install</code> to "
+        "add the MCP tools as well. By hand: <code>curl -fsSL https://treg.to/install.sh | sh</code>, "
+        "<code>treg login</code>, <code>treg mcp install</code>.",
         "Your first team starts with $1.00 of free calls. No card, no subscription, no seats.",
         "Ask for what you want done, or run <code>treg catalog get &lt;endpoint-id&gt;</code> for "
         "the price and parameters, then <code>treg call &lt;endpoint-id&gt;</code>.",
@@ -816,8 +820,8 @@ AGENTS["hermes"] = {
         "is below). <code>treg mcp install</code> detects Hermes and prints manual configuration "
         "instructions rather than writing the file.",
         "In Hermes, run <code>/reload-mcp</code>. The tools appear as "
-        "<code>mcp__treg__catalog_search</code>, <code>mcp__treg__catalog_get</code> and "
-        "<code>mcp__treg__call</code>.",
+        "<code>mcp_treg_catalog_search</code>, <code>mcp_treg_catalog_get</code> and "
+        "<code>mcp_treg_call</code>.",
         "Your first team starts with $1.00 of free calls. No card, no subscription, no seats.",
     ],
     "install_image": None,
@@ -904,8 +908,9 @@ AGENTS["cursor"] = {
         "balance that starts with $1.00 free."),
     "install_steps": [
         "In Cursor's agent chat, send: <code>set up treg &mdash; https://treg.to/llms.txt</code>",
-        "It reads that page and sets itself up. If it asks for a key, give it your team token from "
-        "the treg.to dashboard (header <code>X-Treg-Token</code>).",
+        "It installs the treg CLI and skill and signs you in. Then run <code>treg mcp install</code>, "
+        "which writes treg.to into <code>~/.cursor/mcp.json</code> so Cursor's agent gets the MCP "
+        "tools.",
         "Your first team starts with $1.00 of free calls. No card, no subscription, no seats.",
         "Ask for what you want done. Cursor searches the catalog, tells you the price, and calls the "
         "endpoint. You never hold a provider key.",
@@ -929,6 +934,99 @@ AGENTS["cursor"] = {
              "measured reliability, and Cursor picks, or you tell it how. treg.to does not route or "
              "fail over between providers automatically."),
         ],
+}
+
+# Codex (OpenAI's coding agent) reads MCP servers from ~/.codex/config.toml, and `treg mcp install`
+# writes that table (mcp_install._write_toml_agent). Two things make Codex its own page, both checked
+# against codex-cli 0.162 on 2026-10-13: its default shell sandbox has no network, so the treg CLI
+# cannot reach treg.to from inside Codex while MCP calls can; and `codex exec` runs a prompt headless,
+# which is how a recurring check runs from cron or CI. The token goes inline, never by env var: see
+# the incident in mcp_install's docstring.
+AGENTS["codex"] = {
+    "name": "Codex",
+    "h1_noun": "MCP server",
+    "h1": "Codex MCP server: {n} APIs for Codex, headless runs included",
+    "title": "Codex MCP server: {n} APIs, no keys | treg.to",
+    "description": (
+        "Add treg.to to Codex's config.toml and it can call {n} APIs across {p} platforms: SERPs, "
+        "keyword data, backlinks, page fetches, enrichment. Works in codex exec for scheduled runs, "
+        "priced per call at the provider's own rate with no markup."),
+    "definition": (
+        "treg.to is an MCP server for Codex that gives it {n} ready-to-call APIs across {p} "
+        "platforms: SERPs and keyword data, backlinks, page fetching, people and company enrichment. "
+        "One table in ~/.codex/config.toml; calls run on treg.to's keys at the provider's rate "
+        "with $0.000 markup, and your own keys are never metered."),
+    "install_steps": [
+        "In your own terminal, not inside Codex (its sandbox has no network): "
+        "<code>curl -fsSL https://treg.to/install.sh | sh</code>, then <code>treg login</code>.",
+        "Run <code>treg mcp install</code>. It writes treg.to into <code>~/.codex/config.toml</code> "
+        "with your token inline (the block is below). With a dashboard key, "
+        "<code>curl -fsSL https://treg.to/install.sh | sh -s -- --token &lt;key&gt;</code> does "
+        "all of it in one line.",
+        "Check with <code>codex mcp list</code>: treg shows as enabled. Restart Codex if it was "
+        "already open.",
+        "Your first team starts with $1.00 of free calls. No card, no subscription, no seats.",
+    ],
+    "install_image": None,
+    "focus": ("Search & rankings", "Web & scraping"),
+    "roles": ("developers", "SEO engineers", "growth engineers", "indie hackers", "data engineers"),
+    "guide": [
+        {"id": "config", "seclab": "The config",
+         "h2": "The table in ~/.codex/config.toml",
+         "html": (
+             "<pre><code>[mcp_servers.treg]\n"
+             "url = \"https://treg.to/mcp/\"\n"
+             "http_headers = { \"Authorization\" = \"Bearer &lt;your team token&gt;\" }</code></pre>"
+             "<p>This is what <code>treg mcp install</code> writes. Keep the token inline. Codex can "
+             "also read a bearer token from an environment variable, but a variable set in one shell "
+             "is gone when the Codex app restarts, treg.to then refuses the call, and Codex drops "
+             "the server without saying so. Each call shows in Codex as "
+             "<code>treg/catalog_search</code>, <code>treg/call</code> and so on.</p>")},
+        {"id": "sandbox", "seclab": "MCP, not the shell",
+         "h2": "Why Codex should call treg.to over MCP",
+         "html": (
+             "<p>Codex runs its shell commands in a sandbox, and by default that sandbox has no "
+             "network. Checked on 13 Oct with codex-cli 0.162: <code>curl https://treg.to/llms.txt</code> "
+             "from inside Codex failed with &ldquo;Could not resolve host&rdquo;, while the MCP "
+             "search in the same setup came back with results. MCP calls leave from Codex itself, "
+             "not from the sandbox, so they work with no change.</p>"
+             "<p>Want the CLI for a batch, so 500 rows never pass through the context window? Turn "
+             "network on for the workspace sandbox:</p>"
+             "<pre><code>[sandbox_workspace_write]\n"
+             "network_access = true</code></pre>")},
+        {"id": "exec", "seclab": "Headless",
+         "h2": "A weekly rank check with codex exec",
+         "html": (
+             "<p><code>codex exec</code> runs one prompt with no chat window and loads the same MCP "
+             "servers, so cron or a CI job can run a check and leave a file behind. "
+             "<code>-s workspace-write</code> lets it write that file:</p>"
+             "<pre><code>codex exec -s workspace-write \"Using treg, get the Google top 10 for each "
+             "keyword in keywords.txt (US, desktop). Show the price per lookup before you start. "
+             "Write keyword, our position (or blank), and the URL that ranks to ranks.csv, and add "
+             "a line to ranks-history.csv with today's date.\"</code></pre>"
+             "<p>treg.to answers the calls; the schedule is yours. Where several SERP providers do the "
+             "job they are listed side by side with prices, and Codex, or you, picks one. The "
+             "providers and their measured success rates are on "
+             "<a href=\"/use-cases/google-results-for-a-keyword\">Google results for a keyword</a>.</p>")},
+    ],
+    "faq": [
+        ("Is treg.to free to use in Codex?",
+         "Adding it is free and your first team starts with $1.00 of calls. After that each call is "
+         "metered from the team's prepaid balance at the provider's own rate, with no markup, no "
+         "subscription and no seats. Calls on your team's own keys are free."),
+        ("Do I need API keys from the providers?",
+         "No. treg.to makes the upstream request on its own key and relays the answer, so Codex "
+         "only holds your treg.to team token. If your team already pays for a provider, register "
+         "that key and those calls are never metered."),
+        ("Why can't Codex run the treg CLI?",
+         "It can, once its sandbox has network. By default Codex runs shell commands with no "
+         "network, so the CLI cannot reach treg.to. The MCP tools work without that change; set "
+         "network_access = true under [sandbox_workspace_write] when you want the CLI."),
+        ("Does treg.to pick the provider for me?",
+         "No. Where several providers do one job they are shown side by side with prices and "
+         "measured reliability, and Codex picks, or you tell it how. treg.to does not route or "
+         "fail over between providers automatically."),
+    ],
 }
 
 USE_CASE_PAGES["verify-an-email"] = {
