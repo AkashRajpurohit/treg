@@ -270,7 +270,7 @@
     <a class="pill" href="/auth/github" data-method="github">Continue with GitHub</a>
     <div class="div">or email a code</div>
     <div id="em-step1">
-      <input id="em-input" type="email" placeholder="you@work.com" autocomplete="email"/>
+      <input id="em-input" type="email" data-captcha="email_start" placeholder="you@work.com" autocomplete="email"/>
       <button class="pill" id="em-btn1" type="button">Email me a sign-in code</button>
     </div>
     <div id="em-step2" style="display:none">
@@ -283,6 +283,7 @@
 
 <script src="/sitetrack.js"></script>
 <script src="/adtrack.js"></script>
+<script src="/captcha.js" defer></script>
 <script>
 (function () {
   'use strict';
@@ -389,7 +390,7 @@
     if (!em) { err.textContent = 'Enter your email address.'; return; }
     $('em-btn1').textContent = 'Sending…'; err.textContent = '';
     track('start_signin_method', { method: 'email' });
-    fetch('/auth/email/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: em }) })
+    (window.tregCaptcha ? tregCaptcha.token('email_start') : Promise.resolve('')).then(function (t) { return fetch('/auth/email/start', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: em, captcha_token: t }) }); })
       .then(readJson)
       .then(function (d) {
         $('em-step1').style.display = 'none'; $('em-step2').style.display = 'block';
