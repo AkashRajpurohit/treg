@@ -192,7 +192,7 @@
 <main>
 <section class="wrap hero">
   <div>
-    <div class="eyebrow" aria-label="Designed for AI agents like Claude Code, Codex, Grok Bot and Hermes"><span aria-hidden="true">Designed for <b class="rot" id="rot">Claude Code</b></span></div>
+    <div class="eyebrow" aria-label="Designed for AI agents like Claude Code, Codex, Cursor, Grokbot and Hermes"><span aria-hidden="true">Designed for <b class="rot" id="rot">Claude Code</b></span></div>
     <h1 id="heroH1">Your AI agent gets the data. <span class="no">You cancel the subscriptions.</span></h1>
     <p class="sub" id="heroSub">Connect Claude Code, Codex or Cursor to lead lists, work emails, keyword data, competitor ads and social posts. Ask in plain English and pay cents per job instead of a monthly plan.</p>
     <button class="cta" type="button" data-cta="hero">Start free <span class="arr" aria-hidden="true">→</span></button>
@@ -374,7 +374,7 @@
   });
 
   /* the agent named over the headline rotates; with reduced motion it stays general */
-  var rot = $('rot'), AGENTS = ['Claude Code', 'Codex', 'Grok Bot', 'Hermes'], ai = 0;
+  var rot = $('rot'), AGENTS = ['Claude Code', 'Codex', 'Cursor', 'Grokbot', 'Hermes'], ai = 0;
   if (reduced) rot.textContent = 'AI agents';
   else setInterval(function () {
     rot.classList.add('out');
