@@ -190,7 +190,7 @@
     <h1 id="heroH1">Your AI agent gets the data. <span class="no">You cancel the subscriptions.</span></h1>
     <p class="sub" id="heroSub">Connect Claude Code, Codex or Cursor to lead lists, work emails, keyword data, competitor ads and social posts. Ask in plain English and pay cents per job instead of a monthly plan.</p>
     <button class="cta" type="button" data-cta="hero">Start free <span class="arr" aria-hidden="true">→</span></button>
-    <div class="under">$1 free credit · no card · about 2 minutes to set up</div>
+    <div class="under"><span data-free>$1 free, about 100 work emails</span> · no card · about 2 minutes to set up</div>
     <div class="works">
       <span class="logos">
         <img src="https://unpkg.com/@lobehub/icons-static-png@latest/light/claudecode-color.png" alt="Claude Code" title="Claude Code">
@@ -233,7 +233,7 @@
   <h2 id="stepsH">Set up once. Then just ask.</h2>
   <p class="lede">You need an AI agent like Claude Code, Codex, Cursor or Claude.ai. Nothing else to install by hand.</p>
   <div class="steps">
-    <div class="step"><div class="n">01</div><h3>Sign up free</h3><p>Click <b>Start free</b> and continue with Google. You get $1 of credit. No card.</p></div>
+    <div class="step"><div class="n">01</div><h3>Sign up free</h3><p>Click <b>Start free</b> and continue with Google. You get $1 of credit, <span data-free-what>about 100 work emails</span>. No card.</p></div>
     <div class="step"><div class="n">02</div><h3>Paste your setup line</h3><p>Pick your agent and we show you one line with your key. Paste it into your agent's chat and press Enter, and it sets itself up. On Claude.ai you add treg.to as a connector instead, in two clicks.</p></div>
     <div class="step"><div class="n">03</div><h3>Ask for what you need</h3><p>In the same chat, type the job: <span id="stepAsk">"Find dentists in Sydney with phone number and website."</span> Your agent runs it and tells you what it cost.</p></div>
   </div>
@@ -252,7 +252,7 @@
 <section class="final" id="final">
   <h2 id="finalH">Let your agent get the data. Stop paying monthly for it.</h2>
   <button class="cta" type="button" data-cta="final">Start free <span class="arr" aria-hidden="true">→</span></button>
-  <div class="under">$1 free credit · no card</div>
+  <div class="under"><span data-free>$1 free, about 100 work emails</span> · no card</div>
 </section>
 </main>
 
@@ -299,7 +299,7 @@
       ask: 'Find work emails for the 24 people in leads.csv',
       tool: 'Work email finder',
       out: ['✓ Saved leads.csv', '  20 of 24 work emails found'],
-      cost: '$0.17', was: 'Clay $0.88', date: '13 Oct 2026',
+      cost: '$0.17', was: 'Clay $0.88', date: '13 Oct 2026', free: 'about 100 work emails',
       close: 'Get work emails from your agent, 5x cheaper than Clay.',
       sub: 'Ask Claude Code, Codex or Cursor to find work emails for your lead list in plain English. For the same 24 people, treg.to found 20 emails for $0.17. Clay found 18 and charged $0.88.'
     },
@@ -308,7 +308,7 @@
       ask: 'Monthly Google searches and CPC for: crm for dentists, dental practice software, dental crm',
       tool: 'Google keyword volume',
       out: ['  dental practice software   390/mo   CPC $19.06', '  crm for dentists           140/mo   CPC $21.08', '  dental crm                 140/mo   CPC $21.08'],
-      cost: '$0.09', was: 'Semrush $139.95/mo',
+      cost: '$0.09', was: 'Semrush $139.95/mo', free: 'about 10 keyword lists',
       close: 'Get keyword data from your agent. Skip the $139.95 Semrush plan.',
       sub: 'Ask Claude Code, Codex or Cursor for search volume, CPC and the live Google results for your keywords. You pay cents per lookup instead of a monthly plan.'
     },
@@ -317,7 +317,7 @@
       ask: 'Pull the live ads Notion is running on Facebook and Instagram, save as ads.csv',
       tool: 'Meta Ad Library',
       out: ['✓ Saved ads.csv', '  30 live ads · copy, landing page, start date'],
-      cost: '$0.0019', was: '',
+      cost: '$0.0019', was: '', free: 'ads from about 500 competitors',
       close: 'See what your competitors run, from your agent. Skip the ad-spy subscription.',
       sub: 'Ask Claude Code, Codex or Cursor for the ads a competitor is running on Facebook and Instagram, with copy, landing pages and start dates. You pay cents per competitor instead of a monthly plan.'
     },
@@ -326,7 +326,7 @@
       ask: "Find today's X posts about AI agents, with author, followers and likes",
       tool: 'X search',
       out: ['✓ 20 posts', '  author · followers · likes · link'],
-      cost: '$0.0006', was: 'X API $0.10',
+      cost: '$0.0006', was: 'X API $0.10', free: 'about 30,000 X posts',
       close: 'Get X data from your agent, 166x cheaper than the X API.',
       sub: 'Ask Claude Code, Codex or Cursor for posts, authors and engagement on X. Our run of 20 posts cost $0.0006; the official X API charges $0.005 a post, so $0.10.'
     }
@@ -340,6 +340,9 @@
     var mine = document.querySelector('.brow[data-job="' + key + '"]');
     if (mine) { mine.classList.add('mine'); mine.parentNode.insertBefore(mine, mine.parentNode.firstChild); }
   }
+  /* "$1 free" in units of this visitor's job: $1 over the run's price, rounded down */
+  document.querySelectorAll('[data-free]').forEach(function (el) { el.textContent = '$1 free, ' + job.free; });
+  document.querySelectorAll('[data-free-what]').forEach(function (el) { el.textContent = job.free; });
   $('stepAsk').textContent = '"' + job.ask.replace(/, save as [a-z]+\.csv$/, '') + '."';
 
   var lines = [
