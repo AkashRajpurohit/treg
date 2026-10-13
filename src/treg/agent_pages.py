@@ -386,9 +386,12 @@ AGENTS: dict[str, dict] = {
         # {n} is interpolated from the catalog count at render time.
         "install_steps": [
             "Give ChatGPT this line: <b>set up treg — https://treg.to/llms.txt</b>",
-            "ChatGPT reads it and tells you the one step it cannot do itself: in ChatGPT's settings, "
-            "add <code>https://treg.to/mcp/</code> as a custom connector, choose OAuth and sign in. "
-            "That connects it to {n} APIs.",
+            "ChatGPT reads it and tells you the one step it cannot do itself: add "
+            "<code>https://treg.to/mcp/</code> as a custom app, choose OAuth and sign in. That "
+            "connects it to {n} APIs.",
+            "Custom apps need ChatGPT's developer mode. On a Business or Enterprise workspace an "
+            "admin turns it on first; <a href=\"https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt\">"
+            "OpenAI's guide</a> has the steps for each plan.",
             "Ask for what you want done. ChatGPT searches the catalog, tells you the price, and "
             "calls the endpoint. You never hold a provider key.",
         ],
@@ -409,9 +412,11 @@ AGENTS: dict[str, dict] = {
              "rate. Every row on this page shows the lowest price for that job, and ChatGPT tells "
              "you the price before it spends it."),
             ("Does treg.to pick the provider for me?",
-             "No. Where several providers do the same job they are shown side by side with prices "
-             "and measured reliability, and ChatGPT (or you) chooses. treg.to does not route or "
-             "fail over between them automatically."),
+             "Only when it calls a routed tool, one whose id starts with treg. (treg.people.email.find). It "
+             "picks a provider for the job (your own keys first), moves to the next on an error or a "
+             "miss, and stops at the X-Treg-Route-Max-Cost cap. Any other endpoint is exactly the "
+             "provider named, and where several do one job they are shown side by side with prices and "
+             "measured reliability for ChatGPT, or you, to choose."),
         ],
     },
 }
@@ -650,12 +655,14 @@ AGENTS["claude"] = {
         "accounts to open."),
     "install_steps": [
         "In Claude, send this in the chat: <code>set up treg &mdash; https://treg.to/llms.txt</code>",
-        "Claude reads it and points you to the one step it cannot do from the cloud: "
-        "<b>Settings &rarr; Connectors &rarr; Add custom connector</b>, name it treg, paste "
-        "<code>https://treg.to/mcp/</code> and click Connect.",
+        "Claude reads it and points you to the one step it cannot do from the cloud: in Claude's "
+        "connector settings, add a custom connector named treg with the URL "
+        "<code>https://treg.to/mcp/</code>. On a Team or Enterprise plan an owner adds it for the "
+        "organization first, then you click Connect "
+        "(<a href=\"https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp\">Anthropic's steps</a>).",
         "Sign in on treg.to's consent screen and pick the team it spends from. Your first team "
         "starts with $1.00 of free calls.",
-        "Turn the treg connector on in a chat's tools menu, then ask for what you want done. Claude searches the catalog, tells you the price, and calls the "
+        "Turn treg on for a chat from the <b>+</b> menu, under Connectors, then ask for what you want done. Claude searches the catalog, tells you the price, and calls the "
         "endpoint. You never hold a provider key.",
     ],
     "install_image": None,
@@ -673,9 +680,11 @@ AGENTS["claude"] = {
              "a few cents for a verified work email. treg.to adds $0.000 on top of the provider's "
              "rate, and Claude tells you the price before it spends it."),
             ("Does treg.to pick the provider for me?",
-             "No. Where several providers do one job they are shown side by side with prices and "
-             "measured reliability, and Claude picks, or you tell it how. treg.to does not route or "
-             "fail over between providers automatically."),
+             "Only when it calls a routed tool, one whose id starts with treg. (treg.people.email.find). It "
+             "picks a provider for the job (your own keys first), moves to the next on an error or a "
+             "miss, and stops at the X-Treg-Route-Max-Cost cap. Any other endpoint is exactly the "
+             "provider named, and where several do one job they are shown side by side with prices and "
+             "measured reliability for Claude, or you, to choose."),
         ],
 }
 
@@ -930,9 +939,11 @@ AGENTS["cursor"] = {
              "a few cents for a verified work email. treg.to adds $0.000 on top of the provider's "
              "rate, and Cursor tells you the price before it spends it."),
             ("Does treg.to pick the provider for me?",
-             "No. Where several providers do one job they are shown side by side with prices and "
-             "measured reliability, and Cursor picks, or you tell it how. treg.to does not route or "
-             "fail over between providers automatically."),
+             "Only when it calls a routed tool, one whose id starts with treg. (treg.people.email.find). It "
+             "picks a provider for the job (your own keys first), moves to the next on an error or a "
+             "miss, and stops at the X-Treg-Route-Max-Cost cap. Any other endpoint is exactly the "
+             "provider named, and where several do one job they are shown side by side with prices and "
+             "measured reliability for Cursor, or you, to choose."),
         ],
 }
 
@@ -1023,9 +1034,11 @@ AGENTS["codex"] = {
          "network, so the CLI cannot reach treg.to. The MCP tools work without that change; set "
          "network_access = true under [sandbox_workspace_write] when you want the CLI."),
         ("Does treg.to pick the provider for me?",
-         "No. Where several providers do one job they are shown side by side with prices and "
-         "measured reliability, and Codex picks, or you tell it how. treg.to does not route or "
-         "fail over between providers automatically."),
+         "Only when it calls a routed tool, one whose id starts with treg. (treg.people.email.find). It "
+         "picks a provider for the job (your own keys first), moves to the next on an error or a "
+         "miss, and stops at the X-Treg-Route-Max-Cost cap. Any other endpoint is exactly the "
+         "provider named, and where several do one job they are shown side by side with prices and "
+         "measured reliability for Codex, or you, to choose."),
     ],
 }
 
@@ -3052,9 +3065,11 @@ AGENTS["grok-bot"] = {
          "the same MCP server that Claude, ChatGPT, Cursor and the rest connect to, answering the "
          "same token and the same catalog."),
         ("Does treg.to pick the provider for me?",
-         "No. Where several providers do the same job they are shown side by side with prices and "
-         "measured reliability, and Grok (or you) chooses. treg.to does not route or fail over "
-         "between them automatically."),
+         "Only when it calls a routed tool, one whose id starts with treg. (treg.people.email.find). It "
+         "picks a provider for the job (your own keys first), moves to the next on an error or a "
+         "miss, and stops at the X-Treg-Route-Max-Cost cap. Any other endpoint is exactly the "
+         "provider named, and where several do one job they are shown side by side with prices and "
+         "measured reliability for Grok, or you, to choose."),
     ],
 }
 

@@ -474,7 +474,12 @@ person to add `https://treg.to/mcp/` as a custom connector, and that is what bot
 say so instead of "it signs you in". The setup line in a local agent installs the CLI and skill and
 signs in but does not run `treg mcp install`, so the Claude Code and Cursor steps name that command.
 Hermes registers MCP tools as `mcp_<server>_<tool>` (single underscores, per its MCP docs), not
-Claude Code's `mcp__treg__…`. An agent without these keys
+Claude Code's `mcp__treg__…`. ChatGPT custom apps need developer mode (an admin enables it on
+Business/Enterprise) and claude.ai Team/Enterprise need an owner to add the connector first; both
+steps link the vendor's own guide rather than hard-coding menus that move. The agent FAQs' "does treg
+pick the provider?" now describes the routed `treg.<job>` tools (fallback on error or miss, capped by
+`X-Treg-Route-Max-Cost`) instead of "does not route"; the same stale line remains on several
+use-case pages and in CLAUDE.md. An agent without these keys
 renders exactly as before. Tests hold the overlap with the template page under 75%, every
 `treg call <id>` in a guide to an existing endpoint, every guide link to a 200, every category
 reachable from a focused page, the Hermes block to the same shape as `mcp_install`'s hint, and the
