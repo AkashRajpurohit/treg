@@ -6,6 +6,7 @@
 <title>Get the data in your AI agent, cancel the subscriptions | treg.to</title>
 <meta name="description" content="Connect Claude Code, Codex or Cursor to lead lists, work emails, keyword data, competitor ads and social posts with one key. Pay cents per job, not a monthly plan. $1 free credit.">
 <meta name="robots" content="noindex">
+<script>if (/[?&]device=phone(&|$)/.test(location.search)) document.documentElement.classList.add('as-phone');</script>
 <link rel="icon" href="/favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -161,6 +162,9 @@
     .desk-only { display: none; }
     .touch-only { display: block; }
   }
+  /* ?device=phone: preview the phone path on a computer */
+  .as-phone .desk-only { display: none; }
+  .as-phone .touch-only { display: block; }
   .sendf .row { display: flex; gap: 8px; flex-wrap: wrap; }
   .sendf input {
     flex: 1 1 220px; min-width: 0; font-family: var(--text); font-size: 16px; color: var(--ink);
@@ -439,7 +443,8 @@
       .catch(function () { openSignin(where); });
   }
   /* ---------- phones: the action is "email me the setup link", to open where an agent runs ---------- */
-  var touch = matchMedia('(hover: none) and (pointer: coarse)').matches;
+  var preview = document.documentElement.classList.contains('as-phone');
+  var touch = preview || matchMedia('(hover: none) and (pointer: coarse)').matches;
   var sendScrim = $('send-scrim'), sent = false;
   function openSend(where) {
     $('sheetSend').setAttribute('data-where', where);
@@ -541,7 +546,7 @@
   $('em-btn2').addEventListener('click', emailVerify);
   $('em-code').addEventListener('keyup', function (e) { if (e.key === 'Enter') emailVerify(); });
 
-  track('start_viewed', { job: key || 'none', device: touch ? 'touch' : 'desktop' });
+  track('start_viewed', { job: key || 'none', device: preview ? 'preview' : (touch ? 'touch' : 'desktop') });
 })();
 </script>
 <script src="/gtag.js"></script>
