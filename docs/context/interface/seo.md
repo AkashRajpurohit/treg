@@ -480,7 +480,11 @@ steps link the vendor's own guide rather than hard-coding menus that move. The a
 pick the provider?" now describes the routed `treg.<job>` tools (fallback on error or miss, capped by
 `X-Treg-Route-Max-Cost`) instead of "does not route". The same correction runs through every
 page whose job HAS a routed tool (find and verify an email, backlinks, a LinkedIn profile, X and
-TikTok post search, the lead-list workflow, the provider pages' "Same jobs" strip, /docs). Pages whose
+TikTok post search, phone numbers, keyword volume, the lead-list workflow, the provider pages'
+"Same jobs" strip, /docs), and the agent-facing files scope "does not choose between providers" to a
+provider's own id: llms.txt, skill.md (and the plugin copies `build_plugin.py` generates), the
+tutorial trio, and the "What happens if a provider fails?" answer on the enrichment, company,
+social and SEO landings (body and FAQ JSON-LD). Pages whose
 job has none (TikTok Shop, competitor ads, crypto, employee reviews, paid keywords) keep "compares,
 does not fail over", because there it is still true. The rule is AGENTS.md non-negotiable 4. An agent without these keys
 renders exactly as before. Tests hold the overlap with the template page under 75%, every

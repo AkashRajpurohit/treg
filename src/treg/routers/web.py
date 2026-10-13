@@ -3133,9 +3133,10 @@ treg's key and metered against your prepaid balance at the provider's own rate.<
 <p>Search by what you want to <i>do</i>, not by vendor: <code>GET /catalog/search?q=backlinks</code>.
 When several providers can do the same job, <code>/catalog/platforms/{slug}</code> lists them side by
 side with measured success rate, speed and price. <b>Choosing is yours</b>: a provider's own endpoint
-never fails over. The exception you opt into is a routed <code>treg.&lt;capability&gt;</code> endpoint,
-which picks the provider (your own key first), falls back on an error or a miss, and names the one
-that answered.</p>
+never switches to another provider. (If treg's own account for it is out, the same endpoint may be
+served through a disclosed relay, <code>X-Treg-Served-Via</code>.) To have treg choose, call a routed
+<code>treg.&lt;capability&gt;</code> endpoint: it picks the provider (your own key first), falls back
+on an error or a miss, and names the one that answered.</p>
 <p>The whole catalog is also browsable as pages: <a href="/catalog">/catalog</a>.</p>
 
 <h2>Other ways in</h2>

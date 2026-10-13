@@ -1131,8 +1131,9 @@ USE_CASE_PAGES["verify-an-email"] = {
         ("Can I run several verifiers over the same list?",
          "Yes, they are all callable through one key, and heavy senders do exactly that because "
          "verifiers disagree on the ambiguous rows. Your agent chains them. The routed tool, "
-         "treg.people.email.verify, picks one verifier and moves on only if it errors or returns no "
-         "verdict. An unknown is a verdict, so it does not get a second opinion for you."),
+         "treg.people.email.verify, picks one verifier and moves on when it errors or the provider "
+         "counts the answer as a miss. Most stop on unknown; ZeroBounce does not bill an unknown, so "
+         "the waterfall moves past it. Either way it is one verdict, not a second opinion."),
     ],
     "related": ("Find professional emails", "Enrich a person from an email or LinkedIn URL",
                 "A company's email format", "Find people by role, company or location"),
@@ -4559,8 +4560,9 @@ USE_CASE_PAGES["find-phone-numbers"] = {
         "provider strong on US technology can be thin on European professional services, and "
         "that a number being current is not the same as somebody answering it. The cheap "
         "experiment is the only real answer: run the same twenty rows through three providers "
-        "for a couple of dollars and count. treg.to shows the rates side by side; the agent "
-        "picks, and treg.to never routes or fails over between them.",
+        "for a couple of dollars and count. treg.to shows the rates side by side and the agent "
+        "picks. treg.people.phone.find, the routed tool, picks one for you and moves on when it "
+        "errors or finds nothing, but a number found is not a number checked.",
     ],
     "faq": [
         ("Can I find out who owns a phone number I already have?",
@@ -4689,8 +4691,9 @@ USE_CASE_PAGES["keyword-volume-cpc-and-competition"] = {
         "list at all. The bid range is an estimate of an auction rather than the auction: "
         "practitioners regularly report paying many times the figure, or a fraction of it. "
         "Use these fields to rank keywords against each other and take your real cost from "
-        "your own campaign data. treg.to puts the rows side by side; the agent picks, and "
-        "treg.to never routes or fails over between them.",
+        "your own campaign data. treg.to puts the rows side by side and the agent picks. "
+        "treg.google.keywords.volume, the routed tool, picks one and falls back if it fails, but "
+        "the numbers differ by provider, so name one when you compare over time.",
     ],
     "faq": [
         ("Is this the same data as Google Keyword Planner?",
