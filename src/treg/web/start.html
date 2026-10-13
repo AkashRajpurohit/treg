@@ -104,6 +104,7 @@
   .brow .what b { display: block; font-weight: 600; font-size: 15.5px; }
   .brow .what span { font-size: 13px; color: var(--muted); }
   .brow .was { font-family: var(--mono); font-size: 14px; color: var(--muted); position: relative; white-space: nowrap; }
+  .brow .was:empty::after { display: none; }
   .brow .was::after { content: ""; position: absolute; left: -4px; right: -4px; top: 50%; height: 2px; background: var(--red); transform: scaleX(0); transform-origin: left; transition: transform .45s cubic-bezier(.3,.7,.3,1); }
   .seen .brow .was::after { transform: scaleX(1); }
   .seen .brow:nth-child(2) .was::after { transition-delay: .12s; } .seen .brow:nth-child(3) .was::after { transition-delay: .24s; }
@@ -172,6 +173,8 @@
   .sendf .msg:empty { display: none; }
   .sendf .msg.err { color: var(--red); }
   .sendf.sent .row { display: none; }
+  .sendf .again { display: none; margin-top: 10px; }
+  .sendf.sent .again { display: inline-block; }
   .sendf.sent .msg { margin-top: 0; padding: 14px 18px; border-radius: 14px; background: rgba(17,132,83,.08); color: var(--green); font-size: 15px; font-weight: 500; }
   .here { background: none; border: 0; padding: 0; margin-top: 14px; font-family: var(--text); font-size: 14px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
   .smodal .sendf { text-align: left; }
@@ -228,6 +231,7 @@
         <button class="cta" type="submit">Email me the setup link</button>
       </div>
       <div class="msg" role="status"></div>
+      <button class="here again" type="button" data-again>Wrong address? Send to a different email</button>
       <div class="under">treg.to runs in an AI agent on your computer, so we send the link there. $1 free credit · no card.</div>
       <button class="here" type="button" data-here>Or sign up on this phone</button>
     </form>
@@ -253,19 +257,19 @@
 <section class="band" aria-labelledby="billH">
   <div class="wrap">
     <h2 id="billH">Stop paying monthly for tools you use twice a week.</h2>
-    <p class="lede">Each tool below charges a monthly plan. Through treg.to your agent gets the same kind of data, and you pay only for the jobs it runs.</p>
+    <p class="lede">Most of these tools sell a monthly plan. Through treg.to your agent gets the same kind of data, and you pay only for the jobs it runs.</p>
     <div class="bill" id="bill">
-      <div class="brow" data-job="leads"><div class="what"><b>Find a work email</b><span>instead of an Apollo seat</span></div><div class="was">$59/mo</div><div class="per">$0.005 / email</div></div>
-      <div class="brow" data-job="seo"><div class="what"><b>Keyword volume and CPC</b><span>instead of a Semrush plan</span></div><div class="was">$139/mo</div><div class="per">$0.09 / keyword list</div></div>
-      <div class="brow" data-job="ads"><div class="what"><b>A competitor's live Meta ads</b><span>instead of an ad-spy tool like SpyFu</span></div><div class="was">$39/mo</div><div class="per">$0.0019 / competitor</div></div>
-      <div class="brow" data-job="social"><div class="what"><b>Search X posts</b><span>instead of the X API Basic tier</span></div><div class="was">$200/mo</div><div class="per">$0.0006 / search</div></div>
-      <div class="brow"><div class="what"><b>Check an email will deliver</b><span>instead of a Hunter plan</span></div><div class="was">$34/mo</div><div class="per">$0 / check</div></div>
+      <div class="brow" data-job="leads"><div class="what"><b>Find a work email</b><span>instead of an Apollo Basic seat</span></div><div class="was">$49/mo</div><div class="per">$0.005 / email</div></div>
+      <div class="brow" data-job="seo"><div class="what"><b>Keyword volume and CPC</b><span>instead of Semrush SEO Toolkit Pro</span></div><div class="was">$139.95/mo</div><div class="per">$0.09 / keyword list</div></div>
+      <div class="brow"><div class="what"><b>Check if an email is deliverable</b><span>instead of a Hunter Starter plan</span></div><div class="was">$49/mo</div><div class="per">$0 / check</div></div>
+      <div class="brow" data-job="ads"><div class="what"><b>A competitor's live Meta ads</b><span>with copy, landing page and start date</span></div><div class="was"></div><div class="per">$0.0019 / competitor</div></div>
+      <div class="brow" data-job="social"><div class="what"><b>Search X posts</b><span>instead of the official X API, $0.005 a post</span></div><div class="was">$0.10</div><div class="per">$0.0006 / 20 posts</div></div>
     </div>
     <div class="total">
-      <div class="t">All five: <s>$471 a month</s> &nbsp;→&nbsp; <b>cents per job</b></div>
+      <div class="t">Apollo, Semrush and Hunter: <s>$238 a month</s> &nbsp;→&nbsp; <b>cents per job</b></div>
       <button class="cta" type="button" data-cta="bill">Start free <span class="arr" aria-hidden="true">→</span></button>
     </div>
-    <p class="fine">Monthly prices are each vendor's entry plan, October 2026. Per-job prices are what treg.to charged on real runs on 12 Oct 2026, with no markup; another provider can cost more. Already pay for one of these tools? Connect your key and treg.to won't charge for those jobs.</p>
+    <p class="fine">Vendor prices from their pricing pages on 13 Oct 2026: Apollo Basic $49 per user a month billed annually, Semrush SEO Toolkit Pro $139.95 a month, Hunter Starter $49 billed monthly, X API $0.005 per post read. Per-job prices are what treg.to charged on real runs on 12 Oct 2026, with no markup; another provider can cost more. Already pay for one of these tools? Connect your key and treg.to won't charge for those jobs.</p>
   </div>
 </section>
 
@@ -274,7 +278,7 @@
   <p class="lede">You need an AI agent like Claude Code, Codex, Cursor or Claude.ai. Nothing else to install by hand.</p>
   <div class="steps">
     <div class="step"><div class="n">01</div><h3>Sign up free</h3><p id="step1">Click <b>Start free</b> and continue with Google. You get $1 of credit. No card.</p></div>
-    <div class="step"><div class="n">02</div><h3>Paste your setup line</h3><p>Pick your agent and we show you one line with your key. Paste it into your agent's chat and press Enter. It sets itself up in about 30 seconds.</p></div>
+    <div class="step"><div class="n">02</div><h3>Paste your setup line</h3><p>Pick your agent and we show you one line with your key. Paste it into your agent's chat and press Enter, and it sets itself up. On Claude.ai you add treg.to as a connector instead, in two clicks.</p></div>
     <div class="step"><div class="n">03</div><h3>Ask for what you need</h3><p>In the same chat, type the job: <span id="stepAsk">"Find dentists in Sydney with phone number and website."</span> Your agent runs it and tells you what it cost.</p></div>
   </div>
 
@@ -332,15 +336,18 @@
         <button class="cta" type="submit">Email me the setup link</button>
       </div>
       <div class="msg" role="status"></div>
+      <button class="here again" type="button" data-again>Wrong address? Send to a different email</button>
     </form>
     <button class="here" type="button" data-here>Or sign up on this phone</button>
   </div>
 </div>
 
 <div class="stick touch-only" id="stick">
-  <button class="cta" type="button" id="stickBtn" tabindex="-1">Email me the setup link</button>
+  <button class="cta" type="button" id="stickBtn">Email me the setup link</button>
 </div>
 
+<script src="/sitetrack.js"></script>
+<script src="/adtrack.js"></script>
 <script>
 (function () {
   'use strict';
@@ -358,7 +365,7 @@
       out: ['✓ Saved leads.csv', '  100 dentists · 98 with phone · 96 with website'],
       cost: '$0.00015', was: 'Apollo $59/mo',
       close: 'Get your next lead list from your agent. Skip the $59 Apollo seat.',
-      sub: 'Ask Claude Code, Codex or Cursor for a lead list in plain English. It finds the businesses, phone numbers, websites and work emails, and you pay cents per job instead of a monthly seat.'
+      sub: 'Ask Claude Code, Codex or Cursor for a lead list in plain English. It finds the businesses with phone numbers and websites, and can look up work emails too. You pay cents per job instead of a monthly seat.'
     },
     seo: {
       h1: 'Keyword data from your AI agent. <span class="no">No Semrush plan.</span>',
@@ -371,26 +378,27 @@
     },
     ads: {
       h1: 'Competitor ads from your AI agent. <span class="no">No ad-spy subscription.</span>',
-      ask: 'Pull every ad Notion is running on Facebook and Instagram, save as ads.csv',
+      ask: 'Pull the live ads Notion is running on Facebook and Instagram, save as ads.csv',
       tool: 'Meta Ad Library',
       out: ['✓ Saved ads.csv', '  30 live ads · copy, landing page, start date'],
-      cost: '$0.0019', was: 'SpyFu $39/mo',
+      cost: '$0.0019', was: '',
       close: 'See what your competitors run, from your agent. Skip the ad-spy subscription.',
-      sub: 'Ask Claude Code, Codex or Cursor for every ad a competitor runs on Facebook, Instagram and Google, with copy and landing pages. You pay cents per competitor instead of a monthly plan.'
+      sub: 'Ask Claude Code, Codex or Cursor for the ads a competitor is running on Facebook and Instagram, with copy, landing pages and start dates. You pay cents per competitor instead of a monthly plan.'
     },
     social: {
-      h1: 'X and TikTok data from your AI agent. <span class="no">No $200 X API.</span>',
+      h1: 'X data from your AI agent. <span class="no">A fraction of the X API price.</span>',
       ask: "Find today's X posts about AI agents, with author, followers and likes",
       tool: 'X search',
       out: ['✓ 20 posts', '  author · followers · likes · link'],
-      cost: '$0.0006', was: 'X API $200/mo',
-      close: 'Get X and TikTok data from your agent. Skip the $200 X API.',
-      sub: 'Ask Claude Code, Codex or Cursor for the posts, creators and trends on X and TikTok. You pay fractions of a cent per search instead of $200 a month.'
+      cost: '$0.0006', was: 'X API $0.10',
+      close: 'Get X data from your agent, for a fraction of the X API price.',
+      sub: 'Ask Claude Code, Codex or Cursor for posts, authors and engagement on X. Our run of 20 posts cost $0.0006; the official X API charges $0.005 a post, so $0.10.'
     }
   };
   var key = new URLSearchParams(location.search).get('job');
-  var job = JOBS[key] || JOBS.leads;
-  if (JOBS[key]) {
+  if (!Object.prototype.hasOwnProperty.call(JOBS, key)) key = null;
+  var job = key ? JOBS[key] : JOBS.leads;
+  if (key) {
     $('heroH1').innerHTML = job.h1; $('heroSub').textContent = job.sub; $('finalH').textContent = job.close;
     /* the bill leads with the row this visitor came for */
     var mine = document.querySelector('.brow[data-job="' + key + '"]');
@@ -402,7 +410,7 @@
     '<div class="ln ask"><b>&gt;</b> ' + esc(job.ask) + '</div>',
     '<div class="ln tool">⏺ treg.to · <em>' + esc(job.tool) + '</em></div>'
   ].concat(job.out.map(function (l, i) { return '<div class="ln ' + (i === 0 && l.charAt(0) === '✓' ? 'ok' : 'row') + '">' + esc(l) + '</div>'; }))
-   .concat(['<div class="ln"><span class="cost">cost ' + esc(job.cost) + ' <s>' + esc(job.was) + '</s></span></div>']);
+   .concat(['<div class="ln"><span class="cost">cost ' + esc(job.cost) + (job.was ? ' <s>' + esc(job.was) + '</s>' : '') + '</span></div>']);
   var term = $('term');
   term.innerHTML = lines.join('');
   var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -447,11 +455,13 @@
     fetch('/start/send-link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: em, job: key || '' }) })
       .then(readJson)
       .then(function (d) {
+        if (!d || d.sent !== true) throw new Error("We couldn't send that. Try again in a minute.");
         sent = true; updateStick();
         document.querySelectorAll('.sendf').forEach(function (f) {
           f.classList.add('sent');
           f.querySelector('.msg').className = 'msg';
           f.querySelector('.msg').textContent = 'Sent to ' + em + '. Open it on your computer to set up.';
+          f.querySelector('input').value = em;
         });
         if (d.dev_link) console.log('[start] dev link', d.dev_link);
         track('start_link_sent', { where: where, job: key || 'none' });
@@ -461,6 +471,14 @@
   }
   document.querySelectorAll('.sendf').forEach(function (f) {
     f.addEventListener('submit', function (e) { e.preventDefault(); sendLink(f); });
+  });
+  document.querySelectorAll('[data-again]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      sent = false;
+      document.querySelectorAll('.sendf').forEach(function (f) { f.classList.remove('sent'); f.querySelector('.msg').textContent = ''; });
+      var i = b.closest('.sendf').querySelector('input'); i.focus(); i.select();
+      updateStick();
+    });
   });
   document.querySelectorAll('[data-here]').forEach(function (b) {
     b.addEventListener('click', function () { closeSend(); start('phone-here'); });
@@ -526,8 +544,6 @@
   track('start_viewed', { job: key || 'none', device: touch ? 'touch' : 'desktop' });
 })();
 </script>
-<script src="/sitetrack.js"></script>
-<script src="/adtrack.js"></script>
 <script src="/gtag.js"></script>
 </body>
 </html>

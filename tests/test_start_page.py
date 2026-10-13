@@ -39,7 +39,12 @@ async def test_start_copy_keeps_the_public_promises(clients: AsyncClient):
     assert "monid" not in html.lower()
     # The page only sells: one action, and the per-call prices it quotes come from real runs.
     assert len(re.findall(r'<button[^>]* data-cta="', html)) == 3
-    assert "$0.00015" in html and "$471" in html
+    assert "$0.00015" in html and "$238" in html
+    # Retired or mismatched comparisons must not come back: X dropped its subscription tiers, and
+    # SpyFu researches Google ads, not Meta's.
+    assert "$200" not in html and "SpyFu" not in html and "$471" not in html
+    # The custom page-view event is sent from the page script, so the tracker must load before it.
+    assert html.index('<script src="/sitetrack.js">') < html.index("track('start_viewed'")
 
 
 async def test_a_phone_visitor_is_emailed_the_link_to_open_on_a_computer(clients: AsyncClient, monkeypatch):
@@ -69,13 +74,28 @@ async def test_a_phone_visitor_is_emailed_the_link_to_open_on_a_computer(clients
     assert len(sent) == 3
 
 
-async def test_a_failed_send_is_not_reported_as_sent(clients: AsyncClient, monkeypatch):
+async def test_a_failed_send_is_not_reported_as_sent_and_does_not_spend_the_cap(clients: AsyncClient, monkeypatch):
+    """Our mail failure must not lock the visitor out: the page says "try again in a minute"."""
     async def fail(*a, **k):
         return False
 
     monkeypatch.setattr(email_sender, "send_setup_link", fail)
     monkeypatch.setattr(Settings, "expose_dev_code", property(lambda self: False))
-    assert (await clients.post(f"{PATH}/send-link", json={"email": "cy@example.com"})).status_code == 502
+    codes = [(await clients.post(f"{PATH}/send-link", json={"email": "cy@example.com"})).status_code
+             for _ in range(4)]
+    assert codes == [502, 502, 502, 502]
+
+
+async def test_the_per_ip_cap_uses_cloudflares_address_not_the_forgeable_header(clients: AsyncClient, monkeypatch):
+    async def ok(*a, **k):
+        return True
+
+    monkeypatch.setattr(email_sender, "send_setup_link", ok)
+    monkeypatch.setattr(Settings, "expose_dev_code", property(lambda self: False))
+    codes = [(await clients.post(f"{PATH}/send-link", json={"email": f"ip{i}@example.com"},
+                                 headers={"cf-connecting-ip": "203.0.113.9", "x-forwarded-for": f"10.0.0.{i}"})).status_code
+             for i in range(7)]
+    assert codes == [200] * 5 + [429, 429]
 
 
 async def test_start_404s_on_a_self_hosted_registry(monkeypatch):

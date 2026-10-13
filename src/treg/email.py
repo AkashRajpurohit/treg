@@ -165,7 +165,7 @@ async def send_autotopup_disabled(email: str, org_name: str, reason: str,
 async def send_setup_link(email: str, link: str, ask: str = "") -> bool:
     """A phone visitor on /start asked for the setup link on their computer: treg.to runs inside an
     agent on a computer, so a phone signup lands on a setup screen nobody can use. A plain note, not
-    the branded chrome, because it reads as a reminder the visitor asked for (and lands in Primary)."""
+    the branded chrome, because it reads as a reminder the visitor asked for."""
     example = f' Then ask for what you came for, like "{_esc(ask)}".' if ask else ""
     p = '<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#101010">'
     html = (
@@ -175,7 +175,8 @@ async def send_setup_link(email: str, link: str, ask: str = "") -> bool:
         f'{p}Open this link there: <a href="{_esc(link)}">{_esc(link)}</a></p>'
         f"{p}Sign in, pick your agent and paste the one line we show you. It takes about 2 minutes, and "
         f"your first $1 is free, no card.{example}</p>"
-        f"{p}Jason, treg.to</p></div>"
+        f"{p}Jason, treg.to</p>"
+        '<p style="margin:0;font-size:12px;color:#8a8885">Didn\'t ask for this? Ignore it, nothing was set up.</p></div>'
     )
     example_txt = f' Then ask for what you came for, like "{ask}".' if ask else ""
     text = (
@@ -183,7 +184,8 @@ async def send_setup_link(email: str, link: str, ask: str = "") -> bool:
         "Cursor, so setup happens on your computer.\n\n"
         f"Open this link there: {link}\n\n"
         "Sign in, pick your agent and paste the one line we show you. It takes about 2 minutes, and "
-        f"your first $1 is free, no card.{example_txt}\n\nJason, treg.to"
+        f"your first $1 is free, no card.{example_txt}\n\nJason, treg.to\n\n"
+        "Didn't ask for this? Ignore it, nothing was set up."
     )
     return await _send(email, "Your treg.to setup link, for your computer", html, text)
 

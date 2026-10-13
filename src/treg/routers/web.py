@@ -3929,10 +3929,20 @@ async def start_page(request: Request):
 _START_ASKS = {
     "leads": "Find dentists in Sydney with phone number and website",
     "seo": "Monthly Google searches and CPC for: crm for dentists, dental practice software, dental crm",
-    "ads": "Pull every ad Notion is running on Facebook and Instagram",
+    "ads": "Pull the live ads Notion is running on Facebook and Instagram",
     "social": "Find today's X posts about AI agents, with author, followers and likes",
 }
 _START_LINK_NS = "start_link"
+_START_LINK_WINDOW_S = 3600
+
+
+def _start_client_ip(request: Request) -> str:
+    """The visitor's IP for the send-link caps. treg.to is served through Cloudflare, which sets
+    CF-Connecting-IP itself; the first X-Forwarded-For hop is whatever the client sent, so it alone
+    would let one sender rotate past the per-IP cap."""
+    from .auth import _client_ip
+
+    return (request.headers.get("cf-connecting-ip") or "").strip() or _client_ip(request)
 _EMAIL_SHAPE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -3946,7 +3956,6 @@ async def start_send_link(request: Request, db: AsyncSession = Depends(get_sessi
     from .. import email as email_sender, ratestore
     from ..application import signup
     from ..domain.identity.access import _is_machine_email, _norm_email
-    from .auth import _client_ip
 
     if not _hosted():
         raise HTTPException(status_code=404)
@@ -3961,9 +3970,9 @@ async def start_send_link(request: Request, db: AsyncSession = Depends(get_sessi
         raise HTTPException(status_code=400, detail="Enter a valid email address.")
     if _is_machine_email(email) or signup.blocked_email(email, "start_link"):
         raise HTTPException(status_code=403, detail="We can't send to that address.")
-    ok = await ratestore.rate_check(
-        db, _START_LINK_NS,
-        [(f"e:{email}", 2), (f"i:{_client_ip(request)}", 5), ("all", 500)], window_s=3600)
+    keys = [f"e:{email}", f"i:{_start_client_ip(request)}", "all"]
+    await ratestore.sweep(db, _START_LINK_NS)
+    ok = await ratestore.rate_check(db, _START_LINK_NS, list(zip(keys, (2, 5, 500))), _START_LINK_WINDOW_S)
     await db.commit()
     if not ok:
         raise HTTPException(status_code=429, detail="Already sent. Check your inbox, or try again in an hour.")
@@ -3973,6 +3982,13 @@ async def start_send_link(request: Request, db: AsyncSession = Depends(get_sessi
         print(f"[start-link] {email} -> {link}")
         return {"sent": True, "dev_link": link}
     if not await email_sender.send_setup_link(email, link, _START_ASKS.get(job, "")):
+        # Our failure, not theirs: hand the hit back so "try again" is true.
+        for k in keys:
+            entry = await ratestore.kv_get(db, _START_LINK_NS, k)
+            if entry and entry.get("hits"):
+                entry["hits"].pop()
+                await ratestore.kv_put(db, _START_LINK_NS, k, entry, ttl_s=None)
+        await db.commit()
         raise HTTPException(status_code=502, detail="We couldn't send that. Try again in a minute.")
     return {"sent": True}
 
