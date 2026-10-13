@@ -1,5 +1,9 @@
 # Money admission: local queue with bounded busy backoff
 
+This is the historical 12 ms experiment. The refreshed-main comparison and selected 24 ms
+trial evidence are in [current-main/README.md](current-main/README.md). The measurements below
+retain their original source versions and limitations.
+
 This experiment evaluates a change from fixed `U(3,10) ms` Redis busy retries to
 equal jitter `U(3,6) ms`, then `U(6,12) ms` after further busy replies. The existing
 per-process, per-org local queue remains. The first Redis attempt is immediate;
