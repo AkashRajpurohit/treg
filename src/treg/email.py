@@ -1,8 +1,7 @@
-"""Transactional email via Resend — the sends the registry needs:
+"""Transactional email via Resend — the two sends the registry needs:
 
   1. send_otp    — the 6-digit sign-in code (POST /auth/email/start)
   2. send_invite — a team invitation with its one-time code (POST /orgs/{id}/invites)
-  3. send_setup_link — /start's "email me the setup link" for a visitor on a phone
 
 Best-effort by design: every send is wrapped so a mail outage can NEVER break sign-in or invite
 creation (the code still exists server-side; the CLI/dashboard flows keep working). If no
@@ -160,34 +159,6 @@ async def send_autotopup_disabled(email: str, org_name: str, reason: str,
             f"will fail until it's funded. {fix}")
     return await _send(email, f"Action needed: auto top-up is off for {org_name}",
                        _WRAP.format(body=body), text)
-
-
-async def send_setup_link(email: str, link: str, ask: str = "") -> bool:
-    """A phone visitor on /start asked for the setup link on their computer: treg.to runs inside an
-    agent on a computer, so a phone signup lands on a setup screen nobody can use. A plain note, not
-    the branded chrome, because it reads as a reminder the visitor asked for."""
-    example = f' Then ask for what you came for, like "{_esc(ask)}".' if ask else ""
-    p = '<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#101010">'
-    html = (
-        '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px">'
-        f"{p}You asked for this on your phone. treg.to works inside an AI agent like Claude Code, Codex or "
-        "Cursor, so setup happens on your computer.</p>"
-        f'{p}Open this link there: <a href="{_esc(link)}">{_esc(link)}</a></p>'
-        f"{p}Sign in, pick your agent and paste the one line we show you. It takes about 2 minutes, and "
-        f"your first $1 is free, no card.{example}</p>"
-        f"{p}Jason, treg.to</p>"
-        '<p style="margin:0;font-size:12px;color:#8a8885">Didn\'t ask for this? Ignore it, nothing was set up.</p></div>'
-    )
-    example_txt = f' Then ask for what you came for, like "{ask}".' if ask else ""
-    text = (
-        "You asked for this on your phone. treg.to works inside an AI agent like Claude Code, Codex or "
-        "Cursor, so setup happens on your computer.\n\n"
-        f"Open this link there: {link}\n\n"
-        "Sign in, pick your agent and paste the one line we show you. It takes about 2 minutes, and "
-        f"your first $1 is free, no card.{example_txt}\n\nJason, treg.to\n\n"
-        "Didn't ask for this? Ignore it, nothing was set up."
-    )
-    return await _send(email, "Your treg.to setup link, for your computer", html, text)
 
 
 def _money(amount_micro: int) -> str:

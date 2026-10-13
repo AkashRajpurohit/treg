@@ -1011,14 +1011,6 @@
   {
     "kind": "APIRoute",
     "methods": [
-      "POST"
-    ],
-    "name": "start_send_link",
-    "path": "/start/send-link"
-  },
-  {
-    "kind": "APIRoute",
-    "methods": [
       "GET",
       "HEAD"
     ],

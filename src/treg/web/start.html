@@ -6,7 +6,6 @@
 <title>Get the data in your AI agent, cancel the subscriptions | treg.to</title>
 <meta name="description" content="Connect Claude Code, Codex or Cursor to lead lists, work emails, keyword data, competitor ads and social posts with one key. Pay cents per job, not a monthly plan. $1 free credit.">
 <meta name="robots" content="noindex">
-<script>if (/[?&]device=phone(&|$)/.test(location.search)) document.documentElement.classList.add('as-phone');</script>
 <link rel="icon" href="/favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -156,41 +155,6 @@
   .smodal input:focus { border-color: var(--ink); }
   .smodal .err { color: var(--red); font-size: 12px; margin-top: 10px; min-height: 14px; }
 
-  /* ---------- phones: treg.to runs in an agent on a computer, so a phone visitor is sent the link ---------- */
-  .touch-only { display: none; }
-  @media (hover: none) and (pointer: coarse) {
-    .desk-only { display: none; }
-    .touch-only { display: block; }
-  }
-  /* ?device=phone: preview the phone path on a computer */
-  .as-phone .desk-only { display: none; }
-  .as-phone .touch-only { display: block; }
-  .sendf .row { display: flex; gap: 8px; flex-wrap: wrap; }
-  .sendf input {
-    flex: 1 1 220px; min-width: 0; font-family: var(--text); font-size: 16px; color: var(--ink);
-    padding: 15px 20px; border-radius: 999px; border: 1px solid #D9D6CF; background: #fff; outline: none;
-  }
-  .sendf input:focus { border-color: var(--ink); }
-  .sendf .cta { flex: 1 1 auto; }
-  .sendf .cta:disabled { opacity: .6; cursor: default; }
-  .sendf .msg { font-size: 13.5px; margin-top: 10px; }
-  .sendf .msg:empty { display: none; }
-  .sendf .msg.err { color: var(--red); }
-  .sendf.sent .row { display: none; }
-  .sendf .again { display: none; margin-top: 10px; }
-  .sendf.sent .again { display: inline-block; }
-  .sendf.sent .msg { margin-top: 0; padding: 14px 18px; border-radius: 14px; background: rgba(17,132,83,.08); color: var(--green); font-size: 15px; font-weight: 500; }
-  .here { background: none; border: 0; padding: 0; margin-top: 14px; font-family: var(--text); font-size: 14px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-  .smodal .sendf { text-align: left; }
-  .stick {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 150;
-    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
-    background: rgba(253,252,251,.94); backdrop-filter: blur(8px); border-top: 1px solid var(--line);
-    transform: translateY(110%); transition: transform .25s;
-  }
-  .stick.on { transform: none; }
-  .stick .cta { width: 100%; }
-
   @media (max-width: 920px) {
     .hero { grid-template-columns: minmax(0, 1fr); gap: 40px; padding-top: 24px; padding-bottom: 56px; }
     .steps, .quotes { grid-template-columns: minmax(0, 1fr); max-width: 560px; }
@@ -225,20 +189,8 @@
   <div>
     <h1 id="heroH1">Your AI agent gets the data. <span class="no">You cancel the subscriptions.</span></h1>
     <p class="sub" id="heroSub">Connect Claude Code, Codex or Cursor to lead lists, work emails, keyword data, competitor ads and social posts. Ask in plain English and pay cents per job instead of a monthly plan.</p>
-    <div class="desk-only">
-      <button class="cta" type="button" data-cta="hero">Start free <span class="arr" aria-hidden="true">→</span></button>
-      <div class="under">$1 free credit · no card · about 2 minutes to set up</div>
-    </div>
-    <form class="sendf touch-only" id="heroSend" data-where="hero" novalidate>
-      <div class="row">
-        <input type="email" placeholder="you@work.com" autocomplete="email" aria-label="Your email">
-        <button class="cta" type="submit">Email me the setup link</button>
-      </div>
-      <div class="msg" role="status"></div>
-      <button class="here again" type="button" data-again>Wrong address? Send to a different email</button>
-      <div class="under">treg.to runs in an AI agent on your computer, so we send the link there. $1 free credit · no card.</div>
-      <button class="here" type="button" data-here>Or sign up on this phone</button>
-    </form>
+    <button class="cta" type="button" data-cta="hero">Start free <span class="arr" aria-hidden="true">→</span></button>
+    <div class="under">$1 free credit · no card · about 2 minutes to set up</div>
     <div class="works">
       <span class="logos">
         <img src="https://unpkg.com/@lobehub/icons-static-png@latest/light/claudecode-color.png" alt="Claude Code" title="Claude Code">
@@ -327,27 +279,6 @@
     </div>
     <div class="err" id="em-err"></div>
   </div>
-</div>
-
-<div class="scrim" id="send-scrim">
-  <div class="smodal" role="dialog" aria-modal="true" aria-labelledby="sendH">
-    <button class="cls" id="sendClose" type="button" aria-label="Close">✕</button>
-    <h3 id="sendH">Set up on your computer</h3>
-    <p>treg.to runs in an AI agent like Claude Code, Codex or Cursor. We'll email you the link to open there. $1 free credit, no card.</p>
-    <form class="sendf" id="sheetSend" data-where="sheet" novalidate>
-      <div class="row">
-        <input type="email" placeholder="you@work.com" autocomplete="email" aria-label="Your email">
-        <button class="cta" type="submit">Email me the setup link</button>
-      </div>
-      <div class="msg" role="status"></div>
-      <button class="here again" type="button" data-again>Wrong address? Send to a different email</button>
-    </form>
-    <button class="here" type="button" data-here>Or sign up on this phone</button>
-  </div>
-</div>
-
-<div class="stick touch-only" id="stick">
-  <button class="cta" type="button" id="stickBtn">Email me the setup link</button>
 </div>
 
 <script src="/sitetrack.js"></script>
@@ -442,74 +373,9 @@
       .then(function (r) { if (r.ok) location.href = '/app'; else openSignin(where); })
       .catch(function () { openSignin(where); });
   }
-  /* ---------- phones: the action is "email me the setup link", to open where an agent runs ---------- */
-  var preview = document.documentElement.classList.contains('as-phone');
-  var touch = preview || matchMedia('(hover: none) and (pointer: coarse)').matches;
-  var sendScrim = $('send-scrim'), sent = false;
-  function openSend(where) {
-    $('sheetSend').setAttribute('data-where', where);
-    sendScrim.classList.add('open'); track('start_send_opened', { where: where, job: key || 'none' });
-    setTimeout(function () { var i = $('sheetSend').querySelector('input'); if (i && !sent) i.focus(); }, 30);
-  }
-  function closeSend() { sendScrim.classList.remove('open'); }
-  function sendLink(form) {
-    var input = form.querySelector('input'), msg = form.querySelector('.msg'), btn = form.querySelector('button[type=submit]');
-    var em = input.value.trim(), where = form.getAttribute('data-where');
-    if (!em) { msg.className = 'msg err'; msg.textContent = 'Enter your email address.'; input.focus(); return; }
-    btn.disabled = true; btn.textContent = 'Sending…'; msg.textContent = '';
-    fetch('/start/send-link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: em, job: key || '' }) })
-      .then(readJson)
-      .then(function (d) {
-        if (!d || d.sent !== true) throw new Error("We couldn't send that. Try again in a minute.");
-        sent = true; updateStick();
-        document.querySelectorAll('.sendf').forEach(function (f) {
-          f.classList.add('sent');
-          f.querySelector('.msg').className = 'msg';
-          f.querySelector('.msg').textContent = 'Sent to ' + em + '. Open it on your computer to set up.';
-          f.querySelector('input').value = em;
-        });
-        if (d.dev_link) console.log('[start] dev link', d.dev_link);
-        track('start_link_sent', { where: where, job: key || 'none' });
-      })
-      .catch(function (e2) { msg.className = 'msg err'; msg.textContent = e2.message; track('start_link_failed', { where: where }); })
-      .then(function () { btn.disabled = false; btn.textContent = 'Email me the setup link'; });
-  }
-  document.querySelectorAll('.sendf').forEach(function (f) {
-    f.addEventListener('submit', function (e) { e.preventDefault(); sendLink(f); });
-  });
-  document.querySelectorAll('[data-again]').forEach(function (b) {
-    b.addEventListener('click', function () {
-      sent = false;
-      document.querySelectorAll('.sendf').forEach(function (f) { f.classList.remove('sent'); f.querySelector('.msg').textContent = ''; });
-      var i = b.closest('.sendf').querySelector('input'); i.focus(); i.select();
-      updateStick();
-    });
-  });
-  document.querySelectorAll('[data-here]').forEach(function (b) {
-    b.addEventListener('click', function () { closeSend(); start('phone-here'); });
-  });
-  $('sendClose').addEventListener('click', closeSend);
-  sendScrim.addEventListener('click', function (e) { if (e.target === sendScrim) closeSend(); });
-  addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSend(); });
-
-  if (touch) $('step1').innerHTML = 'On your computer, open the link we email you and continue with Google. You get $1 of credit. No card.';
   document.querySelectorAll('[data-cta]').forEach(function (b) {
-    if (touch) b.innerHTML = 'Email me the setup link';
-    b.addEventListener('click', function () { var w = b.getAttribute('data-cta'); if (touch) openSend(w); else start(w); });
+    b.addEventListener('click', function () { start(b.getAttribute('data-cta')); });
   });
-
-  /* the sticky bar: on phones, once the hero form has scrolled away, whenever no other button is on screen */
-  var stick = $('stick'), heroGone = false, inView = {};
-  function updateStick() {
-    var other = Object.keys(inView).some(function (k) { return inView[k]; });
-    stick.classList.toggle('on', touch && heroGone && !other && !sent);
-  }
-  if (touch && 'IntersectionObserver' in window) {
-    new IntersectionObserver(function (es) { es.forEach(function (e) { heroGone = !e.isIntersecting && e.boundingClientRect.top < 0; }); updateStick(); }).observe($('heroSend'));
-    var io = new IntersectionObserver(function (es) { es.forEach(function (e) { inView[e.target.getAttribute('data-cta')] = e.isIntersecting; }); updateStick(); });
-    document.querySelectorAll('[data-cta="bill"], [data-cta="final"]').forEach(function (b) { io.observe(b); });
-  }
-  $('stickBtn').addEventListener('click', function () { openSend('sticky'); });
   $('navSignin').addEventListener('click', function () { start('nav'); });
   $('signinClose').addEventListener('click', closeSignin);
   scrim.addEventListener('click', function (e) { if (e.target === scrim) closeSignin(); });
@@ -546,7 +412,7 @@
   $('em-btn2').addEventListener('click', emailVerify);
   $('em-code').addEventListener('keyup', function (e) { if (e.key === 'Enter') emailVerify(); });
 
-  track('start_viewed', { job: key || 'none', device: preview ? 'preview' : (touch ? 'touch' : 'desktop') });
+  track('start_viewed', { job: key || 'none', device: matchMedia('(hover: none) and (pointer: coarse)').matches ? 'touch' : 'desktop' });
 })();
 </script>
 <script src="/gtag.js"></script>
