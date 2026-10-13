@@ -1131,8 +1131,8 @@ USE_CASE_PAGES["verify-an-email"] = {
         ("Can I run several verifiers over the same list?",
          "Yes, they are all callable through one key, and heavy senders do exactly that because "
          "verifiers disagree on the ambiguous rows. Your agent chains them. The routed tool, "
-         "treg.people.email.verify, picks one verifier and moves on only if it errors; it does not "
-         "run a second opinion for you."),
+         "treg.people.email.verify, picks one verifier and moves on only if it errors or returns no "
+         "verdict. An unknown is a verdict, so it does not get a second opinion for you."),
     ],
     "related": ("Find professional emails", "Enrich a person from an email or LinkedIn URL",
                 "A company's email format", "Find people by role, company or location"),
