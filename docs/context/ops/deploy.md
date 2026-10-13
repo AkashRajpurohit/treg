@@ -101,7 +101,11 @@ its own revision: its lock permits ordinary reads and writes, although it confli
 maintenance. Such a revision restores the caller's timeouts and handles interruption: invalid builds
 must be rebuilt, and a partially completed removal must be retryable. Revision `0061` removes only
 ordinary indexes with verified unique-constraint replacements; its rollback recreates those indexes
-concurrently and requires enough disk space for them.
+concurrently and requires enough disk space for them. Revision `0072` builds
+`ix_callrecord_call_ref` where a database stamped at the baseline never got it; a build on a large
+table outlasts any fixed statement timeout, so it lifts `statement_timeout` for that one statement
+(the lock timeout stays bounded) and the deploy's own pre-deploy limit bounds it. Deploy such a
+revision in a quiet window: the build reads the whole table while traffic keeps writing.
 
 Hot-table ALTERs stay cheap to retry when they sit in their own revision, add only nullable columns
 without defaults (metadata-only in PostgreSQL) and leave backfills and `NOT NULL` to later steps.
@@ -332,6 +336,13 @@ they go in `scripts/.dev-home/dev-keys.env`, which the server sources. The scrip
 (`TREG_EMAIL_DEV_MODE`, `TREG_CONNECT_DEMO_ENABLED`, `TREG_DATABASE_URL`) are appended last so they
 always win over anything passed through.
 
+Per-IP limits need a client address the client cannot write. Behind Cloudflare set
+`TREG_CLIENT_IP_HEADER=cf-connecting-ip`; behind other proxies set `TREG_TRUSTED_PROXY_HOPS` to the
+number of proxies that append to `X-Forwarded-For` (default 1; 0 when clients connect directly). Each
+process logs `event=client_ip_sources` once with the address headers its proxies deliver (names
+and counts only), and `event=client_ip_header_missing` when the configured header does not arrive.
+See [multi-tenancy](../architecture/multi-tenancy.md), "Client address".
+
 [`deploy/render.example.yaml`](../../../deploy/render.example.yaml) is a generic self-hosting example.
 It creates one web service and one PostgreSQL database, builds with
 `bash scripts/build-web.sh` (frontend build followed by the locked Python install), runs
@@ -436,6 +447,11 @@ without importing the heavy database stack into the light `treg` CLI.
   (`--max-rows`, default 500,000, bounds one pass; schedule it every few minutes). The catalog keeps
   computing observations live until this command has caught up once, so it can be scheduled after
   the application deploys, and a self-hosted registry that never schedules it loses nothing.
+- `treg-worker spend rollup` folds new ledger settle entries into per-key, per-tool, per-day spend
+  (`--max-rows`, default 50,000, bounds one pass; schedule it every few minutes, after the web
+  service runs a build with revision 0070). It reads the primary database in small batches, and
+  its first run backfills 31 days over as many runs as `--max-rows` needs. The Team page's "Spent"
+  column and the Usage page's spend chart say spend history is being prepared until it has caught up once.
 - `treg-worker jev xboost` runs the `/jev` launch-radar demo once a day: it calls treg's own `/call/` API
   with `TREG_JEV_TREG_TOKEN` (a member token of the demo team, so the spend is an ordinary bill) and jev
   through the Vercel AI Gateway (`TREG_AI_GATEWAY_API_KEY`), and stores the run under Ephemeral for the page.

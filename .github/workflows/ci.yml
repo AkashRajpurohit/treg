@@ -142,6 +142,7 @@ jobs:
           tests/test_asynctasks.py
           tests/test_alembic_baseline.py
           tests/test_redundant_index_migration.py
+          tests/test_callrecord_call_ref_index_migration.py
           tests/test_enrich_arena.py
           tests/test_arena_insights.py
           tests/test_arena_verification_insights.py
@@ -155,7 +156,14 @@ jobs:
           tests/test_call_cancellation.py
           tests/test_call_pool_discipline.py
           tests/test_catalog_stats_refresh.py
+          tests/test_key_spend_rollup.py
+          tests/test_api_key_spend.py
           tests/test_api_keys.py
+          tests/test_cli_pairing.py
+          tests/test_login_page.py
+          tests/test_auth.py
+          tests/test_turnstile.py
+          tests/test_signup_promo.py
           tests/test_postgres_reset.py
           tests/test_read_replica.py
           tests/test_admin_errors_replica.py

@@ -33,7 +33,7 @@ from .bootstrap_http import (
     _SecurityHeadersMiddleware,
 )
 from .config import TREG_USER_AGENT, get_settings
-from .infra import kv, money_timing
+from .infra import kv, money_timing, turnstile
 from .infra.money_trace_runner import start_money_trace, stop_money_trace
 from .infra.db import background_session_maker, verify_db
 from .infra.catalog_observations import (
@@ -179,6 +179,7 @@ _CONTROL_ROUTE_KEYS: frozenset[RouteKey] = frozenset({
     ('/privacy', ('GET',), 'privacy_page'),
     ('/connectors/claude', ('GET',), 'claude_connector_page'),
     ('/adtrack.js', ('GET',), 'adtrack_js'),
+    ('/captcha.js', ('GET',), 'captcha_js'),
     ('/agent-setup.js', ('GET',), 'agent_setup_js'),
     ('/gtag.js', ('GET',), 'gtag_js'),
     ('/resources', ('GET',), 'resources_page'),
@@ -190,6 +191,7 @@ _CONTROL_ROUTE_KEYS: frozenset[RouteKey] = frozenset({
     ('/astra', ('GET',), 'astra_page'),
     ('/gpt6', ('GET',), 'gpt6_page'),
     ('/ugc', ('GET',), 'ugc_page'),
+    ('/showcase', ('GET',), 'showcase_page'),
     ('/people-search', ('GET',), 'people_search_page'),
     ('/start', ('GET',), 'start_page'),
     ('/leads-signals', ('GET',), 'leads_signals_page'),
@@ -251,6 +253,7 @@ _CONTROL_ROUTE_KEYS: frozenset[RouteKey] = frozenset({
     ('/orgs/{org_id}/invites/{invite_id}', ('DELETE',), 'revoke_invite'),
     ('/orgs/{org_id}/members', ('GET',), 'list_members'),
     ('/orgs/{org_id}/usage', ('GET',), 'org_usage'),
+    ('/orgs/{org_id}/usage/spend', ('GET',), 'usage_spend'),
     ('/orgs/{org_id}/balance', ('GET',), 'org_balance'),
     ('/orgs/{org_id}/tag-keys', ('GET',), 'list_tag_keys'),
     ('/orgs/{org_id}/usage/by-tag', ('GET',), 'usage_by_tag'),
@@ -285,6 +288,7 @@ _CONTROL_ROUTE_KEYS: frozenset[RouteKey] = frozenset({
     ('/orgs/{org_id}/agents/observed', ('GET',), 'list_observed_agents'),
     ('/orgs/{org_id}/agents/{user_id}', ('DELETE',), 'revoke_agent'),
     ('/orgs/{org_id}/api-keys', ('GET',), 'list_api_keys'),
+    ('/orgs/{org_id}/api-keys/spend', ('GET',), 'api_key_spend'),
     ('/orgs/{org_id}/api-keys', ('POST',), 'create_api_key'),
     ('/orgs/{org_id}/api-keys/{key_id}', ('PATCH',), 'rename_api_key'),
     ('/orgs/{org_id}/api-keys/{key_id}/disable', ('POST',), 'disable_api_key'),
@@ -714,6 +718,8 @@ def _lifespan(role: AppRole):
                 _mcp.configure_endpoint_observation_reader(endpoint_observations)
             fault_handler = analytics.install_fault_handler()
             analytics.capture_service_started(role)
+            for problem in turnstile.misconfiguration():
+                logging.getLogger("treg").warning("event=turnstile_misconfigured problem=%s", problem)
             try:
                 if role == "control" or _mcp is None:
                     yield
@@ -766,6 +772,9 @@ def create_app(role: AppRole = "all", *, archive_object_store=None) -> FastAPI:
 
     # Deferred to avoid a cycle: api.py defines the router, then calls this factory for api:app.
     from . import api as api_module
+    from .application.call import keyslots
+
+    keyslots.check_accounts()  # an unusable TREG_PLATFORM_ACCOUNTS entry refuses to start
 
     expose_docs = role != "dataplane"
     app = FastAPI(

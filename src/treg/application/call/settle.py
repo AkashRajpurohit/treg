@@ -33,6 +33,7 @@ from ...infra.money_trace import mark_money, money_stage
 from ...models import Org
 from ...timeutil import utcnow_naive as _utcnow_naive
 from .idempotency import _release_idempotent_claim
+from . import keyslots
 from .resolve import MarketplaceCall, _openmart_credits, _usd_to_micro
 from .types import GatewayFailed, UpstreamResponse
 
@@ -451,10 +452,10 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
       - lusha: `billing.creditsCharged`, one level down — the same reported-credits contract,
         including 0 on a 2xx miss (the captured people.enrich example IS one) and the 2-credit
         company enrich. Converted through the lusha rate like the others.
-      - apollo: DERIVED, not reported. Apollo answers a miss with 2xx (`organization: null` on
-        enrich, an empty `organizations` page on search) and charges nothing for it, so status-based
-        billing alone would bill the caller for a response Apollo gave away. The body says whether
-        the charged thing came back; when it didn't, the call settles at 0.
+      - apollo: DERIVED, not reported. Apollo answers a miss with 2xx (`organization: null` or a
+        bare `{}` on enrich, an empty `organizations` page on search) and charges nothing for it, so
+        status-based billing alone would bill the caller for a response Apollo gave away. The body
+        says whether the charged thing came back; when it didn't, the call settles at 0.
       - hunter (domain search): DERIVED too, and for the opposite reason — its price is not
         per row but one whole SEARCH credit per 10 emails returned, rounded up, with an empty
         domain free. `data.emails` is the only place that number exists.
@@ -806,14 +807,16 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
     if provider == "apollo":
         # Only the shapes whose billing rule is documented and body-decidable: company enrichment
         # (1 credit per organization returned, null on a miss) and company search (1 credit per
-        # non-empty PAGE). A body carrying neither key — people enrichment's 1-9 credit range
-        # included — falls through to the estimate rather than guessing.
+        # non-empty PAGE). When those keys are present, decide here. When they are absent — a
+        # live companies.enrich miss is bare `{}`, and people enrichment's 1-9 credit range has
+        # neither key — do not return None: fall through so the GENERIC miss / adapter rule can
+        # zero a verified companies.enrich miss, while people enrichment still settles at the
+        # estimate (no organization keys, adapter miss is on `person`).
         rate = catalog_store.load().credit_rates.get("apollo")
         if rate:
             for key in ("organization", "organizations"):
                 if key in doc:
                     return int(rate * 1_000_000 + 0.5) if doc[key] else 0
-        return None
     # GENERIC miss rule: a `per_success` endpoint bills only when it found something, and the
     # routing adapter (catalog/adapters.yaml, fixture-verified at load) already knows what "nothing"
     # looks like in this provider's body. Before this, tomba / findymail / leadsforge misses settled
@@ -1430,7 +1433,7 @@ async def _note_capacity_signal(mk: MarketplaceCall, status_code: int, headers, 
         if capacity_signatures.is_exhausting(signal):
             lock = await capacity_marks.strike(
                 mk.provider, endpoint_id=mk.endpoint_id, kind=signal.kind,
-                resets_at=signal.resets_at,
+                resets_at=signal.resets_at, slot=keyslots.capacity_slot(mk.key_slot),
                 note=f"{signal.kind} signature on {mk.endpoint_id}: {signal.detail[:80]}")
             capacity_view.invalidate()
             if lock is not None and lock.is_active():
@@ -1467,7 +1470,7 @@ async def _note_capacity_recovery(mk: MarketplaceCall) -> None:
     try:
         await capacity_view.load()
         cleared = False
-        for lock in capacity_view.locks(mk.provider, mk.endpoint_id):
+        for lock in capacity_view.locks(mk.provider, mk.endpoint_id, keyslots.capacity_slot(mk.key_slot)):
             if lock.is_active() and lock.lock_id != mk.probe_lock_id:
                 continue
             if await capacity_marks.clear(lock.key, lock_id=mk.probe_lock_id):
