@@ -25,7 +25,7 @@ def test_alembic_has_a_single_head():
 
 
 def test_the_request_admission_revision_only_creates_new_tables():
-    tree = ast.parse((VERSIONS / "0070_request_admission.py").read_text())
+    tree = ast.parse((VERSIONS / "0072_request_admission.py").read_text())
     upgrade = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "upgrade")
     calls = [n for n in ast.walk(upgrade) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
              and isinstance(n.func.value, ast.Name) and n.func.value.id == "op"]

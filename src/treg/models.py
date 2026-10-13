@@ -2163,7 +2163,7 @@ class BlocklistEntry(SQLModel, table=True):
 
 
 class BlocklistVersion(SQLModel, table=True):
-    """The single row (`id = 1`, inserted by migration 0070): the blocklist's version and mode.
+    """The single row (`id = 1`, inserted by migration 0072): the blocklist's version and mode.
     Every blocklist write and every mode change runs `version = version + 1` on it in the same
     transaction; serving processes poll it by primary key and reload only when it changes."""
     id: int = Field(default=1, primary_key=True)

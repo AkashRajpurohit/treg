@@ -74,7 +74,7 @@ async def advance(db: AsyncSession, now: datetime, *, mode: str | None = None) -
     row = (await db.execute(update(BlocklistVersion).where(BlocklistVersion.id == 1)
                             .values(**values).returning(BlocklistVersion.version))).first()
     if row is None:
-        raise RuntimeError("the blocklistversion row is missing (migration 0070 inserts it)")
+        raise RuntimeError("the blocklistversion row is missing (migration 0072 inserts it)")
     return int(row[0])
 
 

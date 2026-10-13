@@ -64,7 +64,7 @@ async def _read_snapshot(db) -> Blocklist:
         .limit(limit + 1)
     )).all()
     if not rows:
-        raise LookupError("the blocklistversion row is missing (migration 0070 inserts it)")
+        raise LookupError("the blocklistversion row is missing (migration 0072 inserts it)")
     entries = [r for r in rows if r.kind is not None]
     if len(entries) > limit:
         raise TooManyEntries(f"more than {limit} active entries (rate_limit_blocklist_max_entries)")

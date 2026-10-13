@@ -1,7 +1,7 @@
 """request admission: rate-limit policy versions, the blocklist and its audit, surge signals
 
-Revision ID: 0070
-Revises: 0069
+Revision ID: 0072
+Revises: 0071
 Create Date: 2026-10-12
 
 Five new tables (docs/context/architecture/rate-limit.md): `ratelimitconfigversion` (one audited
@@ -9,7 +9,7 @@ row per policy write), `blocklistentry`, `blocklistaudit` and the single-row `bl
 (the blocklist itself; processes poll the version and mode row, pre-inserted here, and cache the
 entries), and `surgesignal`
 (record-only per-minute request aggregates). Additive only: new tables, no change to an existing table.
-Follows 0069 (platform key slots), which lands first.
+Follows 0071 (signup promo claim), which follows 0070 (spend per API key) and 0069 (platform key slots).
 """
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -17,8 +17,8 @@ from datetime import datetime, timezone
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0070"
-down_revision: str | Sequence[str] | None = "0069"
+revision: str = "0072"
+down_revision: str | Sequence[str] | None = "0071"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

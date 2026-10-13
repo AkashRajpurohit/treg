@@ -25,7 +25,7 @@ sources:
   - src/treg/infra/db.py
   - src/treg/config.py
   - src/treg/domain/identity/access.py
-  - src/treg/alembic/versions/0070_request_admission.py
+  - src/treg/alembic/versions/0072_request_admission.py
   - tests/test_rate_limit_policy.py
   - tests/test_rate_limit_config.py
   - tests/test_rate_limit_middleware.py
@@ -113,7 +113,7 @@ the audit record).
 **Source:** Postgres only. `BlocklistEntry` (one row per target, `expires_at` always set,
 `revoked_at` for an unblock), `BlocklistAudit` (one row per call, append-only, carrying the version
 it produced) and the single `BlocklistVersion` row (version and mode), pre-inserted by migration
-0070. Every block, unblock or mode change runs `UPDATE ... SET version = version + 1 RETURNING
+0072. Every block, unblock or mode change runs `UPDATE ... SET version = version + 1 RETURNING
 version` on it in the same transaction as its rows (`blocklist_admin.advance`); the row lock
 serializes writers and the returned value is the version the readback waits for. Redis holds no
 blocklist.
