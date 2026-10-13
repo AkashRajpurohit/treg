@@ -3,7 +3,8 @@
 Render Key Value (Redis protocol) in production, an in-process dictionary when `TREG_KV_URL` is
 unset (local development, tests, self-hosters without one). The store holds nothing that must
 survive: every key expires, and every caller treats "unavailable" as a safe answer. Socket I/O
-uses `_TIMEOUT_S`; optional counters and health probes have their own shorter outer deadline.
+for money leases uses `_TIMEOUT_S`; optional counters and health probes have their own shorter
+outer deadline. Rate-limit commands use a separate client at `rate_limit_store_timeout_ms`.
 
 Review-invitation budgets fail closed; money admission leases report unavailability explicitly
 so the caller can retain PostgreSQL's original correctness path. New tenants add narrow methods,
@@ -220,6 +221,12 @@ class RedisStore:
             url, socket_timeout=_TIMEOUT_S, socket_connect_timeout=_TIMEOUT_S,
             decode_responses=True,
         )
+        # Not the money client's one-second socket. The request path's budget is
+        # rate_limit_store_timeout_ms (default 30); a miss is fail-open.
+        rl_s = get_settings().rate_limit_store_timeout_ms / 1000
+        self._rl_client = redis.Redis.from_url(
+            url, socket_timeout=rl_s, socket_connect_timeout=rl_s, decode_responses=True,
+        )
 
     async def take(self, key: str, limit: int, ttl_s: int) -> bool:
         try:
@@ -331,6 +338,10 @@ class RedisStore:
                 _record_lease_timing("release", outcome, started, retry=bool(attempt))
         return "unavailable"
 
+    def _limiter(self):
+        """The short-timeout client. A test that only stubs `_client` still reaches the limiter."""
+        return getattr(self, "_rl_client", None) or self._client
+
     async def _rl(self, coro_fn):
         try:
             async with asyncio.timeout(get_settings().rate_limit_store_timeout_ms / 1000):
@@ -340,39 +351,44 @@ class RedisStore:
 
     async def rl_admit_key(self, key: str, member: str, cap: int | None, ttl_ms: int,
                            enforce: bool) -> tuple[bool, bool, int]:
-        admitted, ok, n = await self._rl(lambda: self._client.eval(
+        admitted, ok, n = await self._rl(lambda: self._limiter().eval(
             _RL_ADMIT, 1, key, member, ttl_ms, -1 if cap is None else cap, "1" if enforce else "0"))
         return bool(admitted), bool(ok), int(n)
 
     async def rl_release_key(self, key: str, member: str) -> None:
-        await self._rl(lambda: self._client.zrem(key, member))
+        await self._rl(lambda: self._limiter().zrem(key, member))
 
     async def rl_renew(self, key: str, members: list[str], ttl_ms: int) -> int:
         if not members:
             return 0
-        return int(await self._rl(lambda: self._client.eval(_RL_RENEW, 1, key, *members, ttl_ms)))
+        return int(await self._rl(lambda: self._limiter().eval(_RL_RENEW, 1, key, *members, ttl_ms)))
 
     async def rl_get(self, key: str) -> str | None:
-        return await self._rl(lambda: self._client.get(key))
+        return await self._rl(lambda: self._limiter().get(key))
 
     async def rl_publish(self, key: str, value: str, version: int) -> int:
         """Write only if `version` is newer than the stored one; returns what the key now holds."""
-        return int(await self._rl(lambda: self._client.eval(_RL_PUBLISH, 1, key, value, str(version))))
+        return int(await self._rl(lambda: self._limiter().eval(_RL_PUBLISH, 1, key, value, str(version))))
 
     async def rl_heartbeat(self, key: str, value: str, ttl_s: int) -> None:
-        await self._rl(lambda: self._client.set(key, value, ex=ttl_s))
+        await self._rl(lambda: self._limiter().set(key, value, ex=ttl_s))
 
     async def rl_live(self) -> list[str]:
         async def read():
-            keys = [k async for k in self._client.scan_iter(match=RL_LIVE_PREFIX + "*", count=100)]
-            return [v for v in (await self._client.mget(keys) if keys else []) if v]
+            client = self._limiter()
+            keys = [k async for k in client.scan_iter(match=RL_LIVE_PREFIX + "*", count=100)]
+            return [v for v in (await client.mget(keys) if keys else []) if v]
         return await self._rl(read)
 
     async def rl_memory(self, max_keys: int) -> dict:
         """A bounded sample of what `rl:` keys occupy, next to the store's total, so a reader can
-        see the limiter crowding money-admission leases out of an LRU-evicting store."""
+        see the limiter crowding money-admission leases out of an LRU-evicting store.
+
+        The sample can outlast one request-path budget, so it uses the money client, with its own
+        two-second cap. It does not scale with `_TIMEOUT_S`.
+        """
         try:
-            async with asyncio.timeout(_TIMEOUT_S * 20):
+            async with asyncio.timeout(2.0):
                 keys: list[str] = []
                 async for key in self._client.scan_iter(match="rl:*", count=200):
                     keys.append(key)
@@ -392,10 +408,13 @@ class RedisStore:
             raise Unavailable(type(exc).__name__) from exc
 
     async def aclose(self) -> None:
-        try:
-            await self._client.aclose()
-        except Exception:  # noqa: BLE001
-            pass
+        for client in (self._client, getattr(self, "_rl_client", None)):
+            if client is None:
+                continue
+            try:
+                await client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def _transient_lease_error(exc: Exception) -> bool:

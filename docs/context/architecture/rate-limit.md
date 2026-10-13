@@ -165,7 +165,8 @@ The window, per-call cap and write budget defaults are placeholders, to be set f
 
 Mode `off` (the env default, until the store's request-path latency is measured), `shadow` (logs
 `rate_limit_would_block`) or `enforce` (**429**, `Retry-After`). Each limiter store call has a
-`rate_limit_store_timeout_ms` budget; a slower answer is a miss.
+`rate_limit_store_timeout_ms` budget (default 30 ms) on its own Redis client (`RedisStore._rl_client`).
+That socket timeout is not the money store's one-second `_TIMEOUT_S`. A slower answer is a miss.
 `concurrency_ttl_s` is at least `call_timeout_s`. `global_paid_reserve` slots are usable by paid orgs only
 (`RateLimitConfig.global_cap`). A key not yet in the key cache (every key's first request after a
 deploy) is counted but never refused: refused before auth it would never be learned. The figure is
