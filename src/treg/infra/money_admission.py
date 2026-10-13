@@ -37,7 +37,7 @@ _LOSS_REASONS = ("late", "not_owned", "unavailable")
 _BOUNDS_MS = (10, 50, 100, 250, 1000, 5000)
 # Equal jitter keeps a nonzero delay while spreading competing processes' retries.
 _BUSY_RETRY_INITIAL_S = 0.006
-_BUSY_RETRY_CAP_S = 0.012
+_BUSY_RETRY_CAP_S = 0.024
 _local_locks: weakref.WeakValueDictionary[int, asyncio.Lock] = weakref.WeakValueDictionary()
 _local_loop = None
 _clock = time.monotonic

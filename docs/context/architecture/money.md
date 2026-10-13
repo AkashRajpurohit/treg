@@ -293,7 +293,7 @@ nor accounting behavior.
 application opens a database session. A process-local `asyncio.Lock` queues each org's waiters,
 so only the local head competes for its token-owned, expiring Redis lease. The first Redis
 attempt is immediate; only a `busy` result retries with capped exponential equal jitter:
-random 3–6 ms, then 6–12 ms on subsequent failures. This nonzero jitter spreads competing
+random 3–6 ms, then 6–12 ms, then 12–24 ms on subsequent failures. This nonzero jitter spreads competing
 processes while limiting polling work. Each org starts at the initial interval, within one
 absolute acquisition deadline for local waiting and all Redis leases in the batch; cancellable
 sleeps never refresh that deadline. Unavailability still falls back immediately. These retries
