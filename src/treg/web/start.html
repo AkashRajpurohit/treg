@@ -62,6 +62,8 @@
     font-size: clamp(40px, 5.6vw, 66px); margin: 0 0 22px; text-wrap: balance;
   }
   .hero h1 .no { color: var(--muted); }
+  .eyebrow { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 18px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: #fff; font-size: 13px; font-weight: 500; color: var(--ink-2); }
+  .eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
   .hero .sub { font-size: 19px; color: var(--ink-2); margin: 0 0 32px; max-width: 34em; text-wrap: pretty; }
   .works { display: flex; align-items: center; gap: 12px; margin-top: 30px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
   .works .logos { display: flex; gap: 10px; align-items: center; }
@@ -124,6 +126,7 @@
   .step h3 { font-family: var(--display); font-weight: 600; font-size: 19px; margin: 8px 0 6px; letter-spacing: -.01em; }
   .step p { margin: 0; color: var(--ink-2); font-size: 15px; }
   .step code { font-family: var(--mono); font-size: 12.5px; background: var(--card); padding: 2px 6px; border-radius: 6px; }
+  .agents-h { margin-top: 84px !important; }
   .quotes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; max-width: 1040px; margin: 72px auto 0; }
   .quote { display: flex; flex-direction: column; gap: 14px; padding: 24px; border-radius: 18px; background: #fff; border: 1px solid var(--line); text-decoration: none; }
   .quote:hover { border-color: #cfccc5; }
@@ -187,6 +190,7 @@
 <main>
 <section class="wrap hero">
   <div>
+    <div class="eyebrow">Designed for AI agents</div>
     <h1 id="heroH1">Your AI agent gets the data. <span class="no">You cancel the subscriptions.</span></h1>
     <p class="sub" id="heroSub">Connect Claude Code, Codex or Cursor to lead lists, work emails, keyword data, competitor ads and social posts. Ask in plain English and pay cents per job instead of a monthly plan.</p>
     <button class="cta" type="button" data-cta="hero">Start free <span class="arr" aria-hidden="true">→</span></button>
@@ -236,6 +240,14 @@
     <div class="step"><div class="n">01</div><h3>Sign up free</h3><p>Click <b>Start free</b> and continue with Google. You get $1 of credit, <span data-free-what>about 100 work emails</span>. No card.</p></div>
     <div class="step"><div class="n">02</div><h3>Paste your setup line</h3><p>Pick your agent and we show you one line with your key. Paste it into your agent's chat and press Enter, and it sets itself up. On Claude.ai you add treg.to as a connector instead, in two clicks.</p></div>
     <div class="step"><div class="n">03</div><h3>Ask for what you need</h3><p>In the same chat, type the job: <span id="stepAsk">"Find dentists in Sydney with phone number and website."</span> Your agent runs it and tells you what it cost.</p></div>
+  </div>
+
+  <h2 id="agentsH" class="agents-h">Designed for AI agents.</h2>
+  <p class="lede">treg.to isn't another app for you to learn. It's built for your agent to use on its own.</p>
+  <div class="steps">
+    <div class="step"><h3>It finds the right tool</h3><p>Your agent searches thousands of data tools by the job, like "work email" or "keyword volume". No API docs for you to read.</p></div>
+    <div class="step"><h3>It checks before it spends</h3><p>Every tool shows its price per call, how often it succeeds and how fast it is, measured on real calls. Your agent can tell you the cost before it runs.</p></div>
+    <div class="step"><h3>No provider keys in your agent</h3><p>One treg.to key covers every tool. Provider keys stay on our side, so nothing secret sits in your agent's chat or files.</p></div>
   </div>
 
   <div class="quotes">
