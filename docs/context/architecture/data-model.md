@@ -46,11 +46,13 @@ sources:
   - src/treg/domain/provider_resources.py
   - src/treg/routers/provider_resources.py
   - src/treg/alembic/versions/0033_signup_promo_eligibility.py
+  - src/treg/alembic/versions/0071_signup_promo_claim.py
   - src/treg/alembic/versions/0041_searchlog.py
   - src/treg/alembic/versions/0055_find_v2_log.py
   - src/treg/alembic/versions/0056_searchlog_verdict.py
   - src/treg/alembic/versions/0065_call_verdict.py
   - src/treg/alembic/versions/0066_endpointdaystat_verdicts.py
+  - src/treg/alembic/versions/0070_api_key_spend_rollup.py
   - src/treg/timeutil.py
   - src/treg/infra/db.py
   - src/treg/infra/money_timing.py
@@ -107,6 +109,11 @@ for legacy async pairs whose billing does not use a deferred hold. They ship wit
 because old code ignores the additions while new code cannot safely retain an asynchronous hold or
 authorize a shared-provider result without them.
 
+Revision `0069` adds nullable `key_slot` to `AsyncTaskRecord`, `AsyncResourceRecord` and
+`ProviderResource`: the label of the treg-owned account the object lives on, so its polls, fetches
+and edits use that account ([proxy model](proxy-model.md), "Several treg-owned accounts"). NULL is
+every earlier row and means the primary account.
+
 Revision `0052` adds nullable `hit`: the terminal contact verdict for the original submission.
 The terminal finalizer commits it with settlement. The audit writer locks the task row before
 inserting a submission `CallRecord`, so a poll that finishes first still gives that row its final
@@ -146,6 +153,10 @@ with a retained database default of false for existing rows and old writers. New
 explicitly insert true. No balances or historical money entries change. Successful email proof sets
 verification; only the atomic identity claim consumes availability, committed with the signup grant.
 See [signup eligibility](money.md#signup-credit-eligibility).
+
+Revision `0071` adds `SignupPromoClaim` (`inbox` primary key, `user_id` with no FK, `created_at`):
+one row per mailbox that received the signup gift, staged with the user-level claim. It is
+backfilled from users already verified and no longer eligible.
 
 ## Registry tables
 
@@ -317,6 +328,14 @@ uses this metadata, never the encrypted token's shape.
   `(org_id, created_at, id) WHERE kind = 'local_run'` (revision 0054); without them the first
   walked the primary key testing `org_id` and the second read the team's whole history. The
   Activity feed's calls page by time on `(org_id, created_at)`.
+
+  **Spend per API key is the ledger's, folded the same way.** Revision 0070 adds `ApiKeySpendDay`
+  (team + API key + tool + UTC day -> `spent_micro`, `charges`; primary key
+  `(org_id, day, api_key_id, endpoint_id)`, `api_key_id = 0` for the not-attributed line) and the
+  single-row `ApiKeySpendCursor` (a `(created_at, id)` watermark, `history_from`, `caught_up_at`,
+  `recounted_on`). `application/key_spend_rollup.py`, run as `treg-worker spend rollup`, is the
+  only writer of both, and the Team and Usage pages read only them; see [money](money.md) § Spend
+  per API key. Team deletion clears a team's rows.
 
   `refused_by` distinguishes a treg refusal (`auth`, `policy`, `balance`, `cap`, `resolution`,
   `request`, and other mechanism-specific values) from an upstream answer, where it is null.
@@ -631,7 +650,10 @@ events or org/call IDs in these aggregates.
 `infra.kv` by `phase` (`acquire`, `renew`, `release`) and one of seven `error_type` values:
 `deadline_exceeded` (Python timeout), `redis_timeout`, `authentication`, `permission`, `connection`,
 `response`, or `other`. At most 21 buckets retain counts, UTC first/last failure timestamps and
-`elapsed_max_ms`, plus the configured socket timeout and outer operation deadline in milliseconds.
+`elapsed_max_ms`, plus the socket timeout default (1,000 ms) and outer command-attempt deadline
+(1,500 ms). Renewal/release attempts also share a 2,500 ms per-key budget; remaining confirmed
+lease validity can further shorten renewal. URL query overrides can change the effective driver
+socket timeout without changing these reported defaults.
 Elapsed time is client-observed, including connection setup and event-loop scheduling, not Redis
 server execution time. A type narrows the failing boundary; it does not establish a network or
 server root cause by itself. Normal contention and task cancellation are not lease errors.

@@ -26,11 +26,14 @@ from ...infra.db import session_maker
 from ...models import Secret
 from ...sandbox_identity import visitor_name
 from ...domain.capacity import signatures as capacity_signatures
+from ...domain.capacity.fair_share import NO_SLOT, ShareBusy, fair_share
+from ...domain.capacity.fair_share import RETRY_AFTER_S as RETRY_AFTER_SHARE_S
 from ...domain.capacity.view import view as capacity_view
 from ...infra.upstream.limiter import limiter as provider_limiter
 from ...infra.upstream.relay import identify_as_treg, relay, scope_shared_idempotency_key
 from .. import asynctasks as async_task_app
 from ...domain import asynctasks as asynctasks_rules
+from . import keyslots
 from .authorize import authorize_call, enforce_public_demo_limit
 from .evidence import (
     _ERROR_BODY_SLICE,
@@ -501,7 +504,7 @@ async def _apply_managed_resource_result(
                     resource_db, org_id=caller.org_id, provider=mk.provider,
                     resource_kind=str(rule.get("kind") or ""), upstream_id=upstream_id,
                     display_name=display_name, created_by=caller.email,
-                    source_call_id=call_ref,
+                    source_call_id=call_ref, key_slot=mk.key_slot,
                 )
                 await resource_db.commit()
         except provider_resources.ResourceCollision as exc:
@@ -987,7 +990,8 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             props |= {"provider": mk.provider, "endpoint_id": mk.endpoint_id,
                       "tier": mk.tier, "metered": mk.metered, "cost_type": mk.cost_type,
                       "charged_micro": charged_micro, "observed_micro": observed_micro,
-                      "capacity_signal": capacity_signal, "probe": mk.probe_lock_id is not None}
+                      "capacity_signal": capacity_signal, "probe": mk.probe_lock_id is not None,
+                      "key_slot": mk.key_slot}
         else:
             props["provider"] = urlsplit(upstream_url).hostname or ""
         if defer_analytics:
@@ -1206,6 +1210,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
         # (settle, first-call and the idempotent store all run on their own sessions), and the session
         # is `expire_on_commit=False`, so `tool`/`secrets`/`caller.org` stay usable without a reload.
         await db.commit()
+        share_slot = NO_SLOT
         try:
             platform_tier = mk is not None and mk.tier == "platform"
             raw_headers = tuple(request.headers.raw)
@@ -1231,9 +1236,12 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
                 # would exceed the provider's published rate waits briefly (≤ 2 s, in-process, no DB —
                 # the DB phase ended above) instead of being relayed into a 429 nobody can fix. Beyond
                 # the cap it proceeds as before; nothing is ever refused here.
-                rl = capacity_view.rate_limit(mk.provider)
+                # The account, when resolution left it open, is picked here and its token taken
+                # below with no await between: a burst arriving together spreads over the accounts.
+                keyslots.assign(mk)
+                rl = keyslots.rate_bucket(mk.provider, mk.endpoint_id, mk.key_slot)
                 if rl is not None:
-                    waited = await provider_limiter.acquire(mk.provider, *rl)
+                    waited = await provider_limiter.acquire(*rl)
                     if waited:
                         smoothed.append(f"wait={waited}")
             # The archive's serve path (docs/context/architecture/archive.md): a fresh stored
@@ -1302,6 +1310,26 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
                 archive_key_hash, archive_content_hash = served["key_hash"], served["content_hash"]
                 response = _served_response(served, body)
             else:
+                if platform_tier and (cap := capacity_view.concurrency(mk.provider)) \
+                        and (wait_s := get_settings().fair_share_wait_s) > 0:
+                    # Fair share (domain/capacity/fair_share.py): every team shares this account's
+                    # places; a full provider hands the next free place to the team with the fewest
+                    # calls in progress. Held until the answer is read, released on every path below.
+                    try:
+                        # Each of treg's accounts has its own places (`keyslots.capacity_key`).
+                        share_slot = await fair_share.acquire(
+                            keyslots.capacity_key(mk.provider, mk.key_slot), caller.org_id, cap,
+                            max_wait_s=wait_s)
+                    except ShareBusy as busy:
+                        raise GatewayFailed("share_busy", status_code=429, detail={
+                            "error": "share_busy", "provider": mk.provider,
+                            "endpoint_id": mk.endpoint_id, "active": busy.active,
+                            "retry_after_s": RETRY_AFTER_SHARE_S,
+                            "message": f"{mk.provider} is fully used and your team already has "
+                                       f"{busy.active} calls in progress on it; not charged, "
+                                       f"try again in {RETRY_AFTER_SHARE_S} s"}) from None
+                    if share_slot.waited_ms:
+                        smoothed.append(f"share_wait={share_slot.waited_ms}")
                 upstream_started = _now_ms()
                 response = await relay(
                     upstream_request,
@@ -1350,7 +1378,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
                     try:
                         await async_task_app.remember_platform_resources(
                             caller.org_id, mk.provider, call_ref, mk.resource_ownership, body,
-                            tags=meta.tags)
+                            tags=meta.tags, key_slot=mk.key_slot)
                     except Exception:  # noqa: BLE001 - failure keeps later access fail-closed
                         logging.getLogger("treg.asynctasks").warning(
                             "could not persist async resource ownership for %s", call_ref,
@@ -1429,6 +1457,8 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             raise
         except httpx.RequestError as exc:  # upstream down/timeout is a gateway fault, not treg's 500
             raise _gateway_request_failure(exc) from exc
+        finally:
+            share_slot.release()
     except asyncio.CancelledError:
         await _finish_cancelled_call(request, mk, call_ref, response)
         raise
