@@ -139,8 +139,8 @@ eligibility. Team deletion, leaving and ownership changes cannot restore it beca
 user. Administrative deletion of the user also deletes this marker; this is an account-level guarantee,
 not a permanent per-email denylist or proof that separate accounts belong to different humans.
 
-The inbox is `promotions.promo_inbox(email)`: lowercased, `+tag` subaddressing dropped for every
-domain, and for `gmail.com` / `googlemail.com` the dots removed and the domain folded to
+The inbox is `promotions.promo_inbox(email)`: lowercased, the domain's trailing dots dropped,
+`+tag` subaddressing dropped for every domain, and for `gmail.com` / `googlemail.com` the dots removed and the domain folded to
 `gmail.com`. Each alias is still its own login and `User`; only the gift is shared, and a user
 whose inbox was already claimed through another alias loses its own eligibility in the same
 UPDATE. The claim row has no FK and outlives the user, so account deletion does not free an inbox.
@@ -728,7 +728,9 @@ day -> `spent_micro` and `charges`. `charges` counts settle entries with money, 
 routed call or an overflow hold settles more than once. The fold:
 
 - walks the ledger in `(created_at, id)` order from a persisted watermark (`ApiKeySpendCursor`;
-  ledger ids are random, so the id alone cannot be a cursor), over the `created_at` index;
+  ledger ids are random, so the id alone cannot be a cursor), over the `created_at` index, with the
+  watermark as the scan's lower bound (`created_at >= watermark AND (created_at > watermark OR
+  id > watermark_id)`), never inside one OR that the planner cannot bound;
 - leaves entries younger than a few minutes for the next run: the audit row that names the key is
   written after the settle, through a queue;
 - reads small batches, each in its own short transaction: lock the cursor row, read the entries,

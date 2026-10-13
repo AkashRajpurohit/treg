@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import itertools
+import random
 
 from ... import oauth_providers
 from ...config import PRIMARY_SLOT, get_settings, platform_setting_name
@@ -34,7 +35,10 @@ from ...infra.upstream.limiter import limiter
 from ...infra import kv
 from .types import ResolutionFailed
 
-_rotation: dict[str, itertools.count] = {}  # per provider: one provider's calls never skew another's
+# Per provider, so one provider's calls never skew another's. Each process starts at a random
+# point: every web worker counting from 0 sent its first call on a provider to the primary, so at
+# low traffic across several workers nearly every call landed there.
+_rotation: dict[str, itertools.count] = {}
 
 
 def check_accounts() -> None:
@@ -140,7 +144,7 @@ def _candidates(mk) -> list[str]:
         return [mk.key_slot]
     slots = [slot for slot in _labels(mk.provider) if not exhausted(mk.provider, mk.endpoint_id, slot)]
     slots = slots or _labels(mk.provider)
-    start = next(_rotation.setdefault(mk.provider, itertools.count())) % len(slots)
+    start = next(_rotation.setdefault(mk.provider, itertools.count(random.randrange(1 << 16)))) % len(slots)
     return slots[start:] + slots[:start]
 
 
