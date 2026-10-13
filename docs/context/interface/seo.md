@@ -478,8 +478,11 @@ Claude Code's `mcp__treg__…`. ChatGPT custom apps need developer mode (an admi
 Business/Enterprise) and claude.ai Team/Enterprise need an owner to add the connector first; both
 steps link the vendor's own guide rather than hard-coding menus that move. The agent FAQs' "does treg
 pick the provider?" now describes the routed `treg.<job>` tools (fallback on error or miss, capped by
-`X-Treg-Route-Max-Cost`) instead of "does not route"; the same stale line remains on several
-use-case pages and in CLAUDE.md. An agent without these keys
+`X-Treg-Route-Max-Cost`) instead of "does not route". The same correction runs through every
+page whose job HAS a routed tool (find and verify an email, backlinks, a LinkedIn profile, X and
+TikTok post search, the lead-list workflow, the provider pages' "Same jobs" strip, /docs). Pages whose
+job has none (TikTok Shop, competitor ads, crypto, employee reviews, paid keywords) keep "compares,
+does not fail over", because there it is still true. The rule is AGENTS.md non-negotiable 4. An agent without these keys
 renders exactly as before. Tests hold the overlap with the template page under 75%, every
 `treg call <id>` in a guide to an existing endpoint, every guide link to a 200, every category
 reachable from a focused page, the Hermes block to the same shape as `mcp_install`'s hint, and the

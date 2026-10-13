@@ -482,8 +482,8 @@ USE_CASE_PAGES: dict[str, dict] = {
              "Most agencies use one email finder, get 45-50% coverage, and immediately lose half their list before even emailing.",
              "@itsalexvacca on X", "https://x.com/i/status/1976301889634566420",
              "All nine are callable through one key, so a miss costs one more call to try the next "
-             "one. Tell the agent the order you want; treg.to compares, it does not fail over on "
-             "its own."),
+             "one. Or call treg.people.email.find, the routed tool, which runs that waterfall itself: "
+             "your own keys first, then the next provider on a miss, up to the cost cap you set."),
             ("The lead is a LinkedIn URL and nothing else",
              "I tried GetProspect and Apollo.io to extract the email address but most of them were wrong.",
              "r/businessemail", "https://www.reddit.com/r/businessemail/comments/1ttn2fd/how_to_search_an_email_address_on_linkedin_easily/",
@@ -532,7 +532,8 @@ USE_CASE_PAGES: dict[str, dict] = {
             ("Which provider should I use?",
              "It depends on what you have. Name plus domain: start with the cheapest verified "
              "per-success provider. A LinkedIn URL: use one that accepts it directly. treg.to shows "
-             "them side by side but does not choose or fail over for you."),
+             "them side by side. To let treg.to choose, call treg.people.email.find: it tries them "
+             "in order and names the one that answered."),
             ("Is the data legal to use?",
              "These providers return business contact data under their own terms; you are "
              "responsible for how you use it, including consent and anti-spam law in your "
@@ -1129,8 +1130,9 @@ USE_CASE_PAGES["verify-an-email"] = {
          "The prices and how each provider bills an inconclusive result are in the comparison below."),
         ("Can I run several verifiers over the same list?",
          "Yes, they are all callable through one key, and heavy senders do exactly that because "
-         "verifiers disagree on the ambiguous rows. Your agent chains them; treg.to compares the "
-         "options but does not route or fail over on its own."),
+         "verifiers disagree on the ambiguous rows. Your agent chains them. The routed tool, "
+         "treg.people.email.verify, picks one verifier and moves on only if it errors; it does not "
+         "run a second opinion for you."),
     ],
     "related": ("Find professional emails", "Enrich a person from an email or LinkedIn URL",
                 "A company's email format", "Find people by role, company or location"),
@@ -3975,8 +3977,9 @@ USE_CASE_PAGES["backlink-profile-of-a-domain"] = {
          "another's."),
         ("Which provider should my agent use?",
          "The one whose columns match the question and whose rate fits the volume. treg.to "
-         "shows all six side by side with the rate and the measured success; it compares, it "
-         "does not route or fail over for you."),
+         "shows all six side by side with the rate and the measured success. The routed tool, "
+         "treg.web.backlinks.summary, picks one for you and falls back if it fails, but the "
+         "scores differ by provider, so name one when you compare domains over time."),
     ],
     "voices_intro": (
         "Backlink threads are among the most seeded in SEO: of the ~163 Reddit and X posts "
@@ -4092,8 +4095,9 @@ USE_CASE_PAGES["search-posts-by-keyword"] = {
          "on two platforms is two calls a day."),
         ("Which provider should my agent use?",
          "The platform decides the shelf. Within it, treg.to shows each row's rate and "
-         "measured success side by side, and the agent picks, or you tell it; treg.to does "
-         "not route or fail over between them."),
+         "measured success side by side, and the agent picks, or you tell it. X and TikTok also "
+         "have routed tools (treg.x.search.posts, treg.tiktok.search.videos) that pick a provider "
+         "and fall back on an error; Reddit and LinkedIn do not."),
     ],
     "voices_intro": (
         "Keyword-monitoring threads are a vendor parade: of the ~165 Reddit and X posts read "
@@ -4429,8 +4433,9 @@ USE_CASE_PAGES["get-a-linkedin-profile"] = {
         "thin, and the fields most often missing are exactly the ones people want: the dated "
         "experience list. The cheap experiment is the honest answer: run the same twenty URLs "
         "through three rows for a few cents and count who filled the columns you need. "
-        "treg.to shows the rows side by side and the agent picks; it does not route between "
-        "them and it does not fail over.",
+        "treg.to shows the rows side by side and the agent picks. treg.linkedin.user.profile, "
+        "the routed tool, picks one and falls back on an error or a miss, but a thin profile is "
+        "not a miss, so run the experiment before you trust it with the dated history.",
     ],
     "faq": [
         ("Is there an official LinkedIn API for other people's profiles?",
@@ -4935,7 +4940,7 @@ WORKFLOWS["find-and-verify-a-lead-list"] = {
         ("What does jev decide, and what does it cost?",
          "Two things. Before the paid lookups it reads each company's list fields and returns the probability that it fits your ICP; the agent keeps the rows at or above the threshold you name. After the news step it picks which event to lead with and scores how usable it is as a first line. jev is priced on input tokens only, and the two steps together cost a fraction of a cent for the whole run. You need a jev key of your own, or the agent can make the same judgements itself behind the same interface, slower and dearer, until you have one."),
         ("Does treg.to pick the providers?",
-         "No. treg.to shows the agent every provider for each step with its price and measured success rate; the agent picks, or you tell it which one. There is no automatic failover. jev is the same kind of choice: it is the agent's judge, not treg.to's router."),
+         "Only where the prompt calls a routed tool. The people search, email find and verify steps can use treg.people.search, treg.people.email.find and treg.people.email.verify, which pick a provider (your own keys first) and fall back on an error or a miss; every other step uses the provider the agent names, from the prices and measured success rates treg.to shows. jev is the same kind of choice: it is the agent's judge, not treg.to's router."),
         ("What comes back at the end?",
          "A CSV with company, domain, person, title, email, which provider found it, the verifier's verdict, the catch-all flag, the event to lead with, jev's opener score and jev's fit probability, strongest opener first. The one from the run on this page is linked above with the person, title and email columns removed, because these are real people and a title at a named company is enough to identify one; the row-level outcomes are what the numbers on this page come from. Your own run returns every column."),
     ],
