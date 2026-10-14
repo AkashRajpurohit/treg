@@ -605,13 +605,21 @@ generation. The key does not change at midnight or after an uncertain Stripe res
 key, base key, and generation are invoice metadata; the item also carries the attempt key. Before a
 new charge, `attempt_auto_topup` pages through the customer's invoices created since one day before
 the last credited automatic top-up to recover a draft, open, or paid attempt. If prior generations
-are all void, it starts the next generation. This still works
+are all void, it starts the next generation. An unfinished automatic invoice for the same org with
+an older base key blocks a new charge. For a paid invoice created after the last automatic credit,
+the PaymentIntent is checked against the ledger; one without a credit also blocks. A manual top-up,
+changed card, or changed refill amount must
+not hide a payment that may still settle or whose reply was lost. The unknown-outcome warning and
+failure limit apply until that older invoice is resolved. This still works
 when a user re-enables auto-top-up and resets the local failure counter. An incomplete or failed
 lookup leaves the attempt unresolved and counts toward the consecutive-failure limit without
 changing the invoice key. Each unknown outcome is logged as an error. At the limit, auto top-up is
 paused with a specific billing banner and email asking the customer to check billing history and
 contact support. A later manual top-up does not advance the invoice lookup boundary. Before any
 credited automatic top-up, the lookup checks the full customer invoice history.
+The cooldown, cap, ledger crossing, last automatic credit, and billing email are read before the
+Stripe sequence; `attempt_auto_topup` then releases the database transaction and retains only the
+needed scalar values. Stripe list, create, finalize, and pay calls do not hold a database connection.
 An open invoice with an associated PaymentIntent is not paid again while that payment may still
 settle. Finalization itself creates a `requires_confirmation` PaymentIntent, which is safe to pay
 with the attempt's existing idempotency key. A `processing` payment stays open and unresolved. This recovery
@@ -620,8 +628,9 @@ additional database table. The paid invoice's
 `payments` association identifies the PaymentIntent; `ledger.topup` still keys its purchased block on
 that ID. Historical bare auto-top-up charges remain without invoices.
 
-An invoice-created PaymentIntent does not inherit invoice metadata. `_invoice_metadata_for_payment`
-resolves the invoice through `InvoicePayment.list` when a payment webhook has no metadata, so a
+An invoice-created PaymentIntent does not inherit invoice metadata. A metadata-free payment webhook
+checks the PaymentIntent's customer against local orgs before `_invoice_metadata_for_payment`
+resolves the invoice through `InvoicePayment.list`; unrelated customers need no Stripe lookup. A
 webhook that arrives before the synchronous credit can still identify the org. The ledger's
 PaymentIntent uniqueness makes the later path a no-op. Confirmed failed finalized invoices are voided
 where possible; an uncertain payment result leaves its invoice intact for a later lookup.
