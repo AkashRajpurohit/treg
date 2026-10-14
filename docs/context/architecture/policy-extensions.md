@@ -61,7 +61,9 @@ behavior described everywhere else in these docs.
 
 ### `signup_credit`
 
-Asked once per team creation, only for a user who could claim right now
+Asked once per team creation, and once on the sign-in that first verifies a user who already owns
+a team (`signup.grant_signup_promo_on_proof`, for the oldest such team), only for a user who could
+claim right now
 (`promotions.signup_promo_email`: verified, still eligible, not suspended, not demo), and only
 when the grant amount is above zero. The context is the user and team IDs, the login email and its
 canonical inbox (`promo_inbox`). The eligibility read's transaction is committed before the
