@@ -431,6 +431,8 @@ async def run_call_surface(rest: str, request: Request, caller: Caller, *, prefi
         request.state.idem_claim = context.idempotency
         request.state.call_audited = context.audited
         request.state.call_cost_micro = context.cost_micro
+        org_traffic.describe(request.scope, tool_name=context.tool_name,
+                             endpoint_id=context.endpoint_id, replay_of=context.replay_of)
         if slot is not None and not streaming:
             await slot.finish(upstream.close if upstream is not None else None)
 

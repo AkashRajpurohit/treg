@@ -1,4 +1,4 @@
-"""Best-effort, process-local root-call logs. No request data or external I/O.
+"""Best-effort, process-local root-call logs. No request content or external I/O.
 
 Arrivals belong to their start window; statuses/latencies to their completion window.
 See docs/context/architecture/org-traffic.md for boundaries and bounded-loss semantics.
@@ -23,6 +23,8 @@ WINDOW_S = 60
 MAX_ORGS = 4096
 # Upper bounds 1, 2, ... 2**31 milliseconds, then an overflow bucket.
 BUCKETS = 33
+_HTTP_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT",
+                           "OPTIONS", "TRACE", "PATCH"})
 log = logging.getLogger("treg.org_traffic")
 log.setLevel(logging.INFO)
 # MCP configures the root logger with RichHandler, which wraps JSON at console width. Keep
@@ -166,6 +168,19 @@ def identify(scope: dict, org_id: int, *, enter: bool = False,
         pass
 
 
+def describe(scope: dict, *, tool_name: str | None, endpoint_id: str | None,
+             replay_of: str | None) -> None:
+    """Copy already-resolved application metadata without inspecting request bytes or ORM objects."""
+    try:
+        observation = scope.get("state", {}).get("org_traffic")
+        if observation is not None:
+            observation.tool_name = tool_name
+            observation.endpoint_id = endpoint_id
+            observation.replay_of = replay_of
+    except Exception:
+        pass
+
+
 @dataclass
 class Observation:
     surface: str
@@ -175,6 +190,10 @@ class Observation:
     started: float | None = None
     tracked: bool | None = None
     counters: Counters = field(default_factory=lambda: counters)
+    method: str | None = None
+    tool_name: str | None = None
+    endpoint_id: str | None = None
+    replay_of: str | None = None
 
     def finish(self, status: int | None, outcome: str, *, call_ref: str | None = None) -> None:
         elapsed = (time.perf_counter() - self.started) * 1000 if self.started is not None else None
@@ -187,6 +206,8 @@ class Observation:
         _emit("request", {"surface": self.surface, "adapter": self.adapter,
                           "org_id": self.org_id, "api_key_id": self.api_key_id,
                           "call_ref": call_ref, "status": status, "outcome": outcome,
+                          "method": self.method, "tool_name": self.tool_name,
+                          "endpoint_id": self.endpoint_id, "replay_of": self.replay_of,
                           "handler_ms": round(elapsed, 3) if elapsed is not None else None})
 
 
@@ -207,8 +228,10 @@ class RequestLogMiddleware:
                 observation = None  # A nested wrapper on the same root cannot count it twice.
             else:
                 adapter = _adapter.get()
+                method = scope.get("method")
                 observation = Observation(call_path[0] if call_path else "mcp_transport",
-                                          adapter["name"] if adapter else None)
+                                          adapter["name"] if adapter else None,
+                                          method=method if method in _HTTP_METHODS else None)
                 state["org_traffic"] = observation
                 if adapter is not None and call_path is not None:
                     adapter["forwarded"] = True
@@ -265,6 +288,8 @@ def mcp_adapter(name: str):
                 if not marker["forwarded"]:
                     _emit("request", {"surface": "mcp", "adapter": name, "org_id": None,
                                       "api_key_id": None, "call_ref": None,
+                                      "method": None, "tool_name": None, "endpoint_id": None,
+                                      "replay_of": None,
                                       "status": None, "outcome": outcome, "handler_ms": None})
         return observed
     return decorate

@@ -629,6 +629,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
     idem_fingerprint = intake.fingerprint
     if intake.replay is not None:
         replayed = intake.replay
+        request.context.replay_of = replayed.call_ref or None
         return _bytes_response(
             replayed.body,
             status_code=replayed.status_code,
@@ -679,6 +680,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
                 resolve_call_target(rest, caller, _resolve_call), request, call_ref)
             request.context.target = target
             tool, upstream_url = target.tool, target.upstream
+            request.context.tool_name = tool.name
         except CallFailure as exc:
             # Not a tool → maybe a marketplace endpoint id (`treg call tikhub.tiktok.video.comments`).
             # Only the 404 falls through, so an org tool with the same name always wins.
@@ -694,7 +696,11 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             elif (isinstance(exc.detail, dict)
                     and str(exc.detail.get("hint", "")).startswith("your org has tool ")):
                 own_tool_miss = exc.detail
+    if ep is not None:
+        request.context.endpoint_id = ep["id"]
+        request.context.tool_name = ep["id"]
     if hub_row is not None:
+        request.context.tool_name = hub_row.tool_id
         # A hub tool: the runner runs every step through THIS use case again (child contexts,
         # own hold ids `{run}:s{n}`), then assembles one reply. The parent owns the idempotency
         # label and the X-Treg-* stamping, exactly like a routed endpoint.
@@ -856,6 +862,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             raise
         tool, upstream_url, drop_params = mk.tool, mk.upstream, mk.consumed
         request.context.marketplace = mk
+        request.context.tool_name = tool.name
         mk.deferred = request.context.deferred_settles
     try:
         await _await_before_reserve(
@@ -1079,6 +1086,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             has_body=request.has_body,
             read_body=request.body,
         ), request, call_ref)
+        request.context.endpoint_id = mk.endpoint_id
 
     if mk is not None:
         mk.deferred = request.context.deferred_settles

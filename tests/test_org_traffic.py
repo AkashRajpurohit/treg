@@ -173,6 +173,8 @@ async def test_trusted_org_log_and_unresolved_null(
     assert row["org_id"] == org and row["status"] == 404
     assert row["api_key_id"] == caller_key_id
     assert row["call_ref"] == response.headers["X-Treg-Call-Id"] != "forged-call"
+    assert row["method"] == "GET"
+    assert row["tool_name"] is None and row["endpoint_id"] is None and row["replay_of"] is None
     assert "must-not-log" not in json.dumps(logs(caplog))
     assert counter.snapshot()["top"][0]["requests"] == 1
     caplog.clear()
@@ -181,6 +183,7 @@ async def test_trusted_org_log_and_unresolved_null(
     [row] = logs(caplog)
     assert row["org_id"] is None and row["handler_ms"] is None
     assert row["api_key_id"] is None
+    assert row["tool_name"] is None and row["endpoint_id"] is None and row["replay_of"] is None
     assert row["call_ref"] == response.headers["X-Treg-Call-Id"]
     assert counter.snapshot()["top"] == []
     assert "must-not-log" not in json.dumps(logs(caplog))
@@ -222,8 +225,14 @@ async def test_stream_lifetime_across_windows(
             raise RuntimeError("stream fault")
         yield b"last"
 
-    execute = AsyncMock(return_value=UpstreamResponse(
-        200, ((b"x-treg-call-id", b"untrusted-upstream-id"),), body(), closed))
+    async def invoke(context, _client):
+        context.tool_name = "example"
+        context.endpoint_id = "example.read"
+        return UpstreamResponse(
+            200, ((b"x-treg-call-id", b"untrusted-upstream-id"),
+                  (b"x-treg-idempotent-replay", b"true")), body(), closed)
+
+    execute = AsyncMock(side_effect=invoke)
     monkeypatch.setattr(routes, "execute_call", execute)
     task = asyncio.create_task(clients.get("/call/example/path"))
     try:
@@ -250,6 +259,8 @@ async def test_stream_lifetime_across_windows(
         assert logged["status"] == 200  # don't invent a status after headers were sent
         assert logged["api_key_id"] == caller_key_id
         assert logged["call_ref"] == execute.await_args.args[0].call_ref != "untrusted-upstream-id"
+        assert logged["replay_of"] is None
+        assert logged["tool_name"] == "example" and logged["endpoint_id"] == "example.read"
     finally:
         proceed.set()
         task.cancel()
@@ -267,6 +278,7 @@ async def test_guard_log_has_effective_limit_and_aggregate(clients, counter, cal
         [logged] = logs(caplog)
         assert logged["api_key_id"] == caller_key_id
         assert logged["call_ref"] == response.headers["X-Treg-Call-Id"]
+        assert logged["tool_name"] is None and logged["endpoint_id"] is None
         assert f"rejected org_id={org} limit=1 status=429" in caplog.text
         [row] = counter.snapshot()["top"]
         assert row["requests"] == row["completed"] == row["status_429"] == 1
@@ -287,6 +299,8 @@ async def test_routed_children_count_one_root(clients, counter, enrichment_on, m
     assert seen
     [logged] = logs(caplog)
     assert logged["call_ref"] == response.headers["X-Treg-Call-Id"]
+    assert logged["tool_name"] == logged["endpoint_id"] == ROUTED
+    assert logged["method"] == "POST" and logged["replay_of"] is None
     [row] = counter.snapshot()["top"]
     assert row["requests"] == row["completed"] == 1
 
@@ -325,6 +339,7 @@ async def test_mcp_preflight_has_null_identity(counter, caplog):
     assert out["error"] == "not authenticated"
     [row] = logs(caplog)
     assert row["org_id"] is None and row["api_key_id"] is None and row["call_ref"] is None
+    assert all(row[key] is None for key in ("method", "tool_name", "endpoint_id", "replay_of"))
     assert counter.snapshot()["top"] == []
 
 
@@ -335,6 +350,8 @@ async def test_mcp_eager_auth_challenge_logs_null(clients, counter, caplog, path
     [row] = logs(caplog)
     assert row["org_id"] is None and row["status"] == 401
     assert row["api_key_id"] is None and row["call_ref"] is None
+    assert row["method"] == "POST"
+    assert row["tool_name"] is None and row["endpoint_id"] is None and row["replay_of"] is None
     assert counter.snapshot()["top"] == []
 
 
@@ -351,6 +368,8 @@ async def test_disabled_surface_logs_resolved_org_without_handler_arrival(
     assert row["org_id"] == org and row["handler_ms"] is None
     assert row["api_key_id"] == caller_key_id
     assert row["call_ref"] == response.headers.get("X-Treg-Call-Id")
+    assert row["method"] == "GET"
+    assert row["tool_name"] is None and row["endpoint_id"] is None
     assert counter.snapshot()["top"] == []
 
 
@@ -378,21 +397,80 @@ async def test_keys_and_session_keep_distinct_attribution_with_one_org(
     assert summary["org_id"] == org and summary["requests"] == summary["completed"] == 3
 
 
-async def test_replay_log_keeps_current_attempt_ref(clients, counter, monkeypatch, caplog):
+@pytest.mark.parametrize("original_ref", ["a" * 32, ""])
+async def test_replay_log_keeps_current_attempt_ref(clients, counter, monkeypatch, caplog, original_ref):
     from treg.application.call import service
     from treg.application.call.types import IdempotentReplay
 
-    original_ref = "a" * 32
     monkeypatch.setattr(service, "prepare_call_intake", AsyncMock(return_value=SimpleNamespace(
         idempotency_key="replayed", fingerprint="same-request", replay=IdempotentReplay(
             body=b"{}", status_code=200, media_type="application/json", charged_micro=0,
             call_ref=original_ref))))
-    response = await clients.get("/call/example/path")
+    resolve = AsyncMock(side_effect=AssertionError("replay must not resolve a target"))
+    monkeypatch.setattr(service, "resolve_call_target", resolve)
+    response = await clients.get("/call/example/path", headers={"X-Treg-Replay-Of": "forged"})
     assert response.status_code == 200 and response.headers["X-Treg-Idempotent-Replay"] == "true"
-    assert response.headers["X-Treg-Call-Id"] == original_ref
+    if original_ref:
+        assert response.headers["X-Treg-Call-Id"] == original_ref
     [row] = logs(caplog)
     assert row["call_ref"] and row["call_ref"] != original_ref
+    assert row["replay_of"] == (original_ref or None)
+    assert row["tool_name"] is None and row["endpoint_id"] is None
+    resolve.assert_not_awaited()
     assert counter.snapshot()["top"][0]["requests"] == 1
+
+
+@pytest.mark.parametrize("surface,target", [
+    ("/call/", "tikhub.tiktok.video.comments"),
+    ("/table/", "tikhub.tiktok.video.comments"),
+    ("/call/", "http://upstream/private-path"),
+])
+async def test_resolved_own_tool_does_not_guess_catalog_identity(
+    clients, counter, monkeypatch, caplog, surface, target,
+):
+    name = "tikhub.tiktok.video.comments"
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
+    registered = await clients.post("/tools", json={"name": name, "base_url": "http://upstream"})
+    assert registered.status_code == 200, registered.text
+    response = await clients.get(surface + target + "?secret=must-not-log")
+    assert response.status_code == 200, response.text
+    [row] = logs(caplog)
+    assert row["tool_name"] == name and row["endpoint_id"] is None
+    assert row["method"] == "GET" and row["replay_of"] is None
+    assert "must-not-log" not in json.dumps(row) and "private-path" not in json.dumps(row)
+
+
+@pytest.mark.parametrize("surface", ["/call/", "/catalog/call/", "/table/"])
+@pytest.mark.parametrize("valid", [True, False])
+async def test_catalog_identity_survives_success_and_parameter_refusal(
+    clients, counter, platform_on, monkeypatch, caplog, surface, valid,
+):
+    from treg.application.call import service
+    from test_routing import _relay_by_provider
+
+    endpoint = "tikhub.tiktok.video.comments"
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
+    monkeypatch.setattr(get_settings(), "claude_connector_enabled", True)
+    seen = []
+    monkeypatch.setattr(service, "relay", _relay_by_provider(
+        {"tikhub": [(200, {"comments": []})]}, seen))
+    response = await clients.get(surface + endpoint, params={"aweme_id": "synthetic"} if valid else {})
+    assert response.status_code == (200 if valid else 400), response.text
+    [row] = logs(caplog)
+    assert row["endpoint_id"] == endpoint and row["tool_name"]
+    assert row["method"] == "GET" and row["replay_of"] is None
+    assert bool(seen) == valid
+
+
+async def test_unknown_http_method_is_not_logged_as_request_content(caplog):
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 405})
+
+    await traffic.RequestLogMiddleware(app)(
+        {"type": "http", "path": "/call/example", "method": "PRIVATE-METHOD"},
+        AsyncMock(), AsyncMock())
+    [row] = logs(caplog)
+    assert row["method"] is None and "PRIVATE-METHOD" not in json.dumps(row)
 
 
 async def test_observability_failure_does_not_change_request(clients, counter, monkeypatch):
