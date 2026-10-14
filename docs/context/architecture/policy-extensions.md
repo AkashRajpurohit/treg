@@ -70,8 +70,9 @@ canonical inbox (`promo_inbox`). The eligibility read's transaction is committed
 decision, so no database connection waits on the extension.
 
 `defer` writes nothing: no claim row, no ledger entry, and `signup_promo_available` stays true. The
-team is created as usual. The point is asked again when the same user creates their next team, so
-a later `grant` is the release path and needs no new ledger entry type. treg logs
+team (or the sign-in) proceeds as usual. The point is asked again when the same user creates their
+next team, so a later `grant` is the release path and needs no new ledger entry type. A first
+proof happens once, so a deferral there is never re-asked by a later sign-in. treg logs
 `event=signup_credit_deferred org=<id> user=<id>`. After a grant the user is no longer eligible
 and is never asked again.
 
