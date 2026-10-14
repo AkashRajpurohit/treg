@@ -606,7 +606,10 @@ key, base key, and generation are invoice metadata; the item also carries the at
 new charge, `attempt_auto_topup` pages through the customer's invoices created since one day before
 the last credited automatic top-up to recover a draft, open, or paid attempt. If prior generations
 are all void, it starts the next generation. An unfinished automatic invoice for the same org with
-an older base key blocks a new charge. For a paid invoice created after the last automatic credit,
+an older base key blocks a new charge while its payment may still settle. A prior open invoice whose
+PaymentIntent has failed or been canceled is voided before a new charge. A prior payment requiring
+authentication is also voided when the saved card has changed; Stripe cancels its PaymentIntent
+with the invoice. A processing or otherwise uncertain payment still blocks. For a paid invoice created after the last automatic credit,
 the PaymentIntent is checked against the ledger; one without a credit also blocks. A manual top-up,
 changed card, or changed refill amount must
 not hide a payment that may still settle or whose reply was lost. The unknown-outcome warning and

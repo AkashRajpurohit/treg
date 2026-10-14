@@ -559,7 +559,7 @@ async def _attempt(org_id: int) -> dict:
 
 
 def _invoice_sdk(pi_id: str = "pi_auto_1", cents: int = 1000, *, pay_error=None,
-                 pi_status: str = "succeeded"):
+                 pi_status: str = "succeeded", payment_method: str = "pm_armed"):
     """A small Stripe invoice adapter with idempotent writes and a real payment association."""
     state = {"status": "draft", "invoice_count": 0, "item_count": 0, "charge_count": 0,
              "invoice": None, "item": None, "prior_invoices": [], "prepay_pi": False}
@@ -578,9 +578,10 @@ def _invoice_sdk(pi_id: str = "pi_auto_1", cents: int = 1000, *, pay_error=None,
             assert kw["pending_invoice_items_behavior"] == "exclude"
             assert kw["discounts"] == ""
             assert kw["metadata"]["treg_kind"] == "topup"
-            assert kw["default_payment_method"] == "pm_armed"
+            assert kw["default_payment_method"] == payment_method
             state["invoice_count"] += 1
-            result = {"id": "in_auto_1", "status": "draft", "metadata": kw["metadata"]}
+            result = {"id": "in_auto_1", "status": "draft", "metadata": kw["metadata"],
+                      "default_payment_method": payment_method}
             state["invoice"] = result
         elif fn == billing.stripe_adapter.INVOICE_ITEM_LIST:
             result = {"data": [state["item"]] if state["item"] else [], "has_more": False}
@@ -599,7 +600,7 @@ def _invoice_sdk(pi_id: str = "pi_auto_1", cents: int = 1000, *, pay_error=None,
             state["invoice"] = {**state["invoice"], **result}
         elif fn == billing.stripe_adapter.INVOICE_PAY:
             assert kw["invoice"] == "in_auto_1"
-            assert kw["off_session"] is True and kw["payment_method"] == "pm_armed"
+            assert kw["off_session"] is True and kw["payment_method"] == payment_method
             if pay_error:
                 raise pay_error
             state["charge_count"] += 1
@@ -1056,6 +1057,39 @@ async def test_auto_topup_requires_action_keeps_recovery_payment(c: AsyncClient,
     assert result["payment_intent"] == "pi_auto_1"
     assert sdk.state["status"] == "open"
     assert (await c.get(f"/orgs/{org_id}/balance", headers=_h(owner))).json()["balance_micro"] == 100
+
+
+async def test_new_card_clears_old_3ds_invoice_before_charging(c: AsyncClient, monkeypatch):
+    org_id, owner = await _org(c)
+    await _armed(org_id)
+    first = _invoice_sdk(pi_status="requires_action")
+    monkeypatch.setattr(billing, "_sdk", first)
+    assert (await _attempt(org_id))["reason"] == "authentication_required"
+    old_invoice = {**first.state["invoice"], "id": "in_old_3ds"}
+    replacement = _invoice_sdk("pi_replacement", payment_method="pm_replacement")
+
+    async def sdk(fn, /, **kw):
+        if fn == billing.stripe_adapter.INVOICE_LIST:
+            return {"data": [old_invoice] + ([replacement.state["invoice"]]
+                                            if replacement.state["invoice"] else []),
+                    "has_more": False}
+        if fn == billing.stripe_adapter.INVOICE_RETRIEVE and kw["id"] == "in_old_3ds":
+            return old_invoice
+        if fn == billing.stripe_adapter.PAYMENT_INTENT_RETRIEVE and kw["id"] == "pi_auto_1":
+            return {"id": "pi_auto_1", "status": "requires_action"}
+        if fn == billing.stripe_adapter.INVOICE_VOID and kw["invoice"] == "in_old_3ds":
+            old_invoice["status"] = "void"
+            return old_invoice
+        return await replacement(fn, **kw)
+
+    await _set_org(org_id, stripe_default_pm="pm_replacement", autotopup_enabled=True,
+                   autotopup_last_attempt_at=None)
+    monkeypatch.setattr(billing, "_sdk", sdk)
+    assert (await _attempt(org_id))["ok"] is True
+    assert old_invoice["status"] == "void"
+    assert replacement.state["invoice_count"] == replacement.state["charge_count"] == 1
+    assert (await c.get(f"/orgs/{org_id}/balance", headers=_h(owner))).json()[
+        "balance_micro"] == 100 + 10_000_000
 
 
 async def test_auto_topup_declined_status_voids_invoice(c: AsyncClient, monkeypatch):

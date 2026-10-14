@@ -712,7 +712,8 @@ def _idempotency_key(org_id: int, amount_micro: int, crossing: int, payment_meth
 async def _attempt_invoice(customer: str, base_key: str, org_id: int,
                            created_gte: int | None = None,
                            last_auto_credit_at: int | None = None,
-                           db: AsyncSession | None = None) -> tuple[dict | None, int]:
+                           db: AsyncSession | None = None,
+                           payment_method: str = "") -> tuple[dict | None, int]:
     """Find the attempt and unresolved prior auto invoices in Stripe's bounded customer list.
 
     Walk every page: an incomplete lookup cannot prove that a charge was never started. Stripe
@@ -720,7 +721,7 @@ async def _attempt_invoice(customer: str, base_key: str, org_id: int,
     """
     cursor = ""
     found: dict[int, dict] = {}
-    prior_unfinished: list[str] = []
+    prior_unfinished: list[dict] = []
     prior_recent_paid: list[dict] = []
     while True:
         kw = {"customer": customer, "limit": 100}
@@ -748,12 +749,41 @@ async def _attempt_invoice(customer: str, base_key: str, org_id: int,
                                      (last_auto_credit_at is None or not isinstance(created, int)
                                       or created >= last_auto_credit_at))
                 if status in ("draft", "open"):
-                    prior_unfinished.append(invoice["id"])
+                    prior_unfinished.append(invoice)
                 elif paid_after_credit:
                     prior_recent_paid.append(invoice)
         if not page.get("has_more"):
             if prior_unfinished:
-                raise PriorAutoInvoiceUnresolved(prior_unfinished[0])
+                for prior in prior_unfinished:
+                    # Re-read before deciding: a payment may have settled since Invoice.list.
+                    current = await _sdk(stripe_adapter.INVOICE_RETRIEVE, id=prior["id"])
+                    status = current.get("status")
+                    if status == "paid":
+                        prior_recent_paid.append(current)
+                        continue
+                    if status == "void":
+                        continue
+                    if status != "open":
+                        raise PriorAutoInvoiceUnresolved(prior["id"])
+                    pi_id = await _invoice_payment_intent(current)
+                    if not pi_id:
+                        raise PriorAutoInvoiceUnresolved(prior["id"])
+                    payment = await _sdk(stripe_adapter.PAYMENT_INTENT_RETRIEVE, id=pi_id)
+                    payment_status = payment.get("status")
+                    old_pm = current.get("default_payment_method")
+                    if isinstance(old_pm, dict):
+                        old_pm = old_pm.get("id")
+                    safe_to_void = payment_status in ("requires_payment_method", "canceled") or (
+                        payment_status == "requires_action" and old_pm and payment_method
+                        and old_pm != payment_method)
+                    if not safe_to_void:
+                        raise PriorAutoInvoiceUnresolved(prior["id"])
+                    # Voiding an invoice cancels its PaymentIntent. An uncertain void response
+                    # must stop this attempt before a new invoice can charge.
+                    closed = await _sdk(stripe_adapter.INVOICE_VOID, invoice=prior["id"],
+                                        idempotency_key=f"{prior['id']}:void-replaced")
+                    if closed.get("status") != "void":
+                        raise PriorAutoInvoiceUnresolved(prior["id"])
             # Stripe timestamps are only second precision, so a paid invoice from the latest
             # credited second is ambiguous. Check its PaymentIntent against the local ledger;
             # every query is rolled back before another Stripe call.
@@ -978,7 +1008,7 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
             invoice, generation = await _attempt_invoice(
                 customer_id, base_key, org_id, created_gte,
                 int(last_auto_credit.replace(tzinfo=timezone.utc).timestamp())
-                if last_auto_credit else None, db=db)
+                if last_auto_credit else None, db=db, payment_method=payment_method)
             key = _idempotency_key(org_id, amount_micro, crossing, payment_method,
                                    generation)
             if invoice is None:
