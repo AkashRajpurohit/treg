@@ -158,3 +158,53 @@ def test_capacity_view_getters_are_sync_and_io_free():
     import inspect
     assert not inspect.iscoroutinefunction(LatestStateView.get)
     assert not inspect.iscoroutinefunction(LatestStateView.is_exhausted)
+
+
+def _apollo_profile(lead_left):
+    """api_profile's credit fields as Apollo returns them: the "unified" meter moves with phone
+    reveals only, so the lead pool minus it says nothing about lead credits."""
+    return {"num_credits_remaining": lead_left, "effective_num_lead_credits": 5000,
+            "num_lead_credits_used": 0, "effective_num_direct_dial_credits": 5000,
+            "num_direct_dial_credits_used": 40, "total_unified_credits_used": 40,
+            "effective_num_ai_credits": 1000, "num_ai_credits_used": 0}
+
+
+@pytest.mark.parametrize("lead_left,health", [(0, "exhausted"), (1234, "ok")])
+async def test_sweep_reads_apollos_lead_credits_not_the_unified_meter(monkeypatch, lead_left, health):
+    """Apollo answers every enrich with 422 `credit_type: lead credits, credit_balance: 0` while its
+    unified meter still shows almost the whole pool unused. The sweep must read the lead pool, so a
+    paid call is refused before reserve (or skips to overflow) instead of relaying into the 422."""
+    await reset_db()
+    monkeypatch.setenv("TREG_PLATFORM_KEY_APOLLO", "apollo-test-key")
+    from treg.config import get_settings
+    get_settings.cache_clear()
+
+    def serve(request):
+        assert request.url.path == "/api/v1/users/api_profile"
+        assert request.url.params["include_credit_usage"] == "true"
+        assert request.headers["x-api-key"] == "apollo-test-key"
+        return httpx.Response(200, json=_apollo_profile(lead_left))
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(serve)) as upstream:
+            async with session_maker() as db:
+                result = await run_sweep(db, client=upstream, only={"apollo"})
+    finally:
+        get_settings.cache_clear()
+    state = result.states["apollo"]
+    assert state.remaining == lead_left and state.health == health
+    assert "direct-dial 4960 left" in state.note
+
+
+async def test_apollo_without_the_lead_field_falls_back_to_the_pool():
+    profile = _apollo_profile(None)
+    del profile["num_credits_remaining"]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json=profile))) as upstream:
+        row = await collectors._apollo(upstream, "k")
+    assert row["value"] == 4960
+    profile.pop("total_unified_credits_used")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda _request: httpx.Response(200, json=profile))) as upstream:
+        row = await collectors._apollo(upstream, "k")
+    assert row["value"] is None, "no meter is a stale reading, never a guess"
