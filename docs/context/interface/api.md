@@ -321,7 +321,9 @@ shared HTTP client. `/auth/logout` remains an HTTP-only cookie action.
 - **Users / orgs:** `register_user` (`POST /users`, open, legacy, unverified) creates the
   user + an org + owner membership with **zero signup credit** and returns a token **once**.
   Email OTP, Google/GitHub or an inbox-only invite link establishes verification. A new verified
-  account can claim credit once when creating an eligible team; old accounts cannot reclaim it.
+  account can claim credit once when creating an eligible team, and the sign-in that first verifies
+  an account offers that claim to the oldest eligible team it already owns (the team this door
+  made); old accounts cannot reclaim it.
   The dashboard/CLI login doors do NOT go
   through it (they create the user only, no auto org). Both this door and `create_org` read the
   first-party `treg_ad` cookie (`_ad_attribution_from`) and, when conversion tracking is enabled,
