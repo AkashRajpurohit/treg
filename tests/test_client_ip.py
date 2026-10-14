@@ -155,3 +155,24 @@ async def test_concurrent_tool_calls_keep_their_own_address(ip_config):
     await asyncio.sleep(0)
     gate.set()
     assert await asyncio.gather(*calls) == ["203.0.113.1", "203.0.113.2"]
+
+
+@pytest.mark.parametrize("header", ["cf-connecting-ip", "fly-client-ip"])
+async def test_mcp_call_never_relays_the_edge_address_upstream(clients, ip_config, header):
+    """The address `_api` forwards is for treg's own limiters. Relayed upstream, a Cloudflare-fronted
+    provider refuses the request (403 error 1000, "DNS points to prohibited IP"), so every MCP call
+    to one would fail."""
+    from test_mcp_directory import _call_tool, paired_mcp_session
+
+    ip_config(header=header)
+    sid = (await clients.post("/secrets", json={"name": "edge-k", "value": "SEK"})).json()["id"]
+    r = await clients.post("/tools", json={"name": "edge", "base_url": "https://api.edge.example",
+                                           "secret_id": sid})
+    assert r.status_code == 200, r.text
+    async with paired_mcp_session() as session:
+        out = await _call_tool(session, "call", {"endpoint_id": "edge/echo"},
+                               clients.headers["X-Treg-Token"], {header: "203.0.113.9"}, path="/mcp/")
+    assert out["status"] == 200, out
+    seen = out["body"]["headers"]
+    assert header not in seen and "x-forwarded-for" not in seen
+    assert "203.0.113.9" not in str(seen)
