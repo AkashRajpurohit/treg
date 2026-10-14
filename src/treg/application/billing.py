@@ -64,6 +64,7 @@ TOPUP_MAX_USD = 2_000
 # Tags Checkout sessions in the Stripe dashboard so this flow's conversion can be compared against
 # any other we add later (required suffix is 8 letters — see Stripe's integration_identifier docs).
 INTEGRATION_ID = "tregtopup-qwkmzhrb"
+AUTH_REQUIRED_CODES = {"authentication_required", "invoice_payment_intent_requires_action"}
 
 
 class BillingNotConfigured(Exception):
@@ -349,15 +350,16 @@ async def _set_default_pm(db: AsyncSession, org_id: int, payment_method: str | N
     # through: the dashboard's top-up modal records consent and then relies on the top-up Checkout to
     # save the card, so the PAYMENT webhook has to arm it, not only the setup one. Checked even when
     # the pm is unchanged (a redelivered webhook after a crash between the two commits). Declines
-    # re-arm on a card that just paid or a newly saved one; 3DS and a deliberate off stay off.
-    armed = _arm_if_waiting_for_card(org, card_proven=paid or changed)
+    # re-arm on a card that just paid or a newly saved one. A manual payment also resolves a 3DS
+    # pause; merely saving a card does not. A deliberate off stays off.
+    armed = _arm_if_waiting_for_card(org, card_proven=paid or changed, paid=paid)
     if changed or armed:
         db.add(org)
         await db.commit()
     return changed
 
 
-def _arm_if_waiting_for_card(org: Org, *, card_proven: bool = False) -> bool:
+def _arm_if_waiting_for_card(org: Org, *, card_proven: bool = False, paid: bool = False) -> bool:
     """Turn a consented policy back on when the reason it was off is gone. Mutates, does not commit.
 
     `no_card`: a card now exists. `max_attempts:*` (repeated declines): only when `card_proven`, a
@@ -367,14 +369,15 @@ def _arm_if_waiting_for_card(org: Org, *, card_proven: bool = False) -> bool:
     if not (org.stripe_default_pm and org.autotopup_consented_at) or org.autotopup_enabled:
         return False
     # A deliberate off leaves the reason None with consent still on file, and a later (or
-    # redelivered) payment must not switch it back on. 3DS (`authentication_required`) stays off: an
-    # off-session charge would need the bank's check again.
+    # redelivered) payment must not switch it back on.
     reason = org.autotopup_disabled_reason or ""
-    if not (reason == "no_card" or (card_proven and reason.startswith("max_attempts:"))):
+    if not (reason == "no_card" or (card_proven and reason.startswith("max_attempts:"))
+            or (paid and reason == "authentication_required")):
         return False
     org.autotopup_enabled = True
     org.autotopup_disabled_reason = None
     org.autotopup_failures = 0
+    org.autotopup_recovery_pi = None
     return True
 
 
@@ -908,13 +911,49 @@ async def _stop_failed_invoice(invoice_id: str, key: str) -> None:
         log.warning("billing: could not close failed auto top-up invoice %s: %s", invoice_id, exc)
 
 
+async def _void_auth_invoice(invoice_id: str, pi_id: str = "") -> bool:
+    """A confirmed 3DS failure can be abandoned only after Stripe confirms the invoice is void."""
+    if not invoice_id:
+        return False
+    try:
+        invoice = await _sdk(stripe_adapter.INVOICE_RETRIEVE, id=invoice_id)
+        if invoice.get("status") == "void":
+            return True
+        if invoice.get("status") != "open":
+            return False
+        pi_id = pi_id or await _invoice_payment_intent(invoice)
+        if not pi_id:
+            return False
+        payment = await _sdk(stripe_adapter.PAYMENT_INTENT_RETRIEVE, id=pi_id)
+        if payment.get("status") not in ("requires_action", "requires_payment_method", "canceled"):
+            return False
+        closed = await _sdk(stripe_adapter.INVOICE_VOID, invoice=invoice_id,
+                            idempotency_key=f"{invoice_id}:void-auth")
+        return closed.get("status") == "void"
+    except Exception as exc:  # noqa: BLE001 - uncertain void must never permit a new charge
+        log.error("billing: cannot confirm void for 3DS auto invoice %s: %s", invoice_id, exc)
+        return False
+
+
+async def _pause_for_auth(db: AsyncSession, org_id: int, invoice_id: str,
+                          pi_id: str = "") -> dict:
+    if await _void_auth_invoice(invoice_id, pi_id):
+        reason = "authentication_required"
+    else:
+        reason = "stripe_unconfirmed"
+        log.error("billing: 3DS auto invoice %s is unresolved for org %s", invoice_id, org_id)
+    org = await db.get(Org, org_id)
+    if org is not None:
+        await _disable_autotopup(db, org, reason)
+    return {"ok": False, "reason": reason}
+
+
 async def _disable_autotopup(db: AsyncSession, org: Org, reason: str, *, recovery_pi: str = "") -> None:
     """Turn auto-top-up off and SAY WHY. A silent disable is how an org finds out from its agents
     failing; the reason is what the dashboard banner and the email are built from."""
     org.autotopup_enabled = False
     org.autotopup_disabled_reason = reason
-    if recovery_pi:
-        org.autotopup_recovery_pi = recovery_pi
+    org.autotopup_recovery_pi = recovery_pi or None
     db.add(org)
     await db.commit()
     to = await owner_email(db, org.id)
@@ -1079,13 +1118,8 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
             declined = getattr(err, "payment_intent", None) if err is not None else None
             if declined is not None:
                 pi_id = str(declined["id"]) if "id" in declined else ""
-            if code == "authentication_required":
-                # Retrying off-session cannot fix 3DS — the cardholder has to be present. Keep the
-                # PaymentIntent so the dashboard can offer "finish this payment" instead of starting a
-                # fresh charge the bank will decline the same way.
-                await _disable_autotopup(db, await db.get(Org, org_id),
-                                        "authentication_required", recovery_pi=pi_id)
-                return {"ok": False, "reason": "authentication_required", "payment_intent": pi_id}
+            if code in AUTH_REQUIRED_CODES:
+                return await _pause_for_auth(db, org_id, invoice_id, pi_id)
             await _stop_failed_invoice(invoice_id, key)
             return await _record_failure(db, org_id, code or "card_declined")
         except Exception as e:  # noqa: BLE001 — a Stripe outage must not surface as a 500 elsewhere
@@ -1097,12 +1131,10 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
         if (paid.get("status") != "paid" or paid.get("amount_paid") != cents
                 or pi.get("status") != "succeeded" or pi.get("currency") != "usd"
                 or pi.get("amount_received") != cents):
-            # An unfinished payment is not money we can credit. Keep an actionable PaymentIntent
-            # for the cardholder, and never void a payment that may still settle.
+            # An unfinished payment is not money we can credit. A confirmed 3DS request needs a
+            # manual Checkout payment; an uncertain payment must remain untouched.
             if pi.get("status") == "requires_action":
-                await _disable_autotopup(db, await db.get(Org, org_id),
-                                        "authentication_required", recovery_pi=pi_id)
-                return {"ok": False, "reason": "authentication_required", "payment_intent": pi_id}
+                return await _pause_for_auth(db, org_id, invoice_id, pi_id)
             if pi.get("status") in ("processing", "requires_confirmation", "requires_capture") or (
                     pi.get("status") == "succeeded" and paid.get("status") == "open"):
                 return await _record_unconfirmed(
@@ -1498,10 +1530,27 @@ async def _on_payment_failed(db: AsyncSession, pi: dict) -> dict:
     if meta.get("treg_auto") != "1":
         return {"handled": True, "auto": False}  # manual decline — nothing to disable
     code = ((pi.get("last_payment_error") or {}).get("code")) or "card_declined"
-    if code == "authentication_required":
+    if code in AUTH_REQUIRED_CODES:
         org = await db.get(Org, org_id)
-        if org is not None:
-            await _disable_autotopup(db, org, "authentication_required", recovery_pi=pi.get("id") or "")
+        if org is None:
+            return {"handled": False, "reason": "no org"}
+        if meta.get("treg_attempt"):
+            # This invoice-made PI has no useful metadata of its own. A delayed failure event for
+            # an already-void invoice must not switch auto top-up off after a manual recovery.
+            await db.rollback()
+            matches = await _sdk(stripe_adapter.INVOICE_PAYMENT_LIST,
+                                 payment={"type": "payment_intent", "payment_intent": pi["id"]},
+                                 limit=1)
+            invoice = (matches.get("data") or [{}])[0].get("invoice")
+            invoice_id = invoice if isinstance(invoice, str) else (invoice or {}).get("id")
+            if not invoice_id:
+                return {"handled": False, "reason": "invoice not found"}
+            current = await _sdk(stripe_adapter.INVOICE_RETRIEVE, id=invoice_id)
+            if current.get("status") == "void":
+                return {"handled": True, "disabled": False}
+            result = await _pause_for_auth(db, org_id, invoice_id, pi["id"])
+            return {"handled": True, "disabled": result["reason"]}
+        await _disable_autotopup(db, org, "authentication_required", recovery_pi=pi.get("id") or "")
         return {"handled": True, "disabled": "authentication_required"}
     return {"handled": True, **await _record_failure(db, org_id, code)}
 

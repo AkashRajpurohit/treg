@@ -602,6 +602,7 @@ def _invoice_sdk(pi_id: str = "pi_auto_1", cents: int = 1000, *, pay_error=None,
             assert kw["invoice"] == "in_auto_1"
             assert kw["off_session"] is True and kw["payment_method"] == payment_method
             if pay_error:
+                state["pay_attempted"] = True
                 raise pay_error
             state["charge_count"] += 1
             state["status"] = "paid" if pi_status == "succeeded" else "open"
@@ -611,6 +612,7 @@ def _invoice_sdk(pi_id: str = "pi_auto_1", cents: int = 1000, *, pay_error=None,
             state["invoice"] = {**state["invoice"], **result}
         elif fn == billing.stripe_adapter.PAYMENT_INTENT_RETRIEVE:
             status = ("requires_confirmation" if state["prepay_pi"] and not state["charge_count"]
+                      and not state.get("pay_attempted")
                       else pi_status)
             result = {"id": pi_id, "status": status, "currency": "usd",
                       "amount_received": cents if status == "succeeded" else 0}
@@ -1047,15 +1049,14 @@ async def test_auto_topup_invoice_lookup_refuses_duplicate_attempts(monkeypatch)
         await billing._attempt_invoice("cus_test", "wanted", 1)
 
 
-async def test_auto_topup_requires_action_keeps_recovery_payment(c: AsyncClient, monkeypatch):
+async def test_auto_topup_requires_action_voids_invoice(c: AsyncClient, monkeypatch):
     org_id, owner = await _org(c)
     await _armed(org_id)
     sdk = _invoice_sdk(pi_status="requires_action")
     monkeypatch.setattr(billing, "_sdk", sdk)
     result = await _attempt(org_id)
     assert result["reason"] == "authentication_required"
-    assert result["payment_intent"] == "pi_auto_1"
-    assert sdk.state["status"] == "open"
+    assert sdk.state["status"] == "void"
     assert (await c.get(f"/orgs/{org_id}/balance", headers=_h(owner))).json()["balance_micro"] == 100
 
 
@@ -1065,10 +1066,11 @@ async def test_new_card_clears_old_3ds_invoice_before_charging(c: AsyncClient, m
     err = stripe.CardError("authentication required", param=None, code="authentication_required")
     err.error = stripe.ErrorObject.construct_from(
         {"code": "authentication_required", "payment_intent": {"id": "pi_auto_1"}}, "sk_test")
-    first = _invoice_sdk(pay_error=err)
+    first = _invoice_sdk(pay_error=err, pi_status="requires_action")
     monkeypatch.setattr(billing, "_sdk", first)
     assert (await _attempt(org_id))["reason"] == "authentication_required"
-    old_invoice = {**first.state["invoice"], "id": "in_old_3ds",
+    assert first.state["status"] == "void"
+    old_invoice = {**first.state["invoice"], "id": "in_old_3ds", "status": "open",
                    "payments": {"data": [{"payment": {"payment_intent": "pi_auto_1"}}]}}
     replacement = _invoice_sdk("pi_replacement", payment_method="pm_replacement")
 
@@ -1175,25 +1177,76 @@ async def test_monthly_spend_counts_only_automatic_topups(c: AsyncClient, monkey
         assert await billing.monthly_autotopup_spend(db, org_id) == 10_000_000
 
 
-async def test_authentication_required_disables_autotopup_with_a_reason(c: AsyncClient, monkeypatch):
-    """3-D Secure cannot be satisfied off-session, so retrying is pointless — it disables itself and
-    keeps the PaymentIntent so the dashboard can offer an on-session recovery."""
+@pytest.mark.parametrize("code, error_has_pi", [
+    ("authentication_required", True), ("invoice_payment_intent_requires_action", False),
+])
+async def test_authentication_required_disables_autotopup_with_a_reason(
+        c: AsyncClient, monkeypatch, code, error_has_pi):
+    """3-D Secure requires Checkout with the customer present; cancel the failed auto invoice."""
     org_id, owner = await _org(c)
     await _armed(org_id)
 
-    err = stripe.CardError("authentication required", param=None, code="authentication_required")
-    err.error = stripe.ErrorObject.construct_from(
-        {"code": "authentication_required", "payment_intent": {"id": "pi_needs_3ds"}}, "sk_test")
-    sdk = _invoice_sdk(pay_error=err)
+    err = stripe.CardError("authentication required", param=None, code=code)
+    error = {"code": code}
+    if error_has_pi:
+        error["payment_intent"] = {"id": "pi_needs_3ds"}
+    err.error = stripe.ErrorObject.construct_from(error, "sk_test")
+    sdk = _invoice_sdk(pay_error=err, pi_status="requires_action")
+    sdk.state["prepay_pi"] = not error_has_pi
     monkeypatch.setattr(billing, "_sdk", sdk)
     result = await _attempt(org_id)
     assert result["reason"] == "authentication_required"
-    assert result["payment_intent"] == "pi_needs_3ds"
     state = (await c.get("/billing", headers=_h(owner))).json()["autotopup"]
     assert state["enabled"] is False
     assert state["disabled_reason"] == "authentication_required"
-    assert state["recovery_payment_intent"] == "pi_needs_3ds"
-    assert sdk.state["status"] == "open"  # auto_advance=False; the recovery PI remains usable
+    assert state["recovery_payment_intent"] is None
+    assert sdk.state["status"] == "void"
+
+
+async def test_same_card_can_retry_after_confirmed_3ds_void(c: AsyncClient, monkeypatch):
+    org_id, owner = await _org(c)
+    await _armed(org_id)
+    first = _invoice_sdk(pi_status="requires_action")
+    monkeypatch.setattr(billing, "_sdk", first)
+    assert (await _attempt(org_id))["reason"] == "authentication_required"
+    assert first.state["status"] == "void"
+
+    second = _invoice_sdk("pi_after_3ds")
+
+    async def sdk(fn, /, **kw):
+        if fn == billing.stripe_adapter.INVOICE_LIST:
+            return {"data": [first.state["invoice"]] + ([second.state["invoice"]]
+                                                 if second.state["invoice"] else []),
+                    "has_more": False}
+        return await second(fn, **kw)
+
+    # A person may turn the consented policy back on without first completing a manual top-up.
+    await _set_org(org_id, autotopup_enabled=True, autotopup_last_attempt_at=None)
+    monkeypatch.setattr(billing, "_sdk", sdk)
+    assert (await _attempt(org_id))["ok"] is True
+    assert second.state["invoice_count"] == second.state["charge_count"] == 1
+    assert (await c.get(f"/orgs/{org_id}/balance", headers=_h(owner))).json()[
+        "balance_micro"] == 100 + 10_000_000
+
+
+async def test_3ds_void_uncertainty_pauses_without_new_charge(c: AsyncClient, monkeypatch):
+    org_id, owner = await _org(c)
+    await _armed(org_id)
+    first = _invoice_sdk(pi_status="requires_action")
+
+    async def sdk(fn, /, **kw):
+        if fn == billing.stripe_adapter.INVOICE_VOID:
+            raise RuntimeError("Stripe unavailable")
+        return await first(fn, **kw)
+
+    monkeypatch.setattr(billing, "_sdk", sdk)
+    assert (await _attempt(org_id))["reason"] == "stripe_unconfirmed"
+    assert first.state["status"] == "open"
+    state = (await c.get("/billing", headers=_h(owner))).json()["autotopup"]
+    assert state["enabled"] is False and state["disabled_reason"] == "stripe_unconfirmed"
+    await _set_org(org_id, autotopup_enabled=True, autotopup_last_attempt_at=None)
+    assert (await _attempt(org_id))["reason"] == "stripe_unconfirmed"
+    assert first.state["invoice_count"] == 1 and first.state["charge_count"] == 1
 
 
 async def test_repeated_declines_disable_autotopup_after_max_attempts(c: AsyncClient, monkeypatch):
@@ -1241,6 +1294,42 @@ async def test_a_failed_authentication_webhook_disables_autotopup(c: AsyncClient
     assert r.json()["disabled"] == "authentication_required"
     state = (await c.get("/billing", headers=_h(owner))).json()["autotopup"]
     assert state["enabled"] is False and state["disabled_reason"] == "authentication_required"
+
+
+@pytest.mark.parametrize("invoice_status, expected_reason", [
+    ("open", "authentication_required"), ("void", None),
+])
+@pytest.mark.parametrize("error_code", sorted(billing.AUTH_REQUIRED_CODES))
+async def test_invoice_3ds_webhook_voids_or_ignores_late_failure(
+        c: AsyncClient, monkeypatch, invoice_status, expected_reason, error_code):
+    org_id, owner = await _org(c)
+    await _armed(org_id)
+    calls = []
+
+    async def sdk(fn, /, **kw):
+        calls.append(fn)
+        if fn == billing.stripe_adapter.INVOICE_PAYMENT_LIST:
+            return {"data": [{"invoice": "in_3ds"}]}
+        if fn == billing.stripe_adapter.INVOICE_RETRIEVE:
+            return {"id": "in_3ds", "status": invoice_status,
+                    "metadata": {"treg_org_id": str(org_id), "treg_kind": "topup",
+                                 "treg_auto": "1", "treg_attempt": "attempt"}}
+        if fn == billing.stripe_adapter.PAYMENT_INTENT_RETRIEVE:
+            return {"status": "requires_action"}
+        if fn == billing.stripe_adapter.INVOICE_VOID:
+            return {"id": "in_3ds", "status": "void"}
+        pytest.fail(f"unexpected Stripe call: {fn}")
+
+    monkeypatch.setattr(billing, "_sdk", sdk)
+    event = _pi_event(org_id, pi="pi_3ds_invoice", kind="payment_intent.payment_failed",
+                      metadata={}, customer="cus_armed")
+    event["data"]["object"]["last_payment_error"] = {"code": error_code}
+    r = await _deliver(c, event)
+    assert r.status_code == 200, r.text
+    state = (await c.get("/billing", headers=_h(owner))).json()["autotopup"]
+    assert state["disabled_reason"] == expected_reason
+    assert state["enabled"] is (expected_reason is None)
+    assert (billing.stripe_adapter.INVOICE_VOID in calls) is (invoice_status == "open")
 
 
 # ---- the fire-and-forget trigger ---------------------------------------------------------------
@@ -1728,15 +1817,16 @@ async def test_a_new_saved_card_re_arms_but_the_declined_card_saved_again_does_n
     assert state["enabled"] is True and state["disabled_reason"] is None
 
 
-@pytest.mark.parametrize("reason", ["authentication_required", None])
-async def test_3ds_and_a_deliberate_off_stay_off_after_a_manual_payment(c: AsyncClient, monkeypatch, reason):
-    """3DS: an off-session charge would need the bank's check again. None: the team switched it off."""
+@pytest.mark.parametrize("reason, enabled", [("authentication_required", True), (None, False)])
+async def test_manual_payment_recovers_3ds_but_not_a_deliberate_off(c: AsyncClient, monkeypatch,
+                                                                    reason, enabled):
     org_id, owner = await _org(c)
     monkeypatch.setattr(billing, "_sdk", _no_sdk)
     await _set_org(org_id, **_declined(autotopup_disabled_reason=reason))
     await _paid_checkout(c, monkeypatch, org_id, "pm_new")
     state = (await c.get("/billing", headers=_h(owner))).json()["autotopup"]
-    assert state["enabled"] is False and state["disabled_reason"] == reason
+    assert state["enabled"] is enabled
+    assert state["disabled_reason"] == (None if enabled else reason)
 
 
 # ---- charges per hour -----------------------------------------------------------------------------

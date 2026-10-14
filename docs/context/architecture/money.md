@@ -638,9 +638,14 @@ webhook that arrives before the synchronous credit can still identify the org. T
 PaymentIntent uniqueness makes the later path a no-op. Confirmed failed finalized invoices are voided
 where possible; an uncertain payment result leaves its invoice intact for a later lookup.
 `auto_advance=false` prevents Stripe's automatic retries and dunning. An
-authentication-required invoice stays open with automatic advancement off so its recovery
-PaymentIntent remains usable. The invoice is a document; `invoice.created` and `invoice.paid` still
-do not credit balance.
+authentication-required invoice is voided only after Stripe confirms its PaymentIntent has failed
+or requires action and confirms the void. Auto top-up switches off, and the dashboard and treg email
+direct the customer to make a manual Checkout top-up with the bank verification. A successful
+manual payment re-arms a previously consented policy paused for authentication; simply saving a
+card or redelivering a payment webhook does not. If the void cannot be confirmed, auto top-up
+pauses as `stripe_unconfirmed` and asks the customer to contact support. A delayed failed-payment
+webhook for an already-void invoice cannot disable a policy that was re-armed after a manual
+payment. The invoice is a document; `invoice.created` and `invoice.paid` still do not credit balance.
 
 The address on that invoice comes from `billing_address_collection="required"` **plus**
 `customer_update={"address": "auto", "name": "auto"}` on the same session. Both are needed: the first
@@ -688,9 +693,10 @@ SetupIntent in that flow: `_set_default_pm` - called by both `_on_checkout_compl
 `_on_setup_succeeded` (and `_on_payment_succeeded`) - runs `_arm_if_waiting_for_card`. It turns
 the policy back on from `no_card` once a card exists, and from repeated declines
 (`max_attempts:*`) only when the card is proven: it just paid (`paid=True`, both payment webhooks)
-or it is a newly saved card. The declined card saved again is not proof. 3DS
-(`authentication_required`) and a deliberate off (reason `None`, consent still on file) stay off;
-a redelivered payment webhook must not switch a deliberately disabled policy back on.
+or it is a newly saved card. The declined card saved again is not proof. A successful manual payment
+also re-arms a policy paused for 3DS (`authentication_required`). A deliberate off (reason `None`,
+consent still on file) stays off; a redelivered payment webhook must not switch a deliberately
+disabled policy back on.
 
 Creating an invoice makes Stripe emit `invoice.created` / `invoice.paid` for every top-up.
 `handle_webhook_event` drops them, deliberately: crediting on an invoice event as well as on the
@@ -707,7 +713,8 @@ the legacy charge invoice field) rather than two
 per row; a failure degrades to rows without links and reports `stripe_ok: false`, because a Stripe
 hiccup should cost the payer a download button, not their payment history. Both Stripe windows cap at
 100 payments, so a very old top-up on a busy account comes back link-less - the portal is the
-unbounded archive.
+unbounded archive. The dashboard marks these credited payments Paid and shows separate invoice and
+Stripe receipt links when each exists; the invoice PDF can still show the amount originally due.
 
 **`create_portal_session` is the self-serve surface** for card, billing address, tax ID and the full
 invoice archive: hosted, because every one of those is a form we would otherwise own and the tax-ID
