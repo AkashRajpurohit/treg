@@ -62,11 +62,13 @@
     font-size: clamp(40px, 5.6vw, 66px); margin: 0 0 22px; text-wrap: balance;
   }
   .hero h1 .no { color: var(--muted); }
-  .eyebrow { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 18px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: #fff; font-size: 13px; font-weight: 500; color: var(--ink-2); }
   .rot { display: inline-block; transition: opacity .25s, transform .25s; }
   .rot.out { opacity: 0; transform: translateY(-5px); }
-  .eyebrow .rot { font-weight: 600; color: var(--ink); }
-  .eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+  /* a headline that rotates the agent name keeps its line breaks fixed, so the page never jumps:
+     "from Claude Code." and "Perplexity." are the longest lines and must fit the column at every width */
+  .hero h1 .nw, .hero h1 .rot { white-space: nowrap; }
+  .hero h1:has(.rot) { font-size: clamp(36px, 5.6vw, 64px); }
+  @media (max-width: 360px) { .hero h1:has(.rot) { font-size: 34px; } }
   .hero .sub { font-size: 19px; color: var(--ink-2); margin: 0 0 32px; max-width: 34em; text-wrap: pretty; }
   .works { display: flex; align-items: center; gap: 12px; margin-top: 30px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
   .works .logos { display: flex; gap: 10px; align-items: center; }
@@ -198,11 +200,10 @@
 <main>
 <section class="wrap hero">
   <div>
-    <div class="eyebrow" aria-label="Designed for AI agents like Claude Code, Codex, Cursor, Grokbot and Hermes"><span aria-hidden="true">Designed for <b class="rot">Claude Code</b></span></div>
     <h1 id="heroH1">Your AI agent gets the data. <span class="no">You cancel the subscriptions.</span></h1>
     <p class="sub" id="heroSub">Connect Claude Code, Codex or Cursor to lead lists, work emails, keyword data, competitor ads and social posts. Ask in plain English and pay cents per job instead of a monthly plan.</p>
     <button class="cta" type="button" data-cta="hero">Start free <span class="arr" aria-hidden="true">→</span></button>
-    <div class="under"><span data-free>$1 free, about 2,500 people found</span> · no card · about 2 minutes to set up</div>
+    <div class="under"><span data-free>$1 free, about 100 work emails</span> · no card · about 2 minutes to set up</div>
     <div class="works">
       <span class="logos">
         <img src="https://unpkg.com/@lobehub/icons-static-png@latest/light/claudecode-color.png" alt="Claude Code" title="Claude Code">
@@ -229,16 +230,16 @@
     <div class="bill" id="bill">
       <div class="brow" data-job="leads"><div class="what"><b>Search people by role, company and place</b><span>instead of a Sales Navigator Core seat</span></div><div class="was">$119.99/mo</div><div class="per">$0.019 / 50 people</div></div>
       <div class="brow"><div class="what"><b>Find a work email</b><span>instead of an Apollo Basic seat</span></div><div class="was">$49/mo</div><div class="per">$0.008 / email</div></div>
-      <div class="brow" data-job="seo"><div class="what"><b>Keyword volume and CPC</b><span>instead of Semrush SEO Toolkit Pro</span></div><div class="was">$139.95/mo</div><div class="per">$0.09 / keyword list</div></div>
+      <div class="brow" data-job="seo"><div class="what"><b>See which brands ChatGPT recommends</b><span>instead of Semrush AI Visibility</span></div><div class="was">$99/mo</div><div class="per">$0.004 / check</div></div>
       <div class="brow"><div class="what"><b>Check if an email is deliverable</b><span>instead of a Hunter Starter plan</span></div><div class="was">$49/mo</div><div class="per">$0 / check</div></div>
       <div class="brow" data-job="ads"><div class="what"><b>A competitor's live Meta ads</b><span>with copy, landing page and start date</span></div><div class="was"></div><div class="per">$0.0019 / competitor</div></div>
       <div class="brow" data-job="social"><div class="what"><b>Search X posts</b><span>instead of the official X API, $0.005 a post</span></div><div class="was">$0.10</div><div class="per">$0.0006 / 20 posts</div></div>
     </div>
     <div class="total">
-      <div class="t">Sales Navigator, Apollo, Semrush and Hunter: <s>$358 a month</s> &nbsp;→&nbsp; <b>cents per job</b></div>
+      <div class="t">Sales Navigator, Apollo, Semrush and Hunter: <s>$317 a month</s> &nbsp;→&nbsp; <b>cents per job</b></div>
       <button class="cta" type="button" data-cta="bill">Start free <span class="arr" aria-hidden="true">→</span></button>
     </div>
-    <p class="fine">Vendor prices from their pricing pages on 13 and 14 Oct 2026: LinkedIn Sales Navigator Core $119.99 a month billed monthly, Apollo Basic $49 per user a month billed annually, Semrush SEO Toolkit Pro $139.95 a month, Hunter Starter $49 billed monthly, X API $0.005 per post read. Per-job prices are what treg.to charged on real runs on 12 to 14 Oct 2026 (work emails: $0.17 for the 20 found), with no markup; another provider can cost more. Already pay for one of these tools? Connect your key and treg.to won't charge for those jobs.</p>
+    <p class="fine">Vendor prices from their pricing pages on 13 and 14 Oct 2026: LinkedIn Sales Navigator Core $119.99 a month billed monthly, Apollo Basic $49 per user a month billed annually, Semrush AI Visibility Base $99 a month per domain billed annually, Hunter Starter $49 billed monthly, X API $0.005 per post read. Clay: the same 24 people as our 13 Oct work-email run took 13.2 credits on 15 Sep 2026, $0.88 at the Launch plan's $0.0668 a credit; it found 18 emails, treg.to found 20. Per-job prices are what treg.to charged on real runs on 12 to 14 Oct 2026 (work emails: $0.17 for the 20 found), with no markup; another provider can cost more. Already pay for one of these tools? Connect your key and treg.to won't charge for those jobs.</p>
   </div>
 </section>
 
@@ -246,7 +247,7 @@
   <h2 id="stepsH">Set up once. Then just ask.</h2>
   <p class="lede">You need an AI agent like Claude Code, Codex, Cursor or Claude.ai. Nothing else to install by hand.</p>
   <div class="steps">
-    <div class="step"><div class="n">01</div><h3>Sign up free</h3><p>Click <b>Start free</b> and continue with Google. You get $1 of credit, <span data-free-what>about 2,500 people found</span>. No card.</p></div>
+    <div class="step"><div class="n">01</div><h3>Sign up free</h3><p>Click <b>Start free</b> and continue with Google. You get $1 of credit, <span data-free-what>about 100 work emails</span>. No card.</p></div>
     <div class="step"><div class="n">02</div><h3>Paste your setup line</h3><p>Pick your agent and we show you one line with your key. Paste it into your agent's chat and press Enter, and it sets itself up. On Claude.ai you add treg.to as a connector instead, in two clicks.</p></div>
     <div class="step"><div class="n">03</div><h3>Ask for what you need</h3><p>In the same chat, type the job: <span id="stepAsk">"Find dentists in Sydney with phone number and website."</span> Your agent runs it and tells you what it cost.</p></div>
   </div>
@@ -273,7 +274,7 @@
 <section class="final" id="final">
   <h2 id="finalH">Let your agent get the data. Stop paying monthly for it.</h2>
   <button class="cta" type="button" data-cta="final">Start free <span class="arr" aria-hidden="true">→</span></button>
-  <div class="under"><span data-free>$1 free, about 2,500 people found</span> · no card</div>
+  <div class="under"><span data-free>$1 free, about 100 work emails</span> · no card</div>
 </section>
 </main>
 
@@ -316,22 +317,22 @@
      Every run below is real (12 Oct 2026 unless it says otherwise); the figures are what treg.to returned and charged. */
   var JOBS = {
     leads: {
-      h1: 'People search from your AI agent. <span class="no">No Sales Navigator seat.</span>',
+      h1: 'People search<br>from <span class="nw"><span class="rot">Claude Code</span>.</span><br><span class="no">5x cheaper than Clay.</span>',
       ask: 'Find heads of marketing at financial services companies in London, save as leads.csv',
       tool: 'People search',
       out: ['✓ Saved leads.csv', '  50 people · name, title, company, LinkedIn'],
-      cost: '$0.019', was: 'Sales Navigator $119.99/mo', date: '14 Oct 2026', free: 'about 2,500 people found',
-      close: 'Find the people you want to reach from your agent. Skip the Sales Navigator seat.',
-      sub: 'Ask Claude Code, Codex or Cursor for the people you want to reach, by role, company and place, in plain English. It can find their work emails too. Our search for 50 heads of marketing cost $0.019. Sales Navigator Core is $119.99 a month.'
+      cost: '$0.019', was: 'Sales Navigator $119.99/mo', date: '14 Oct 2026', free: 'about 100 work emails',
+      close: 'Find leads from your agent, 5x cheaper than Clay.',
+      sub: 'Ask Claude Code, Codex or Cursor for the people you want to reach, by role, company and place, in plain English. Our search for 50 heads of marketing cost $0.019. For their work emails, on the same 24 people treg.to found 20 for $0.17; Clay found 18 and charged $0.88.'
     },
     seo: {
-      h1: 'Keyword data from your AI agent. <span class="no">No Semrush plan.</span>',
-      ask: 'Monthly Google searches and CPC for: crm for dentists, dental practice software, dental crm',
-      tool: 'Google keyword volume',
-      out: ['  dental practice software   390/mo   CPC $19.06', '  crm for dentists           140/mo   CPC $21.08', '  dental crm                 140/mo   CPC $21.08'],
-      cost: '$0.09', was: 'Semrush $139.95/mo', free: 'about 10 keyword lists',
-      close: 'Get keyword data from your agent. Skip the $139.95 Semrush plan.',
-      sub: 'Ask Claude Code, Codex or Cursor for search volume, CPC and the live Google results for your keywords. You pay cents per lookup instead of a monthly plan.'
+      h1: 'Rank your business in<br><span class="nw"><span class="rot" data-rot="engines">ChatGPT</span>.</span><br><span class="no">No Semrush plan.</span>',
+      ask: 'Which brands does ChatGPT recommend for "best dental practice management software", and which pages does it cite?',
+      tool: 'ChatGPT answer',
+      out: ['  1. Open Dental   2. Curve Dental', '  3. Dentrix Ascend   4. CareStack', '  cites capterra.com, g2.com, launchadvisor.co', '        + each brand\'s own site'],
+      cost: '$0.004', was: 'Semrush AI $99/mo', date: '14 Oct 2026', free: 'about 250 ChatGPT checks',
+      close: 'Rank in ChatGPT from your agent. No Semrush plan.',
+      sub: 'Ask Claude Code, Codex or Cursor which brands ChatGPT, Google AI and Perplexity recommend in your category, and which pages they cite, so you know where you need to show up. Our ChatGPT check for "best dental practice management software" cost $0.004. Semrush AI Visibility is $99 a month per domain.'
     },
     ads: {
       h1: 'Competitor ads from your AI agent. <span class="no">No ad-spy subscription.</span>',
@@ -380,15 +381,18 @@
     else setTimeout(function () { el.classList.add('in'); }, 250 + i * (i < 2 ? 700 : 380));
   });
 
-  /* the agent named over the headline rotates; with reduced motion it stays general */
-  var rots = document.querySelectorAll('.rot'), AGENTS = ['Claude Code', 'Codex', 'Cursor', 'Grokbot', 'Hermes'], ai = 0;
-  function eachRot(f) { Array.prototype.forEach.call(rots, f); }
-  if (reduced) eachRot(function (r) { r.textContent = 'AI agents'; });
+  /* the agent named in the headline (leads) and the "Designed for" heading rotates; with reduced motion it stays general */
+  var rots = document.querySelectorAll('.rot'), ai = 0, LISTS = {
+    agents: ['Claude Code', 'Codex', 'Cursor', 'Grokbot', 'Hermes'],
+    engines: ['ChatGPT', 'Google AI', 'Perplexity']   /* the answer engines treg.to can ask today */
+  }, GENERAL = { agents: 'AI agents', engines: 'AI search' };
+  function eachRot(f) { Array.prototype.forEach.call(rots, function (r) { f(r, r.getAttribute('data-rot') || 'agents'); }); }
+  if (reduced) eachRot(function (r, k) { r.textContent = GENERAL[k]; });
   else setInterval(function () {
     eachRot(function (r) { r.classList.add('out'); });
     setTimeout(function () {
-      ai = (ai + 1) % AGENTS.length;
-      eachRot(function (r) { r.textContent = AGENTS[ai]; r.classList.remove('out'); });
+      ai += 1;   /* each list wraps on its own length below */
+      eachRot(function (r, k) { r.textContent = LISTS[k][ai % LISTS[k].length]; r.classList.remove('out'); });
     }, 250);
   }, 2200);
 
