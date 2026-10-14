@@ -70,6 +70,24 @@ async def test_verifying_after_making_a_team_funds_that_team(clients):
     assert (await _funding([registered['org_id']]))[0] == get_settings().promo_grant_micro
 
 
+async def test_only_one_of_two_racing_proofs_is_the_first(clients):
+    from treg.application import signup
+    async with session_maker() as db:
+        db.add(User(email='racing-proof@example.org'))
+        await db.commit()
+    proven = [set(), set()]
+    async with session_maker() as first, session_maker() as second:
+        # Both hold the user loaded while still unverified (as a door does), then prove it in turn.
+        held = [await signup.find_or_create_user(first, 'racing-proof@example.org'),
+                await signup.find_or_create_user(second, 'racing-proof@example.org')]
+        await signup.find_or_create_user(first, 'racing-proof@example.org', verified=True, proven=proven[0])
+        await first.commit()
+        await signup.find_or_create_user(second, 'racing-proof@example.org', verified=True, proven=proven[1])
+        await second.commit()
+    assert [len(p) for p in proven] == [1, 0]
+    assert held[0].email_verified_at is not None
+
+
 async def test_verifying_with_no_team_keeps_the_claim_for_the_first_team(clients):
     token = await verified_identity(clients, 'no-team-yet@example.org')
     async with session_maker() as db:

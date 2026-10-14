@@ -3,7 +3,7 @@
 import logging
 from urllib.parse import unquote
 
-from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import inspect as sa_inspect, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -99,9 +99,13 @@ async def find_or_create_user(
             if created is not None:
                 created.add(user.id)
     if verified and user.email_verified_at is None:
-        user.email_verified_at = _utcnow_naive()
-        db.add(user)
-        if proven is not None:
+        # Conditional, so of two proofs racing for one unverified user only the one that flips the
+        # column is the first proof; the other sees no row and is an ordinary sign-in.
+        flipped = await db.execute(
+            update(User).where(User.id == user.id, User.email_verified_at.is_(None))
+            .values(email_verified_at=_utcnow_naive())
+        )
+        if flipped.rowcount == 1 and proven is not None:
             proven.add(user.id)
     return user
 
