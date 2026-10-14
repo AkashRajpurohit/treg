@@ -1023,6 +1023,15 @@
       "GET",
       "HEAD"
     ],
+    "name": "start_page",
+    "path": "/start"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
     "name": "leads_signals_page",
     "path": "/leads-signals"
   },

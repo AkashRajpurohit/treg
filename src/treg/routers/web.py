@@ -3943,6 +3943,19 @@ async def people_search_page(request: Request):
     return _static_page("people-search.html", request)
 
 
+@app.get("/start", include_in_schema=False)
+async def start_page(request: Request):
+    """The paid-traffic landing page. It only sells: use data in your agent, drop the monthly
+    subscriptions, one action (Start free → sign in → /app). `?job=` comes from the ad group so the
+    headline, the real run and the bill arrive matched to the search. Hosted-only (it quotes treg.to's
+    free credit and vendor plans), `noindex` and out of the sitemap: an ad destination, not a search page."""
+    if not _hosted():
+        raise HTTPException(status_code=404)
+    resp = _static_page("start.html", request)
+    resp.headers["X-Robots-Tag"] = "noindex"
+    return resp
+
+
 @app.get("/leads-signals", include_in_schema=False)
 async def leads_signals_page(request: Request):
     """Landing page for the buyer-signals launch ("Claude for Monitor Leads Signal"). Built from the
