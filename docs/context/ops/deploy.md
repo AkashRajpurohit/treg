@@ -264,8 +264,10 @@ and rollout settings. No database migration or additional database privileges ar
 - `TREG_MONEY_ADMISSION_WAIT_S` accepts values greater than 0 through 120 seconds, defaults to
   5 seconds, and bounds the complete local/Redis acquisition attempt. Local-lock waiting uses
   the same budget as Redis waiting. Cleanup is separately bounded by the KV operations. Exhausting this
-  budget falls back to the existing database path; it does not reject or discard settlement.
-  `reserve` and `release` use that same wait and key-value fallback. A missing or non-positive
+  budget rejects `reserve` before its funds transaction with HTTP 429 `money_admission_timeout`
+  and `Retry-After: 1`; all other operations still fall back to the database path, including
+  settlement and release. Redis infrastructure errors retain the database fallback for every
+  operation. A missing or non-positive
   org on those operations refuses before checkout, and that refusal is not an HTTP 429.
 - `TREG_MONEY_ADMISSION_LEASE_S` defaults to 15 seconds. The owner renews while acquiring or using
   its leases and deletes only leases with its token. Expiry, lost renewal or a Redis outage can

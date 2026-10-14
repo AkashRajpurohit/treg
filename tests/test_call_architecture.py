@@ -23,12 +23,13 @@ _SRC = Path(__file__).parents[1] / "src" / "treg"
 _DATAPLANE_DERIVED_WRITES = {
     # A best-effort external admission lease precedes the balance session.
     "money_admission_lease": (
-        (reserve._platform_reserve, "money_admission.admit"),
+        (reserve._platform_reserve, "reserve_admission"),
+        (reserve.reserve_admission, "money_admission.admit"),
         (settle._platform_settle, "money_admission.admit"),
         (settle.close_deferred, "money_admission.admit"),
         (settle._finish_cancelled_call, "money_admission.admit"),
         (task_app._finish_balance, "money_admission.admit"),
-        (hub_runner._reserve_price, "money_admission.admit"),
+        (hub_runner._reserve_price, "reserve_admission"),
         (hub_runner._close_price, "money_admission.admit"),
     ),
     # Body objects preserve the paid response. Upload completes before the archive DB transaction
@@ -126,7 +127,7 @@ _EXPECTED_DATAPLANE_WRITES = frozenset({
 })
 _DERIVED_WRITE_FILES = {
     _SRC / "application" / "asynctasks.py": {"money_admission.admit"},
-    _SRC / "application" / "hub" / "runner.py": {"money_admission.admit"},
+    _SRC / "application" / "hub" / "runner.py": {"money_admission.admit", "reserve_admission"},
     _SRC / "archive.py": {"archive_bodies.prepare"},
     _SRC / "archive_bodies.py": {"_store.put"},
     _SRC / "application" / "billing.py": {"loop.create_task"},
@@ -135,7 +136,7 @@ _DERIVED_WRITE_FILES = {
     },
     _SRC / "domain" / "governance" / "usage.py": {"take_daily_slot"},
     _SRC / "application" / "call" / "reserve.py": {
-        "billing.maybe_schedule_autotopup", "money_admission.admit",
+        "billing.maybe_schedule_autotopup", "money_admission.admit", "reserve_admission",
     },
     _SRC / "application" / "call" / "settle.py": {
         "money_admission.admit", "adsconv.queue", "capacity_marks.strike", "capacity_marks.clear",
@@ -163,14 +164,15 @@ _DERIVED_WRITE_FILES = {
     _SRC / "domain" / "money" / "__init__.py": {"reap_stale_holds", "release"},
 }
 _EXPECTED_DERIVED_WRITE_SITES = {
-    ("application/call/reserve.py", "_platform_reserve", "money_admission.admit"),
+    ("application/call/reserve.py", "_platform_reserve", "reserve_admission"),
+    ("application/call/reserve.py", "reserve_admission", "money_admission.admit"),
     ("application/call/settle.py", "_platform_settle", "money_admission.admit"),
     ("application/call/settle.py", "_close", "money_admission.admit"),
     ("application/call/settle.py", "close_deferred", "money_admission.admit"),
     ("application/call/settle.py", "_finish_cancelled_call", "money_admission.admit"),
     ("application/call/settle.py", "_cleanup", "money_admission.admit"),
     ("application/asynctasks.py", "_finish_balance", "money_admission.admit"),
-    ("application/hub/runner.py", "_reserve_price", "money_admission.admit"),
+    ("application/hub/runner.py", "_reserve_price", "reserve_admission"),
     ("application/hub/runner.py", "_close_price", "money_admission.admit"),
     ("application/call/service.py", "_execute_call", "archive.record"),
     ("archive.py", "_store", "archive_bodies.prepare"),

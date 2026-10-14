@@ -7,6 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import event, select
@@ -16,6 +17,7 @@ from treg.application import asynctasks as task_app
 from treg.application.call import reserve as call_reserve
 from treg.application.call import settle as call_settle
 from treg.application.call.resolve import MarketplaceCall
+from treg.application.call.types import ReservationFailed
 from treg.application.hub import runner as hub_runner
 from treg.config import get_settings
 from treg.domain import money as ledger
@@ -812,14 +814,85 @@ async def test_same_org_reserve_does_not_checkout_while_a_lease_is_held(money_db
         assert await db.get(Hold, "lease-b") is not None
 
 
-async def test_wait_and_kv_fallback_still_complete_the_ledger(money_db, monkeypatch):
-    org_id, caller = await _payer("fallback-reserve")
-    store = _enable_real_admission(monkeypatch, wait_s=0.2)
+@pytest.mark.parametrize("kind", ["platform", "hub"])
+async def test_reserve_timeout_refuses_before_checkout_without_a_hold(money_db, monkeypatch, kind):
+    org_id, caller = await _payer("timeout-reserve")
+    store = _enable_real_admission(monkeypatch, wait_s=0.02)
     store.values[f"money-admission:org:{org_id}"] = ("another-owner", time.monotonic() + 30)
+    engine, checkout, seen = _checkouts()
+    try:
+        with pytest.raises(ReservationFailed) as caught:
+            if kind == "platform":
+                await call_reserve._platform_reserve(
+                    _call(org_id, "timeout-reserve"), caller, call_ref="timeout-reserve")
+            else:
+                tool = HubTool(org_id=org_id + 1, tool_id="maker.tool", name="tool",
+                               kind="steps", summary="test", version=1)
+                await hub_runner._reserve_price(_hub_parent(caller), tool, "timeout-reserve", 100)
+        assert seen == [], "a rejected reserve must never check out a DB connection"
+        assert caught.value.kind == "money_admission_timeout"
+        assert caught.value.status_code == 429 and caught.value.blame == "treg"
+        assert caught.value.retry_after_s == 1
+    finally:
+        _stop_listening(engine, checkout)
+    assert not money_admission._local_lock(org_id).locked()
+    assert store.values[f"money-admission:org:{org_id}"][0] == "another-owner"
+    async with session_maker() as db:
+        assert await ledger.balance_of(db, org_id) == 1_000
+        assert await ledger.open_holds_of(db, org_id) == []
+        entries = (await db.execute(select(LedgerEntry.kind).where(
+            LedgerEntry.org_id == org_id))).scalars().all()
+        assert entries == ["grant"]
+
+
+@pytest.mark.parametrize("surface", ["/call/", "/catalog/call/", "/mcp/", "/mcp/v2/"])
+async def test_reserve_timeout_reaches_http_and_mcp_without_money_or_upstream(
+    clients, platform_on, monkeypatch, surface,
+):
+    from treg.application.call import service as call_service
+    from test_mcp_directory import _call_tool, paired_mcp_session
+
+    org_id = (await clients.get("/orgs")).json()[0]["org_id"]
+    async with session_maker() as db:
+        before = await ledger.balance_of(db, org_id)
+    store = _enable_real_admission(monkeypatch, wait_s=0.02)
+    key = f"money-admission:org:{org_id}"
+    store.values[key] = ("another-owner", time.monotonic() + 30)
+    relay = AsyncMock(side_effect=AssertionError("a rejected reserve must not call upstream"))
+    monkeypatch.setattr(call_service, "relay", relay)
+    monkeypatch.setattr(call_reserve, "session_maker", lambda: pytest.fail("reserve session opened"))
+    if surface.startswith("/mcp"):
+        async with paired_mcp_session() as client:
+            result = await _call_tool(
+                client, "call" if surface == "/mcp/" else "catalog_call_read",
+                {"endpoint_id": EP, "params": {"aweme_id": "admission"}},
+                clients.headers["X-Treg-Token"], path=surface)
+        assert result["status"] == 429 and result["retry_after"] == "1"
+        assert result["whose_error"] == "treg"
+        assert result["body"]["detail"]["error"] == "money_admission_timeout"
+        call_id = result["call_id"]
+    else:
+        response = await clients.get(f"{surface}{EP}?aweme_id=admission")
+        assert response.status_code == 429, response.text
+        assert response.headers["Retry-After"] == "1"
+        assert response.headers["X-Treg-Error"] == "1"
+        assert response.json()["detail"]["error"] == "money_admission_timeout"
+        call_id = response.headers["X-Treg-Call-Id"]
+    relay.assert_not_awaited()
+    async with session_maker() as db:
+        assert await db.get(Hold, call_id) is None
+        assert await ledger.balance_of(db, org_id) == before
+        assert (await db.execute(select(LedgerEntry).where(
+            LedgerEntry.call_id == call_id))).scalars().all() == []
+
+
+async def test_kv_fallback_still_completes_reserve_and_release(money_db, monkeypatch):
+    org_id, caller = await _payer("fallback-reserve")
+    store = _enable_real_admission(monkeypatch, unavailable=True)
     await call_reserve._platform_reserve(_call(org_id, "fallback-reserve"), caller, call_ref="fallback-reserve")
     rows = [row for row in money_admission.snapshot() if row["completed"] and row["operation"] == "reserve"]
     assert len(rows) == 1
-    assert rows[0]["mode"] == "fallback" and rows[0]["fallback_wait_timeout"] == 1
+    assert rows[0]["mode"] == "fallback" and rows[0]["fallback_kv_unavailable"] == 1
     assert rows[0]["failed"] == 0
 
     release_org = await _fund("fallback-release")
