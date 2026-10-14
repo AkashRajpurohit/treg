@@ -34,6 +34,13 @@ def counter(monkeypatch):
     return counter
 
 
+@pytest.fixture
+async def caller_key_id(clients):
+    org = (await clients.get("/orgs")).json()[0]["org_id"]
+    keys = (await clients.get(f"/orgs/{org}/api-keys")).json()
+    return next(key["id"] for key in keys if key["kind"] == "default_human")
+
+
 def logs(caplog, event="request"):
     return [json.loads(record.getMessage().split(" ", 1)[1]) for record in caplog.records
             if record.name == "treg.org_traffic" and record.getMessage().startswith(event + " ")]
@@ -153,14 +160,21 @@ async def test_one_minute_timer_shared_and_removed(counter, monkeypatch, caplog)
 
 
 @pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
-async def test_trusted_org_log_and_unresolved_null(clients, counter, monkeypatch, caplog, path):
+async def test_trusted_org_log_and_unresolved_null(
+    clients, counter, caller_key_id, monkeypatch, caplog, path,
+):
     monkeypatch.setattr(get_settings(), "table_enabled", True)
     org = (await clients.get("/orgs")).json()[0]["org_id"]
     response = await clients.get(path + "no-such-tool/path?secret=must-not-log",
-                                 headers={"X-Treg-Org-Id": "999999", "User-Agent": "must-not-log"})
+                                 headers={"X-Treg-Org-Id": "999999", "User-Agent": "must-not-log",
+                                          "X-Treg-Call-Id": "forged-call", "X-Treg-Api-Key-Id": "999999"})
     assert response.status_code == 404
     [row] = logs(caplog)
     assert row["org_id"] == org and row["status"] == 404
+    assert row["api_key_id"] == caller_key_id
+    assert row["call_ref"] == response.headers["X-Treg-Call-Id"] != "forged-call"
+    assert row["method"] == "GET"
+    assert row["tool_name"] is None and row["endpoint_id"] is None and row["replay_of"] is None
     assert "must-not-log" not in json.dumps(logs(caplog))
     assert counter.snapshot()["top"][0]["requests"] == 1
     caplog.clear()
@@ -168,15 +182,19 @@ async def test_trusted_org_log_and_unresolved_null(clients, counter, monkeypatch
     assert response.status_code == 401
     [row] = logs(caplog)
     assert row["org_id"] is None and row["handler_ms"] is None
+    assert row["api_key_id"] is None
+    assert row["tool_name"] is None and row["endpoint_id"] is None and row["replay_of"] is None
+    assert row["call_ref"] == response.headers["X-Treg-Call-Id"]
     assert counter.snapshot()["top"] == []
     assert "must-not-log" not in json.dumps(logs(caplog))
 
 
 @pytest.mark.parametrize("failure,status", [(RuntimeError("fault"), 500), (PoolTimeoutError(), 503)])
 async def test_exception_or_pool_timeout_keeps_status_and_finishes(
-    clients, counter, monkeypatch, caplog, failure, status,
+    clients, counter, caller_key_id, monkeypatch, caplog, failure, status,
 ):
-    monkeypatch.setattr(routes, "execute_call", AsyncMock(side_effect=failure))
+    execute = AsyncMock(side_effect=failure)
+    monkeypatch.setattr(routes, "execute_call", execute)
     if status == 500:
         with pytest.raises(RuntimeError, match="fault"):
             await clients.get("/call/example/path")
@@ -185,12 +203,17 @@ async def test_exception_or_pool_timeout_keeps_status_and_finishes(
     [row] = counter.snapshot()["top"]
     assert row["requests"] == row["completed"] == 1
     assert row["status_503"] == (status == 503)
-    assert logs(caplog)[-1]["status"] == status
+    [logged] = logs(caplog)
+    assert logged["status"] == status
+    assert logged["api_key_id"] == caller_key_id
+    assert logged["call_ref"] == execute.await_args.args[0].call_ref
     assert not counter.orgs
 
 
 @pytest.mark.parametrize("ending", ["success", "error", "cancel"])
-async def test_stream_lifetime_across_windows(clients, counter, monkeypatch, ending, caplog):
+async def test_stream_lifetime_across_windows(
+    clients, counter, caller_key_id, monkeypatch, ending, caplog,
+):
     entered, proceed = asyncio.Event(), asyncio.Event()
     closed = AsyncMock()
 
@@ -202,13 +225,21 @@ async def test_stream_lifetime_across_windows(clients, counter, monkeypatch, end
             raise RuntimeError("stream fault")
         yield b"last"
 
-    monkeypatch.setattr(routes, "execute_call", AsyncMock(return_value=UpstreamResponse(
-        200, (), body(), closed)))
+    async def invoke(context, _client):
+        context.tool_name = "example"
+        context.endpoint_id = "example.read"
+        return UpstreamResponse(
+            200, ((b"x-treg-call-id", b"untrusted-upstream-id"),
+                  (b"x-treg-idempotent-replay", b"true")), body(), closed)
+
+    execute = AsyncMock(side_effect=invoke)
+    monkeypatch.setattr(routes, "execute_call", execute)
     task = asyncio.create_task(clients.get("/call/example/path"))
     try:
         await asyncio.wait_for(entered.wait(), 2)
         assert counter.snapshot()["top"][0]["in_flight_max"] == 1
         assert next(iter(counter.orgs.values())).live == 1
+        assert not logs(caplog)  # Correlation is emitted after the same stream/cleanup boundary.
         if ending == "cancel":
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -224,20 +255,30 @@ async def test_stream_lifetime_across_windows(clients, counter, monkeypatch, end
         [row] = counter.snapshot()["top"]
         assert row["requests"] == 0 and row["completed"] == row["in_flight_max"] == 1
         assert not counter.orgs
-        assert logs(caplog)[-1]["status"] == 200  # don't invent a status after headers were sent
+        [logged] = logs(caplog)
+        assert logged["status"] == 200  # don't invent a status after headers were sent
+        assert logged["api_key_id"] == caller_key_id
+        assert logged["call_ref"] == execute.await_args.args[0].call_ref != "untrusted-upstream-id"
+        assert logged["replay_of"] is None
+        assert logged["tool_name"] == "example" and logged["endpoint_id"] == "example.read"
     finally:
         proceed.set()
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_guard_log_has_effective_limit_and_aggregate(clients, counter, gate, caplog):
+async def test_guard_log_has_effective_limit_and_aggregate(clients, counter, caller_key_id, gate, caplog):
     from treg.infra import org_concurrency as guard
 
     org, _ = await _configure_org(clients, gate)
     held = await guard.acquire(org)
     try:
-        assert (await clients.get("/call/example/path")).status_code == 429
+        response = await clients.get("/call/example/path")
+        assert response.status_code == 429
+        [logged] = logs(caplog)
+        assert logged["api_key_id"] == caller_key_id
+        assert logged["call_ref"] == response.headers["X-Treg-Call-Id"]
+        assert logged["tool_name"] is None and logged["endpoint_id"] is None
         assert f"rejected org_id={org} limit=1 status=429" in caplog.text
         [row] = counter.snapshot()["top"]
         assert row["requests"] == row["completed"] == row["status_429"] == 1
@@ -245,7 +286,7 @@ async def test_guard_log_has_effective_limit_and_aggregate(clients, counter, gat
         await held.finish()
 
 
-async def test_routed_children_count_one_root(clients, counter, enrichment_on, monkeypatch):
+async def test_routed_children_count_one_root(clients, counter, enrichment_on, monkeypatch, caplog):
     from treg.application.call import service
     from test_routing import _relay_by_provider, ROUTED
 
@@ -256,6 +297,10 @@ async def test_routed_children_count_one_root(clients, counter, enrichment_on, m
     response = await clients.post(f"/call/{ROUTED}", json={"full_name": "Test", "domain": "example.com"})
     assert response.status_code == 200, response.text
     assert seen
+    [logged] = logs(caplog)
+    assert logged["call_ref"] == response.headers["X-Treg-Call-Id"]
+    assert logged["tool_name"] == logged["endpoint_id"] == ROUTED
+    assert logged["method"] == "POST" and logged["replay_of"] is None
     [row] = counter.snapshot()["top"]
     assert row["requests"] == row["completed"] == 1
 
@@ -266,7 +311,9 @@ async def test_routed_children_count_one_root(clients, counter, enrichment_on, m
     ("/mcp/v2/", "catalog_call_write", {"endpoint_id": "dataforseo.web.page.audit"}),
     ("/mcp/", "call_media", {"endpoint_id": "fishaudio.tts.s2-1-pro", "body": {"text": "test"}}),
 ])
-async def test_mcp_logs_and_counts_one_root(clients, counter, gate, caplog, path, tool, args):
+async def test_mcp_logs_and_counts_one_root(
+    clients, counter, caller_key_id, gate, caplog, path, tool, args,
+):
     from test_mcp_directory import paired_mcp_session, _call_tool
     from treg.infra import org_concurrency as guard
 
@@ -278,6 +325,8 @@ async def test_mcp_logs_and_counts_one_root(clients, counter, gate, caplog, path
         assert out["status"] == 429
         [row] = logs(caplog)
         assert row["org_id"] == org and row["adapter"] in ("call", "call_media")
+        assert row["api_key_id"] == caller_key_id
+        assert row["call_ref"]
         [row] = counter.snapshot()["top"]
         assert row["requests"] == row["completed"] == 1
     finally:
@@ -288,7 +337,9 @@ async def test_mcp_preflight_has_null_identity(counter, caplog):
     out = await mcp._call_impl("example/path", ctx=SimpleNamespace(headers={}), catalog_only=False,
                                allowed_methods=None, surface=mcp._TEAM_SURFACE)
     assert out["error"] == "not authenticated"
-    assert logs(caplog)[0]["org_id"] is None
+    [row] = logs(caplog)
+    assert row["org_id"] is None and row["api_key_id"] is None and row["call_ref"] is None
+    assert all(row[key] is None for key in ("method", "tool_name", "endpoint_id", "replay_of"))
     assert counter.snapshot()["top"] == []
 
 
@@ -298,15 +349,128 @@ async def test_mcp_eager_auth_challenge_logs_null(clients, counter, caplog, path
     assert response.status_code == 401
     [row] = logs(caplog)
     assert row["org_id"] is None and row["status"] == 401
+    assert row["api_key_id"] is None and row["call_ref"] is None
+    assert row["method"] == "POST"
+    assert row["tool_name"] is None and row["endpoint_id"] is None and row["replay_of"] is None
     assert counter.snapshot()["top"] == []
 
 
-async def test_disabled_surface_logs_resolved_org_without_handler_arrival(clients, counter, caplog):
+@pytest.mark.parametrize("path", ["/table/", "/catalog/call/"])
+async def test_disabled_surface_logs_resolved_org_without_handler_arrival(
+    clients, counter, caller_key_id, monkeypatch, caplog, path,
+):
+    monkeypatch.setattr(get_settings(), "table_enabled", False)
+    monkeypatch.setattr(get_settings(), "claude_connector_enabled", False)
     org = (await clients.get("/orgs")).json()[0]["org_id"]
-    assert (await clients.get("/table/example/path")).status_code == 404
+    response = await clients.get(path + "example/path")
+    assert response.status_code == 404
     [row] = logs(caplog)
     assert row["org_id"] == org and row["handler_ms"] is None
+    assert row["api_key_id"] == caller_key_id
+    assert row["call_ref"] == response.headers.get("X-Treg-Call-Id")
+    assert row["method"] == "GET"
+    assert row["tool_name"] is None and row["endpoint_id"] is None
     assert counter.snapshot()["top"] == []
+
+
+async def test_keys_and_session_keep_distinct_attribution_with_one_org(
+    clients, counter, caller_key_id, caplog,
+):
+    from treg.domain.identity import session
+
+    org = (await clients.get("/orgs")).json()[0]["org_id"]
+    second = (await clients.post(f"/orgs/{org}/api-keys", json={"name": "second"})).json()
+    for token in (clients.headers["X-Treg-Token"], second["secret"]):
+        assert (await clients.get("/call/example/path", headers={"X-Treg-Token": token})).status_code == 404
+    claims = session.read_identity_claims(clients.headers["X-Treg-Token"])
+    clients.cookies.set(session.COOKIE, session.make_session(claims["uid"], token_version=claims["tv"]))
+    assert (await clients.get("/call/example/path", headers={
+        "X-Treg-Token": "", "X-Treg-Org": str(org),
+    })).status_code == 404
+    rows = logs(caplog)
+    assert [row["api_key_id"] for row in rows] == [caller_key_id, second["id"], None]
+    assert {row["org_id"] for row in rows} == {org}
+    assert len({row["call_ref"] for row in rows}) == 3
+    assert all(row["call_ref"] for row in rows)
+    assert second["secret"] not in json.dumps(rows)
+    [summary] = counter.snapshot()["top"]
+    assert summary["org_id"] == org and summary["requests"] == summary["completed"] == 3
+
+
+@pytest.mark.parametrize("original_ref", ["a" * 32, ""])
+async def test_replay_log_keeps_current_attempt_ref(clients, counter, monkeypatch, caplog, original_ref):
+    from treg.application.call import service
+    from treg.application.call.types import IdempotentReplay
+
+    monkeypatch.setattr(service, "prepare_call_intake", AsyncMock(return_value=SimpleNamespace(
+        idempotency_key="replayed", fingerprint="same-request", replay=IdempotentReplay(
+            body=b"{}", status_code=200, media_type="application/json", charged_micro=0,
+            call_ref=original_ref))))
+    resolve = AsyncMock(side_effect=AssertionError("replay must not resolve a target"))
+    monkeypatch.setattr(service, "resolve_call_target", resolve)
+    response = await clients.get("/call/example/path", headers={"X-Treg-Replay-Of": "forged"})
+    assert response.status_code == 200 and response.headers["X-Treg-Idempotent-Replay"] == "true"
+    if original_ref:
+        assert response.headers["X-Treg-Call-Id"] == original_ref
+    [row] = logs(caplog)
+    assert row["call_ref"] and row["call_ref"] != original_ref
+    assert row["replay_of"] == (original_ref or None)
+    assert row["tool_name"] is None and row["endpoint_id"] is None
+    resolve.assert_not_awaited()
+    assert counter.snapshot()["top"][0]["requests"] == 1
+
+
+@pytest.mark.parametrize("surface,target", [
+    ("/call/", "tikhub.tiktok.video.comments"),
+    ("/table/", "tikhub.tiktok.video.comments"),
+    ("/call/", "http://upstream/private-path"),
+])
+async def test_resolved_own_tool_does_not_guess_catalog_identity(
+    clients, counter, monkeypatch, caplog, surface, target,
+):
+    name = "tikhub.tiktok.video.comments"
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
+    registered = await clients.post("/tools", json={"name": name, "base_url": "http://upstream"})
+    assert registered.status_code == 200, registered.text
+    response = await clients.get(surface + target + "?secret=must-not-log")
+    assert response.status_code == 200, response.text
+    [row] = logs(caplog)
+    assert row["tool_name"] == name and row["endpoint_id"] is None
+    assert row["method"] == "GET" and row["replay_of"] is None
+    assert "must-not-log" not in json.dumps(row) and "private-path" not in json.dumps(row)
+
+
+@pytest.mark.parametrize("surface", ["/call/", "/catalog/call/", "/table/"])
+@pytest.mark.parametrize("valid", [True, False])
+async def test_catalog_identity_survives_success_and_parameter_refusal(
+    clients, counter, platform_on, monkeypatch, caplog, surface, valid,
+):
+    from treg.application.call import service
+    from test_routing import _relay_by_provider
+
+    endpoint = "tikhub.tiktok.video.comments"
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
+    monkeypatch.setattr(get_settings(), "claude_connector_enabled", True)
+    seen = []
+    monkeypatch.setattr(service, "relay", _relay_by_provider(
+        {"tikhub": [(200, {"comments": []})]}, seen))
+    response = await clients.get(surface + endpoint, params={"aweme_id": "synthetic"} if valid else {})
+    assert response.status_code == (200 if valid else 400), response.text
+    [row] = logs(caplog)
+    assert row["endpoint_id"] == endpoint and row["tool_name"]
+    assert row["method"] == "GET" and row["replay_of"] is None
+    assert bool(seen) == valid
+
+
+async def test_unknown_http_method_is_not_logged_as_request_content(caplog):
+    async def app(scope, receive, send):
+        await send({"type": "http.response.start", "status": 405})
+
+    await traffic.RequestLogMiddleware(app)(
+        {"type": "http", "path": "/call/example", "method": "PRIVATE-METHOD"},
+        AsyncMock(), AsyncMock())
+    [row] = logs(caplog)
+    assert row["method"] is None and "PRIVATE-METHOD" not in json.dumps(row)
 
 
 async def test_observability_failure_does_not_change_request(clients, counter, monkeypatch):

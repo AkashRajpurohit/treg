@@ -274,6 +274,10 @@ class CallContext:
     # Set by a routed parent on each child: the child leaves its hold OPEN here instead of settling,
     # and the parent charges or releases every one at the end (route.py `_close_deferred`).
     deferred_settles: list | None = None
+    # Scalar snapshots for root request logs; never resolve a target just for telemetry.
+    tool_name: str | None = None
+    endpoint_id: str | None = None
+    replay_of: str | None = None
 
 
 @dataclass(frozen=True)
