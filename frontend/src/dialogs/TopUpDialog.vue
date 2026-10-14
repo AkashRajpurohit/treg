@@ -36,8 +36,14 @@ export default { setup: useDashboard }
         <!-- Auto top-up. Read-only line when the team already has a mandate; otherwise the toggle. -->
         <div style="margin-top:14px;border:1px solid var(--line);border-radius:var(--rb);padding:10px 12px;background:var(--panel2)">
           <template v-if="billing.autotopup.enabled||billing.autotopup.consented_at">
-            <b style="font-size:12.5px">Auto top-up is {{billing.autotopup.enabled?'on':'set up'}}.</b>
-            <span class="sub" style="margin:0"> Manage or turn it off from the billing page.</span>
+            <template v-if="billing.autotopup.disabled_reason==='authentication_required'">
+              <b style="font-size:12.5px">Auto top-up is paused.</b>
+              <span class="sub" style="margin:0"> This manual payment will turn it back on after it succeeds.</span>
+            </template>
+            <template v-else>
+              <b style="font-size:12.5px">Auto top-up is {{billing.autotopup.enabled?'on':'set up'}}.</b>
+              <span class="sub" style="margin:0"> Manage or turn it off from the billing page.</span>
+            </template>
           </template>
           <template v-else>
             <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">

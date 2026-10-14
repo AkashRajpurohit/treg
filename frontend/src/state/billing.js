@@ -94,8 +94,6 @@ async openPortal(){ this.billingBusy=true; this.err='';
         // return_url comes back to #billing, so the same tab is right here as it is for Checkout.
         window.location.href=out.url; }
       catch(e){ this.err='Could not open the billing portal: '+(e.detail||e.status); this.billingBusy=false; } },
-bhistLink(i){ return i.invoice_pdf || i.hosted_invoice_url || i.receipt_url || ''; },
-bhistLabel(i){ return (i.invoice_pdf||i.hosted_invoice_url) ? 'Invoice' : (i.receipt_url ? 'Receipt' : ''); },
 // created_at is naive UTC (the models._now convention), so it needs the Z that isoformat omits —
     // without it the browser reads it as local time and a late-evening top-up shows the wrong day.
     bhistDate(iso){ if(!iso) return '';
