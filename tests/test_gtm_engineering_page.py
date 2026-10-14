@@ -148,3 +148,18 @@ async def test_studies_publish_results_without_naming_the_databases(clients: Asy
               "How accurate is contact data after someone changes jobs?",
               "Do hiring or news signals predict that a startup is about to raise?"):
         assert visible[q] == schema[q], q
+
+
+async def test_the_definition_says_the_same_thing_in_all_three_copies(clients: AsyncClient):
+    """The "What is GTM engineering?" answer is written three times: the visible block under the hero, the
+    first FAQPage answer and the Markdown twin. An edit to one and not the others fails here."""
+    import html as _html
+    page = (await clients.get(PATH)).text
+    block = re.search(r'<section class="define" id="what-is-gtm-engineering">.*?<p>(.*?)</p>', page, re.S).group(1)
+    visible = _html.unescape(re.sub(r"<[^>]+>", "", block)).strip()
+    faq = next(json.loads(s) for s in re.findall(r'<script type="application/ld\+json">(.*?)</script>', page, re.S)
+               if '"FAQPage"' in s)
+    schema = {q["name"]: q["acceptedAnswer"]["text"] for q in faq["mainEntity"]}["What is GTM engineering?"]
+    md = (await clients.get(PATH + ".md")).text
+    assert visible == schema
+    assert "## What is GTM engineering?\n\n" + schema + "\n" in md
