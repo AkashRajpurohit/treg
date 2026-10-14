@@ -38,7 +38,7 @@ test('a slow answer for the team you left never replaces the team you switched t
   await expect(page.getByText('first-team-only')).toHaveCount(0)
 })
 
-test('a member with no daily cap reads as no limit, a cap can be set and cleared, and spend waits for the rollup', async ({ page }) => {
+test('a member with no daily cap reads as no limit, a cap can be set and cleared, spend waits for the rollup, and tabs live in the address', async ({ page }) => {
   await signIn(page, 'team-cap')
   await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name: 'Team', exact: true }).click()
   const cap = page.getByRole('spinbutton', { name: /^Daily cap for / })
@@ -62,14 +62,21 @@ test('a member with no daily cap reads as no limit, a cap can be set and cleared
     if (!ready) return route.fulfill(json({ ready: false, days: 30, since: '2026-09-13', keys: [], unattributed: null }))
     return route.fulfill(json({ ready: true, days: 30, since: '2026-09-13', keys: [], unattributed: { spent_micro: 1_250_000, charges: 3 } }))
   })
-  await page.route(url => url.pathname.endsWith('/usage/spend'), route => {
+  await page.route(url => url.pathname.endsWith('/usage/spend'), async route => {
     asked.push(new URL(route.request().url()).search)
+    // A month answer takes a moment, as a real one can: long enough to point at the old bars.
+    if (new URL(route.request().url()).searchParams.get('group') === 'month') await new Promise(r => setTimeout(r, 700))
     if (!ready) return route.fulfill(json({ ready: false, history_from: '2026-09-11' }))
     return route.fulfill(json({
-      ready: true, history_from: '2026-09-11', from: '2026-09-12', to: '2026-10-11', group: 'day', stack: 'key',
+      ready: true, history_from: '2026-09-11', from: '2026-09-12', to: '2026-10-11', stack: 'key',
+      group: new URL(route.request().url()).searchParams.get('group') || 'day',
       spent_micro: 1_500_000, charges: 4,
       series: [{ id: '7', name: 'Laptop · dev', spent_micro: 1_000_000, slot: 0 }, { id: 'none', name: 'No API key', spent_micro: 500_000, slot: 3 }],
-      buckets: [{ start: '2026-10-10', parts: { 7: 1_000_000 }, charges: 3 }, { start: '2026-10-11', parts: { none: 500_000 }, charges: 1 }],
+      // By day, thirty bars; by month, two. A bar remembered from the day view must not break the month view.
+      buckets: new URL(route.request().url()).searchParams.get('group') === 'month'
+        ? [{ start: '2026-09-01', parts: {}, charges: 0 }, { start: '2026-10-01', parts: { 7: 1_000_000, none: 500_000 }, charges: 4 }]
+        : Array.from({ length: 30 }, (_, i) => ({ start: new Date(Date.UTC(2026, 8, 12 + i)).toISOString().slice(0, 10),
+            parts: i === 28 ? { 7: 1_000_000 } : i === 29 ? { none: 500_000 } : {}, charges: i === 28 ? 3 : i === 29 ? 1 : 0 })),
       ranking: [{ id: '7', name: 'Laptop · dev', spent_micro: 1_000_000, charges: 3 }, { id: 'none', name: 'No API key', spent_micro: 500_000, charges: 1 }],
       options: { keys: [{ id: 7, name: 'Laptop · dev', spent_micro: 1_000_000 }], providers: [{ id: 'exa', name: 'Exa', spent_micro: 1_500_000 }] },
     }))
@@ -107,4 +114,64 @@ test('a member with no daily cap reads as no limit, a cap can be set and cleared
   await expect(page.locator('.key-table .key-spend').first()).toHaveText('$0.00')
   await expect(page.getByText('Charges on calls made without an API key')).toBeVisible()
   await expect(page.getByText('$1.25')).toBeVisible()
+
+  // Tabs live in the address: a reload keeps the tab, and a key's Activity opens its calls by id.
+  await expect(page).toHaveURL(/#orgs\/keys$/)
+  await page.reload()
+  await expect(page.getByRole('columnheader', { name: 'Spent last 30 days' }).first()).toBeVisible()
+  await page.locator('.key-table').getByRole('button', { name: 'Activity', exact: true }).first().click()
+  await expect(page).toHaveURL(/#activity\/calls\?key=\d+$/)
+  await expect(page.getByRole('tab', { name: 'Calls' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('button', { name: /^API key: Default key · / })).toBeVisible()
+  await page.reload()
+  await expect(page.getByRole('button', { name: /^API key: Default key · / })).toBeVisible()
+  await page.goBack()
+  await expect(page).toHaveURL(/#orgs\/keys$/)
+
+  // The counts: every section loads on its own; Top tools and Per day page ten rows at a time.
+  await page.route(url => /\/orgs\/\d+\/usage$/.test(url.pathname), route => route.fulfill(json({
+    days: 30, since: '2026-09-12T00:00:00',
+    totals: { call: 60, local_run: 0, server_run: 0, total: 60 },
+    by_user: [{ user_email: 'dev@example.com', call: 60, local_run: 0, server_run: 0, total: 60 }],
+    by_tool: Array.from({ length: 23 }, (_, i) => ({ name: `tool${String(i).padStart(2, '0')}`, total: 30 - i })),
+    by_day: Array.from({ length: 12 }, (_, i) => ({ day: `2026-10-${String(i + 1).padStart(2, '0')}`, total: i + 1 })),
+    spend: { spend_micro: 0, spend_usd: 0, billed_calls: 0 },
+  })))
+  const errors: string[] = []
+  page.on('pageerror', e => errors.push(e.message))
+  // An old '#usage' link lands on the Usage tab and names it (it once left a blank page).
+  await page.goto('/app#usage')
+  await expect(page).toHaveURL(/#activity\/usage$/)
+  await expect(page.getByRole('tab', { name: 'Usage' })).toHaveAttribute('aria-selected', 'true')
+  const tools = page.locator('section').filter({ has: page.getByRole('heading', { name: /Top tools/ }) })
+  await expect(tools.getByText('1–10 of 23')).toBeVisible()
+  await expect(tools.getByRole('row')).toHaveCount(11)   // the header and ten rows
+  await tools.getByRole('button', { name: 'Next', exact: true }).click()
+  await expect(tools.getByText('11–20 of 23')).toBeVisible()
+  await expect(tools.getByText('tool10', { exact: true })).toBeVisible()
+  const days = page.locator('section').filter({ has: page.getByRole('heading', { name: /Per day/ }) })
+  await expect(days.getByRole('row').nth(1)).toContainText('2026-10-12')   // newest first
+  await days.getByRole('button', { name: 'Older', exact: true }).click()
+  await expect(days.getByText('11–12 of 12')).toBeVisible()
+
+  // The chart keeps drawing when the bars change under a hovered one: pick By month, and while
+  // its answer loads, point at the day view's last bar; then the two month bars arrive.
+  await page.getByRole('button', { name: 'Group by: By day' }).click()
+  await page.getByRole('option', { name: 'By month' }).click()
+  const plot = page.locator('.sb-plot')
+  const box = (await plot.boundingBox())!
+  await plot.hover({ position: { x: box.width - 4, y: box.height / 2 } })
+  await expect(page.getByRole('img', { name: /Billed spend by month: \$1\.50/ })).toBeVisible()
+  await expect(plot.locator('rect').first()).toBeVisible()
+  expect(errors).toEqual([])
+
+  // The chart's key filter belongs to the chart alone: the address does not carry it.
+  await page.getByRole('button', { name: /^API key: All API keys/ }).click()
+  await page.getByRole('option', { name: 'Laptop · dev' }).click()
+  await expect(page.getByRole('button', { name: /^API key: Laptop · dev/ })).toBeVisible()
+  await expect(page).toHaveURL(/#activity\/usage$/)
+
+  // And '#billing', the name 402 bodies and emails use, lands on Team's Billing tab and says so.
+  await page.goto('/app#billing')
+  await expect(page).toHaveURL(/#orgs\/billing$/)
 })

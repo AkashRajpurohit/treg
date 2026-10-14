@@ -582,6 +582,7 @@ Regenerate via `scripts/build-map.py`.
 | `src/treg/web/skills/jev-memory/SKILL.md` | interface/skill.md |
 | `src/treg/web/skills/lead-signals/SKILL.md` | interface/skill.md |
 | `src/treg/web/skills/make-ugc/SKILL.md` | interface/skill.md |
+| `src/treg/web/start.html` | interface/seo.md |
 | `src/treg/web/support.html` | interface/seo.md |
 | `src/treg/web/terms.html` | interface/seo.md |
 | `src/treg/web/tour/tour.js` | interface/dashboard.md |
@@ -736,7 +737,7 @@ Regenerate via `scripts/build-map.py`.
 | `interface/env-import.md` | `providers.py`, `skills.py` |
 | `interface/landing-sandbox.md` | `sandbox.py`, `sandbox_identity.py`, `pubfeed.py`, `sandbox.py`, `__init__.py`, `sandbox.py`, `api.py`, `onboard.py`, `web.py`, `boot.js`, `SignedOutPage.vue`, `install.sh` |
 | `interface/onboarding.md` | `auth.py`, `__init__.py`, `demo.py`, `first_run.py`, `lookup.py`, `page.py`, `tasks.py`, `house_calls.py`, `llm.py`, `sitetrack.js`, `cli.py`, `auth.py`, `onboard.py`, `onboarding.js`, `WelcomeDialog.vue`, `OnboardingFlow.vue`, `calls.ts`, `extract.ts`, `GettingStartedPage.vue` |
-| `interface/seo.md` | `api.py`, `web.py`, `agent_pages.py`, `robots.txt`, `catalog.css`, `usecase.css`, `index.html`, `App.vue`, `PublicNavigation.vue`, `boot.js`, `landing.html`, `product-theme.css`, `refinement.css`, `gateway.css`, `hero-opening.js`, `refinement.js`, `catalog-drum.js`, `gateway.js`, `gateway-loader.js`, `gateway-3d.js`, `gateway-model.js`, `gateway-intro.js`, `hero-particles.js`, `command-beam.js`, `SOURCES.md`, `landing.spec.ts`, `terms.html`, `usecase-seo.html`, `usecase-company.html`, `usecase-enrichment.html`, `usecase-social.html`, `usecase-ads.html`, `people-search.html`, `leads-signals.html`, `gtm-engineering.html`, `grokbot.html`, `fable-gtm.html`, `ugc.html`, `jev.html`, `showcase.html`, `wall.json`, `jev_xboost.py`, `xboost-seed.json`, `triage.json`, `signals.json`, `astra.html`, `page.css`, `page.js`, `llms.txt`, `indexnow_submit.py`, `support.html`, `og-card.html` |
+| `interface/seo.md` | `api.py`, `web.py`, `agent_pages.py`, `robots.txt`, `catalog.css`, `usecase.css`, `index.html`, `App.vue`, `PublicNavigation.vue`, `boot.js`, `landing.html`, `product-theme.css`, `refinement.css`, `gateway.css`, `hero-opening.js`, `refinement.js`, `catalog-drum.js`, `gateway.js`, `gateway-loader.js`, `gateway-3d.js`, `gateway-model.js`, `gateway-intro.js`, `hero-particles.js`, `command-beam.js`, `SOURCES.md`, `landing.spec.ts`, `terms.html`, `usecase-seo.html`, `usecase-company.html`, `usecase-enrichment.html`, `usecase-social.html`, `usecase-ads.html`, `people-search.html`, `leads-signals.html`, `gtm-engineering.html`, `grokbot.html`, `fable-gtm.html`, `ugc.html`, `start.html`, `jev.html`, `showcase.html`, `wall.json`, `jev_xboost.py`, `xboost-seed.json`, `triage.json`, `signals.json`, `astra.html`, `page.css`, `page.js`, `llms.txt`, `indexnow_submit.py`, `support.html`, `og-card.html` |
 | `interface/shell.md` | `shell.py`, `cli.py` |
 | `interface/skill-openai-test-cases.md` | _(no source files — narrative/reference)_ |
 | `interface/skill-openai-tool-justifications.md` | _(no source files — narrative/reference)_ |

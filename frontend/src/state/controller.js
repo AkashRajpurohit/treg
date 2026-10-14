@@ -53,6 +53,11 @@ export default {
       this.snipAgent=null;
       this.agentBusy=false; this.keyBusy=false; this.resetRenameForm(); this.resumeCredentialIssue(); },
     agentConnectionTarget(){ this.stopAgentPoll(); this.resumeAgentPoll(); },
+    // The address follows the tab and key, however they changed (a tab button, a link inside the
+    // page, a filter); syncTabUrl ignores every view but Activity and Team.
+    actTab(){ this.syncTabUrl(); },
+    orgTab(){ this.syncTabUrl(); },
+    activityKey(){ this.syncTabUrl(); },
     // Editing the box after a find starts a new question: the answer to the old one goes away
     // and the shelves go back to filtering by name.
     q(v){ if(this.findActive && this.view==='catalog' && v.trim()!==this.find.q) this.findExit(); },
