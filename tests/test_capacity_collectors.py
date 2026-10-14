@@ -17,6 +17,64 @@ from treg.domain.capacity import collectors, policy, sweep
 from treg.timeutil import utcnow_naive
 
 
+@pytest.mark.parametrize("balances", [(0, 1200, 0), (100, 200, 300), (0, 0, 0)])
+async def test_seranking_capacity_counts_all_credit_pools(monkeypatch, balances):
+    monkeypatch.setenv("TREG_PLATFORM_KEY_SERANKING", "test")
+    collectors.get_settings.cache_clear()
+    payload = {
+        "totals": {name: {"remaining": value} for name, value in
+                   zip(("subscription", "addon", "wallet"), balances)},
+        "access": {"primary_reason": "active_addon"},
+        # Detail buckets describe the same credits, not additional balances.
+        "buckets": [{"category": "addon", "remaining": balances[1]}],
+    }
+
+    def probe(request):
+        assert request.method == "GET"
+        assert request.url == "https://api.seranking.com/v1/account/credits"
+        assert request.headers["authorization"] == "Token test"
+        return httpx.Response(200, json=payload)
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(probe)) as client:
+            row = await collectors.provider_balance("seranking", client)
+    finally:
+        collectors.get_settings.cache_clear()
+    assert row["value"] == sum(balances)
+    assert f"addon {balances[1]:,}" in row["note"]
+    assert "access via active_addon" in row["note"]
+    snap = sweep.snapshot_from("seranking", row)
+    state = policy.latest_state(policy.default_policy("seranking", has_key=True), snap)
+    assert snap.confidence == "exact"
+    assert (state.exhausted_until is not None) == (sum(balances) == 0)
+
+
+@pytest.mark.parametrize("pool", ["subscription", "addon", "wallet"])
+@pytest.mark.parametrize("invalid", [None, True, "100", -1, math.nan, math.inf, {}, "missing"])
+async def test_seranking_invalid_pool_is_failed_reading_not_empty(monkeypatch, pool, invalid):
+    monkeypatch.setenv("TREG_PLATFORM_KEY_SERANKING", "test")
+    collectors.get_settings.cache_clear()
+    totals = {name: {"remaining": 0} for name in ("subscription", "addon", "wallet")}
+    if invalid == "missing":
+        del totals[pool]
+    elif invalid == {}:
+        totals[pool] = {}
+    else:
+        totals[pool]["remaining"] = invalid
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, content=json.dumps({"totals": totals})))) as client:
+            row = await collectors.provider_balance("seranking", client)
+    finally:
+        collectors.get_settings.cache_clear()
+    snap = sweep.snapshot_from("seranking", row)
+    state = policy.latest_state(policy.default_policy("seranking", has_key=True), snap)
+    assert row["value"] is None
+    assert snap.error
+    assert snap.confidence == "stale"
+    assert state.exhausted_until is None
+
+
 async def test_spidercloud_balance_converts_api_credits_to_usd():
     def probe(request):
         assert request.method == "GET"

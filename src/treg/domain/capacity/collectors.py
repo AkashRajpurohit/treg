@@ -271,18 +271,24 @@ async def _moz(c, key):
 
 
 async def _seranking(c, key):
-    # Two pools: the monthly subscription bucket AND a non-expiring top-up wallet. The old
-    # /account/subscription call only saw the first, reporting "0 left" while 248k sat in the
-    # wallet (2026-08-20). /account/credits reports both plus which one is granting access.
+    # The totals are disjoint pools; the detailed buckets repeat the add-on and wallet credits.
     d = await _get(c, "https://api.seranking.com/v1/account/credits",
                    headers={"Authorization": f"Token {key}"})
-    t = d.get("totals", {})
-    sub, wallet = t.get("subscription", {}), t.get("wallet", {})
-    total = (sub.get("remaining") or 0) + (wallet.get("remaining") or 0)
+    t = d.get("totals") if isinstance(d, dict) else None
+    remaining = {}
+    for name in ("subscription", "addon", "wallet"):
+        pool = t.get(name) if isinstance(t, dict) else None
+        value = pool.get("remaining") if isinstance(pool, dict) else None
+        if type(value) is not int or value < 0:
+            raise ValueError(f"SE Ranking returned no valid {name} credit balance")
+        remaining[name] = value
+    sub, addon = t["subscription"], t["addon"]
+    total = sum(remaining.values())
     reason = (d.get("access") or {}).get("primary_reason", "?")
     return {"value": total, "unit": "credits left",
-            "note": f"wallet {wallet.get('remaining', 0):,} (non-expiring) + subscription "
-                    f"{sub.get('remaining', 0):,}/{sub.get('total', 0):,} (resets "
+            "note": f"wallet {remaining['wallet']:,} (non-expiring) + addon "
+                    f"{remaining['addon']:,} (expires {addon.get('expire_at', '?')}) + subscription "
+                    f"{remaining['subscription']:,}/{sub.get('total', 0):,} (resets "
                     f"{sub.get('expire_at', '?')}); access via {reason}"}
 
 

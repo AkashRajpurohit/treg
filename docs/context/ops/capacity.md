@@ -54,6 +54,13 @@ reading below `EMPTY_BELOW` refuses the provider's shared-key calls, so a collec
 that bills overage rather than refusing (SpyFu's monthly allowance) as informational once spent,
 and sums every pool that can pay for a call (Fiber AI's trial and paid pools).
 
+SE Ranking's collector reads `/v1/account/credits` and sums the remaining subscription,
+API add-on and non-expiring wallet credits from `totals`. Detail buckets repeat those balances
+and are not added again. Every pool must report a nonnegative integer remainder; missing or
+malformed pools fail the reading rather than reporting an exhausted account. The balance note
+names each pool and the subscription/add-on expiry. The web account's cash balance is a separate
+unit and is not converted into API credits.
+
 Octen's PAYG balance has no account balance or usage endpoint in its published OpenAPI, so
 `NO_BALANCE_API` reports it as dashboard-only. `_KNOWN` classifies the account as manually funded
 cash. The shared-key rate policy spaces calls at five per second, below the Base plan's displayed
