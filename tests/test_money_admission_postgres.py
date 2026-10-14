@@ -10,6 +10,7 @@ import asyncio
 import os
 from contextlib import nullcontext
 from contextvars import ContextVar
+from types import SimpleNamespace
 from uuid import uuid4
 from urllib.parse import urlsplit
 
@@ -167,6 +168,38 @@ async def test_hot_org_admission_leaves_capacity_for_another_org(local_postgres,
     monkeypatch.setattr(get_settings(), "money_admission_lease_s", 15)
     assert (await _hot_org_isolation(local_postgres, admission=money_admission.admit))[
         "blocked_pool_occupancy"] == 1
+
+
+async def test_reserve_wait_timeout_never_checks_out_postgres(local_postgres, local_redis, monkeypatch):
+    from treg.application.call import reserve as call_reserve
+    from treg.application.call.types import ReservationFailed
+    from test_money_admission_application import _call
+
+    org_id, _ = await _funded_holds("reserve-timeout", 0)
+    async with session_maker() as db:
+        org = await db.get(Org, org_id)
+        db.expunge(org)
+    caller = SimpleNamespace(org=org, org_id=org_id)
+    monkeypatch.setattr(get_settings(), "money_admission_enabled", True)
+    monkeypatch.setattr(get_settings(), "money_admission_wait_s", 0.03)
+    pooled = create_async_engine(local_postgres.url, pool_size=1, max_overflow=0)
+    monkeypatch.setattr(call_reserve, "session_maker", async_sessionmaker(pooled, expire_on_commit=False))
+    checkouts = []
+    event.listen(pooled.sync_engine, "checkout", lambda *_: checkouts.append(1))
+    key, token = f"money-admission:org:{org_id}", uuid4().hex
+    assert await local_redis[1].acquire_lease(key, token, 5000) == "acquired"
+    try:
+        results = await asyncio.gather(*[
+            call_reserve._platform_reserve(_call(org_id, f"timeout-{i}"), caller, call_ref=f"timeout-{i}")
+            for i in range(6)
+        ], return_exceptions=True)
+        assert all(isinstance(result, ReservationFailed) and result.status_code == 429 for result in results)
+        assert checkouts == []
+        assert await local_redis[1]._client.get(key) == token
+        await _accounting(org_id, [])
+    finally:
+        await local_redis[1].release_lease(key, token)
+        await pooled.dispose()
 
 
 async def test_admission_timeout_keeps_accounting_safe_but_loses_pool_isolation(

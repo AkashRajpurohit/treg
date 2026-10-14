@@ -1,13 +1,14 @@
 """Optional money admission outside database sessions; PostgreSQL remains the authority.
 
 A lease reduces contention, never replaces a money lock or proves a transaction has stopped.
-Timeouts and store failures fall back to the original database path. Lease loss never cancels
+Reserve wait timeouts refuse before the database; other timeouts and store failures fall back
+to the original database path. Lease loss never cancels
 an in-flight transaction. Callers put the entire session (including rollback/close) inside admit,
 and do not call admit again inside that scope.
 
 `reserve` and `release` exist only for a session that will touch an org balance row. An empty or
 invalid org id on those operations refuses before the body runs, so the caller cannot open that
-session. Wait and key-value failures still enter the body; they are not an HTTP 429.
+session. Reserve wait exhaustion has its own typed refusal; key-value failures still enter the body.
 """
 from __future__ import annotations
 
@@ -43,6 +44,7 @@ _opened = _clock()
 class _Window:
     completed: int = 0
     failed: int = 0
+    rejected: int = 0
     cancelled: int = 0
     wait_total_ms: float = 0.0
     wait_max_ms: float = 0.0
@@ -118,7 +120,9 @@ class _Observation:
             with _metrics_lock:
                 row = _windows.setdefault((self.operation, self.mode), _Window())
                 row.completed += 1
-                row.failed += exc is not None
+                rejected = isinstance(exc, ReserveAdmissionTimeout)
+                row.rejected += rejected
+                row.failed += exc is not None and not rejected
                 row.cancelled += isinstance(exc, asyncio.CancelledError)
                 for name, value in (("wait", wait_ms), ("execution", execution_ms),
                                     ("total", total_ms)):
@@ -171,37 +175,43 @@ class _Gate:
         return self.lost
 
     async def acquire(self, ids: list[int], wait_s: float) -> str | None:
-        async with asyncio.timeout(wait_s):
-            for org_id in ids:
-                lock = _local_lock(org_id)
-                await lock.acquire()
-                self.local.append(lock)
-            if not kv.configured():
-                return "kv_not_configured"
-            self.store = kv.store()
-            for org_id in ids:
-                key, token = f"money-admission:org:{org_id}", uuid.uuid4().hex
-                self.attempted.append((key, token))
-                while True:
-                    if self._ownership_lost():
-                        return "lease_lost"
-                    started = time.monotonic()
-                    result = await self.store.acquire_lease(key, token, self.ttl_ms)
-                    if result == "acquired":
-                        self.leases.append((key, token))
-                        self.valid_until[key] = started + self.ttl_ms / 1000
+        wait_timeout = asyncio.timeout(wait_s)
+        try:
+            async with wait_timeout:
+                for org_id in ids:
+                    lock = _local_lock(org_id)
+                    await lock.acquire()
+                    self.local.append(lock)
+                if not kv.configured():
+                    return "kv_not_configured"
+                self.store = kv.store()
+                for org_id in ids:
+                    key, token = f"money-admission:org:{org_id}", uuid.uuid4().hex
+                    self.attempted.append((key, token))
+                    while True:
                         if self._ownership_lost():
                             return "lease_lost"
-                        if self.renewer is None:
-                            self.renewer = asyncio.create_task(self._renew())
-                        break
-                    if result != "busy":
-                        self.observation.kv_errors += 1
-                        return "kv_unavailable"
-                    # Only the local head waiter polls Redis for an org. Keep handoff delay
-                    # short relative to a money transaction without a request-wide poll storm.
-                    await asyncio.sleep(random.uniform(0.003, 0.010))
-            return "lease_lost" if self._ownership_lost() else None
+                        started = time.monotonic()
+                        result = await self.store.acquire_lease(key, token, self.ttl_ms)
+                        if result == "acquired":
+                            self.leases.append((key, token))
+                            self.valid_until[key] = started + self.ttl_ms / 1000
+                            if self._ownership_lost():
+                                return "lease_lost"
+                            if self.renewer is None:
+                                self.renewer = asyncio.create_task(self._renew())
+                            break
+                        if result != "busy":
+                            self.observation.kv_errors += 1
+                            return "kv_unavailable"
+                        # Only the local head waiter polls Redis for an org. Keep handoff delay
+                        # short relative to a money transaction without a request-wide poll storm.
+                        await asyncio.sleep(random.uniform(0.003, 0.010))
+                return "lease_lost" if self._ownership_lost() else None
+        except TimeoutError:
+            if not wait_timeout.expired():
+                raise  # A store-raised timeout retains the infrastructure-error fallback.
+            return "wait_timeout"
 
     async def _renew(self) -> None:
         try:
@@ -264,11 +274,11 @@ class _Gate:
 
 
 class AdmissionRefused(Exception):
-    """Reserve or release refused before checkout: no positive org id.
+    """Reserve or release refused before checkout: no positive org id. Not an HTTP status."""
 
-    Not an HTTP status. A wait timeout or an unavailable key-value store still runs the
-    original database path and must not be turned into a 429 here.
-    """
+
+class ReserveAdmissionTimeout(Exception):
+    """The reserve acquisition budget expired before checkout. Not a store failure."""
 
 
 def _invalid_org(org_id: object) -> bool:
@@ -329,16 +339,19 @@ async def admit(org_ids: Iterable[int | None], *, operation: str) -> AsyncIterat
                 gate = _Gate(observation, settings.money_admission_lease_s)
                 try:
                     reason = await gate.acquire(ids, settings.money_admission_wait_s)
-                except TimeoutError:
-                    reason = "wait_timeout"
                 except Exception:  # noqa: BLE001 - the gate cannot turn a charge into a free call
                     observation.kv_errors += 1
                     reason = "gate_error"
                 if reason:
-                    observation.reason = reason
+                    reject = operation == "reserve" and reason == "wait_timeout"
+                    if not reject:
+                        observation.reason = reason
                     mode = "fallback"
                     await _release_safely(gate)
                     gate = None
+                    if reject:
+                        # Cleanup precedes rejection; never yield into a reserve DB session.
+                        raise ReserveAdmissionTimeout("wait_timeout")
                 else:
                     mode = "redis"
         observation.enter(mode)
@@ -380,7 +393,7 @@ def snapshot() -> list[dict]:
             "operation": operation, "mode": mode, "process_instance": PROCESS_INSTANCE,
             "window_s": round(elapsed, 3),
             **{name: round(getattr(window, name), 3) for name in (
-                "completed", "failed", "cancelled", "wait_total_ms", "wait_max_ms",
+                "completed", "failed", "rejected", "cancelled", "wait_total_ms", "wait_max_ms",
                 "execution_total_ms", "execution_max_ms", "total_total_ms", "total_max_ms",
                 "waiting_peak", "active_peak", "lease_lost", "deadline_expired", "kv_errors")},
             **current.get((operation, mode), {"waiting": 0, "active": 0}),

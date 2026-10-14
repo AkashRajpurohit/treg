@@ -154,7 +154,8 @@ async def _enforce_daily_cap(caller: Caller, db: AsyncSession) -> None:
 
 
 def _translate_call_failure(exc: CallFailure) -> HTTPException:
-    return HTTPException(status_code=exc.status_code, detail=exc.detail)
+    headers = {"Retry-After": str(exc.retry_after_s)} if exc.retry_after_s is not None else None
+    return HTTPException(status_code=exc.status_code, detail=exc.detail, headers=headers)
 
 
 def _parse_call_meta(request: Request, caller: Caller | None = None) -> CallMeta:
