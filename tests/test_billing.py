@@ -1062,10 +1062,14 @@ async def test_auto_topup_requires_action_keeps_recovery_payment(c: AsyncClient,
 async def test_new_card_clears_old_3ds_invoice_before_charging(c: AsyncClient, monkeypatch):
     org_id, owner = await _org(c)
     await _armed(org_id)
-    first = _invoice_sdk(pi_status="requires_action")
+    err = stripe.CardError("authentication required", param=None, code="authentication_required")
+    err.error = stripe.ErrorObject.construct_from(
+        {"code": "authentication_required", "payment_intent": {"id": "pi_auto_1"}}, "sk_test")
+    first = _invoice_sdk(pay_error=err)
     monkeypatch.setattr(billing, "_sdk", first)
     assert (await _attempt(org_id))["reason"] == "authentication_required"
-    old_invoice = {**first.state["invoice"], "id": "in_old_3ds"}
+    old_invoice = {**first.state["invoice"], "id": "in_old_3ds",
+                   "payments": {"data": [{"payment": {"payment_intent": "pi_auto_1"}}]}}
     replacement = _invoice_sdk("pi_replacement", payment_method="pm_replacement")
 
     async def sdk(fn, /, **kw):
