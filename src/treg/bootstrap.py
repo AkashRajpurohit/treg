@@ -25,7 +25,7 @@ from . import adsconv, analytics, archive, audit
 from .application.call import route as routed_call
 from .application import arena, find_index
 from .application.onboard import first_run
-from . import bootstrap_handlers
+from . import bootstrap_handlers, policy
 from .bootstrap_http import (
     _BodyDecodeMiddleware,
     _DevTitleMiddleware,
@@ -33,7 +33,7 @@ from .bootstrap_http import (
     _SecurityHeadersMiddleware,
 )
 from .config import TREG_USER_AGENT, get_settings
-from .infra import kv, money_timing, turnstile
+from .infra import kv, money_timing, org_traffic, turnstile
 from .infra.money_trace_runner import start_money_trace, stop_money_trace
 from .infra.db import background_session_maker, verify_db
 from .infra.catalog_observations import (
@@ -720,6 +720,7 @@ def _lifespan(role: AppRole):
             analytics.capture_service_started(role)
             for problem in turnstile.misconfiguration():
                 logging.getLogger("treg").warning("event=turnstile_misconfigured problem=%s", problem)
+            traffic_reporting = org_traffic.start_reporting() if role != "control" else False
             try:
                 if role == "control" or _mcp is None:
                     yield
@@ -757,6 +758,8 @@ def _lifespan(role: AppRole):
                     await app.state.http.aclose()
                     await kv.close()
                 finally:
+                    if traffic_reporting:
+                        org_traffic.stop_reporting()
                     try:
                         await stop_money_trace(trace_runner)
                     finally:
@@ -796,6 +799,7 @@ def create_app(role: AppRole = "all", *, archive_object_store=None) -> FastAPI:
     app.add_middleware(_LegacyHostRedirectMiddleware)
     app.add_middleware(_SecurityHeadersMiddleware)
     app.add_middleware(_BodyDecodeMiddleware)
+    app.add_middleware(org_traffic.RequestLogMiddleware)
     if get_settings().local_dev:
         app.add_middleware(_DevTitleMiddleware)
     app.add_exception_handler(OverflowError, api_module._id_out_of_range)
@@ -824,4 +828,6 @@ def create_app(role: AppRole = "all", *, archive_object_store=None) -> FastAPI:
         "startup_checks": startup_checks,
     }
     app.state.archive_object_store = archive_object_store
+    # Last, so an extension's install sees the finished app. A missing required one refuses to start.
+    app.state.extensions = policy.load_extensions(app, get_settings().required_extensions)
     return app

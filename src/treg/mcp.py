@@ -62,6 +62,7 @@ from .domain.catalog import store as catalog_store
 from .config import PUBLIC_HOST_ALIASES, get_settings
 from .feedback_contract import FeedbackCategory, FEEDBACK_DESCRIPTION, ReviewUsefulness, REVIEW_DESCRIPTION
 from .domain.catalog.stats import EndpointObservationReader
+from .infra import org_traffic
 
 # Every tool must declare what it can DO, and the review process checks these against real behaviour.
 # Read-only means it changes nothing anywhere; open-world means what it sends leaves the caller's own
@@ -416,6 +417,7 @@ class CatalogGetOut(TypedDict, total=False):
 class CallOut(TypedDict, total=False):
     call_id: str | None
     status: int | None              # the UPSTREAM status, relayed
+    retry_after: str | None         # HTTP Retry-After, preserved where MCP cannot send that header
     endpoint_id: str | None
     replayed: bool | None           # answered from an earlier call with the same idempotency_key
     body: Any                       # the provider's response, verbatim
@@ -1262,6 +1264,7 @@ async def call(endpoint_id: str, params: dict | list | None = None,
     )
 
 
+@org_traffic.mcp_adapter("call")
 async def _call_impl(endpoint_id: str, params: dict | list | None = None,
                      method: str | None = None, idempotency_key: str | None = None,
                      query: dict | None = None, body: dict | list | str | None = None,
@@ -1456,6 +1459,8 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
         r = await client.request(method, f"{route}/{endpoint_id}", **kw)
 
     out: dict[str, Any] = {"status": r.status_code, "endpoint_id": endpoint_id, "body": _body(r)}
+    if retry_after := r.headers.get("Retry-After"):
+        out["retry_after"] = retry_after
     if call_id := r.headers.get("X-Treg-Call-Id"):
         out["call_id"] = call_id
     if r.headers.get("X-Treg-Idempotent-Replay") == "true":
@@ -1518,6 +1523,7 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
     return out
 
 
+@org_traffic.mcp_adapter("call_media")
 async def _call_media_impl(
     endpoint_id: str, *, body: dict | list | str, headers: dict | None,
     idempotency_key: str | None, ctx: Context, catalog_only: bool,
@@ -1558,6 +1564,8 @@ async def _call_media_impl(
         route = "/catalog/call" if catalog_only else "/call"
         response = await client.post(f"{route}/{endpoint_id}", **kw)
     metadata: dict[str, Any] = {"status": response.status_code, "endpoint_id": endpoint_id}
+    if retry_after := response.headers.get("Retry-After"):
+        metadata["retry_after"] = retry_after
     if call_id := response.headers.get("X-Treg-Call-Id"):
         metadata["call_id"] = call_id
     if response.headers.get("X-Treg-Idempotent-Replay") == "true":
