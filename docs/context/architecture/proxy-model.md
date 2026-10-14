@@ -92,8 +92,11 @@ incl. duplicates, headers, cookies, body bytes):
    "Ad incomplete" until the spec was moved into the query string). A caller who streamed chunked
    stays chunked.
 2. **treg's control/infra + edge forwarding headers** - `_CONTROL` (`x-treg-token`, `x-treg-org`,
-   `ngrok-skip-browser-warning`, `x-forwarded-*`, `x-real-ip`, `forwarded`, `via`), dropped via
-   `_DROP_REQUEST = _HOP_BY_HOP | _CONTROL`, so none leaks upstream. `_scrub_treg_cookies` also strips
+   `ngrok-skip-browser-warning`, `x-forwarded-*`, `x-real-ip`, `forwarded`, `via`, Cloudflare's
+   `cf-connecting-ip` family, `true-client-ip`, `cdn-loop`), dropped via
+   `_DROP_REQUEST = _HOP_BY_HOP | _CONTROL`, plus whatever `TREG_CLIENT_IP_HEADER` names, so none
+   leaks upstream. The MCP layer re-sends the caller's address in that header on its in-process
+   calls; a Cloudflare-fronted provider answers any request still carrying it with 403 error 1000. `_scrub_treg_cookies` also strips
    treg's own cookies (`treg_session`, `treg_oauth_state`) from the Cookie header - the dashboard's
    `credentials:'include'` Try-it would otherwise leak our session token - while keeping other cookies.
 3. **the injected credential(s)** - each binding overwrites only its target header, query parameter,
