@@ -38,6 +38,7 @@ from ...infra.db import session_maker
 from ...domain import asynctasks as asynctasks_rules
 from ...domain.capacity.routes_view import view as overflow_routes_view
 from ...domain.capacity.view import view as capacity_view
+from ...domain.capacity.marks import spends_balance
 from ...domain.capacity.signatures import classify as classify_capacity
 from ...domain.catalog import results as catalog_results
 from ...domain.catalog import stats as endpoint_stats
@@ -311,7 +312,8 @@ async def build_plan(ep: dict, identity_given: dict, caller, options: RouteOptio
             "platform"
         )
         cv = cat.cost_view(e.get("cost"), e["provider"])
-        direct_exhausted = tier == "platform" and keyslots.all_exhausted(e["provider"], e["id"])
+        direct_exhausted = tier == "platform" and keyslots.all_exhausted(
+            e["provider"], e["id"], metered=spends_balance((e.get("cost") or {}).get("type")))
         overflow_route = None
         if (direct_exhausted and get_settings().overflow_mode == "on"
                 and not getattr(caller.org, "platform_overflow_disabled", False)):

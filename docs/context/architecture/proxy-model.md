@@ -489,6 +489,11 @@ read zero) and the call path's own lock `capacity:lock:<key>` (below). If so it 
 `resets_at` when known and the same-capability alternatives from `_capability_alternatives`. treg still
 does not choose for the caller (charter): it names the options. The audit row is `refused_by="capacity"`,
 `X-Treg-Error: 1`, cost 0. A stale, empty or "ok" view never refuses; only a confirmed signal does.
+A route whose catalog cost is `free` (`marks.spends_balance`) spends no balance, so for it only its
+endpoint's own lock (a quota) counts: the sweep's reading and the provider's balance lock neither
+refuse it, nor admit it as a probe, nor take its 2xx as recovery (`metered=False` through
+`view`, `keyslots`, the router and `_note_capacity_recovery`). A vendor that answers free routes
+at zero credits would otherwise erase every paid route's strike and lift every zero reading.
 
 The call path's breaker (`domain.capacity.marks`) opens slowly and closes fast. After a tier-4
 answer ≥ 400, `settle._note_capacity_signal` runs `domain.capacity.signatures.classify` on the

@@ -47,6 +47,13 @@ SWEEP_PROBE = "sweep:"
 log = logging.getLogger("treg.capacity")
 
 
+def spends_balance(cost_type: str | None) -> bool:
+    """Whether a route draws on the account's money or allowance. A free route says nothing about
+    either: Dropleads answers searches at zero credits while every paid route 402s, so a free 2xx
+    is no recovery, and a balance mark is no reason to refuse a free call."""
+    return cost_type != "free"
+
+
 def lock_key(provider: str, endpoint_id: str | None, kind: str, slot: str | None = None) -> str:
     """Provider for a balance signature, endpoint for a quota one; a further treg-owned account
     (`slot`) runs dry on its own, so its rows are its own (`<key>#<slot>`)."""

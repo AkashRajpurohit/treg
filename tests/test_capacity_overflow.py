@@ -14,6 +14,7 @@ from httpx import AsyncClient
 from sqlmodel import select
 
 from datetime import timedelta
+from treg.domain.capacity import marks as capacity_marks
 from treg.domain.capacity import routes as R
 from treg import audit, ratestore
 from treg.application.call import overflow as O
@@ -950,11 +951,9 @@ async def test_orthogonals_own_422_on_the_skip_direct_ladder_is_a_typed_503_nami
     aggregator stays healthy for the next caller."""
     await _route(endpoint_id=APOLLO_SEARCH_EP, provider="apollo", method="POST", path=APOLLO_SEARCH_PATH,
                  price_micro=2_000, ratio=None)
-    now = utcnow_naive()
-    async with session_maker() as db:
-        await ratestore.kv_put(db, STATE_NS, "apollo", LatestState(
-            "apollo", 0.0, "USD", now, "exact", exhausted_until=now + timedelta(hours=1), health="exhausted").to_json(), ttl_s=3600)
-        await db.commit()
+    # The search is free, so only its own quota can hold it (a balance mark never refuses it).
+    await capacity_marks.strike("apollo", endpoint_id=APOLLO_SEARCH_EP, kind="quota",
+                                resets_at=utcnow_naive() + timedelta(hours=1), immediate=True)
     capacity_view.invalidate()
 
     async def never(*a, **k):

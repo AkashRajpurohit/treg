@@ -363,7 +363,11 @@ quota gate. BYOK calls bypass it.
   The sweep's `exhausted` reading gets the same probe, from one minute after the reading, so a
   top-up is noticed before the next sweep: the probe's 2xx lifts that reading
   (`clear_sweep_state`, conditional on the reading it was admitted under) until the next sweep
-  reads the balance again. See `architecture/proxy-model.md`.
+  reads the balance again. A free route (catalog `cost.type: free`, `spends_balance`) spends no
+  balance, so the provider's balance row and the sweep's reading neither refuse it nor take its 2xx
+  as recovery; only its endpoint's own (quota) row applies. Dropleads answers free searches at zero
+  credits, and their 2xx kept erasing the paid routes' strikes and lifting the zero reading.
+  See `architecture/proxy-model.md`.
 - **`view.py`** - `LatestStateView`: the in-process copy of both namespaces, reloaded from
   ratestore on a 60 s TTL by an explicit `await load()`; `is_exhausted(provider, endpoint_id)`
   and friends are sync and I/O-free so `resolve` can read them without breaking its rule. A

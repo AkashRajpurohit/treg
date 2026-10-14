@@ -25,6 +25,7 @@ from ...infra import money_admission
 from ...infra.db import session_maker
 from ...models import Secret
 from ...sandbox_identity import visitor_name
+from ...domain.capacity import marks as capacity_marks
 from ...domain.capacity import signatures as capacity_signatures
 from ...domain.capacity.fair_share import NO_SLOT, ShareBusy, fair_share
 from ...domain.capacity.fair_share import RETRY_AFTER_S as RETRY_AFTER_SHARE_S
@@ -1123,7 +1124,8 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             raise (outcome.failure if outcome is not None and outcome.failure is not None
                    else _provider_capacity_unavailable(
                        _catalog_endpoint_for(mk.endpoint_id) or {"id": mk.endpoint_id},
-                       mk.provider, capacity_view.exhausted_until(mk.provider, mk.endpoint_id)))
+                       mk.provider, capacity_view.exhausted_until(
+                           mk.provider, mk.endpoint_id, metered=capacity_marks.spends_balance(mk.cost_type))))
         response, body, charged = outcome.response, outcome.body, outcome.charged_micro
         _capture(_overflow_event(pending, outcome, charged))
         if idem_key:
