@@ -62,8 +62,8 @@ export default {
         .map(i => ({ i, left: ((i + 0.5) / n) * 100, text: this.buckets[i].tick }))
     },
     tip() {
-      if (this.hover === null) return null
-      const b = this.buckets[this.hover], n = this.buckets.length
+      const b = this.hover === null ? undefined : this.buckets[this.hover], n = this.buckets.length
+      if (!b) return null   // nothing hovered, or a bar the new buckets no longer have
       const center = (this.hover + 0.5) / n, half = 0.5 / n
       const flip = center > 0.62
       const rows = this.series.length > 1
@@ -82,6 +82,9 @@ export default {
     },
   },
   updated() { const el = this.$refs.tip; if (el && el.offsetHeight && el.offsetHeight !== this.tipH) this.tipH = el.offsetHeight },
+  // New bars (a new group, range or filter) forget the hovered one: its index may not exist any more,
+  // and the pointer is no longer over the bar it named.
+  watch: { buckets() { this.hover = null } },
   methods: {
     money: billing.money,
     rounded(x, y, w, bottom) {

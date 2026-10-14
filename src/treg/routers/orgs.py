@@ -235,37 +235,38 @@ async def _enforce_deny(
 async def _usage_rollup(db: AsyncSession, org_id: int, since: datetime) -> dict:
     """Aggregate usage since `since` into by-user (with a per-kind split), by-tool, by-day, and totals.
     CallRecord carries `kind` ("call"/"local_run"); every RunRecord is a "server_run". Pure GROUP BY —
-    no request/response bodies are read (we don't store them). See docs/USAGE-METERING-PLAN.md."""
+    no request/response bodies are read (we don't store them). See docs/USAGE-METERING-PLAN.md.
+
+    ONE pass over the window's call rows answers by-user, by-kind and by-tool together: they read the
+    same rows, and separate GROUP BYs read them once each. The per-day count is the second pass, and
+    the cheap one: it needs only `(org_id, created_at)`, which its index already holds."""
     KINDS = ("call", "local_run", "server_run")
     totals = {k: 0 for k in KINDS}
     users: dict[str, dict] = {}
+    tools: dict[str, int] = {}
 
-    def _bump(email: str, kind: str, n: int) -> None:
+    def _bump(email: str, kind: str, tool: str, n: int) -> None:
         u = users.setdefault(email, {"user_email": email, **{k: 0 for k in KINDS}})
         u[kind] += n
         totals[kind] += n
+        tools[tool] = tools.get(tool, 0) + n
 
-    for email, kind, n in (await db.execute(select(CallRecord.user_email, CallRecord.kind, func.count()).where(
-            CallRecord.org_id == org_id, CallRecord.created_at >= since
-    ).group_by(CallRecord.user_email, CallRecord.kind))).all():
-        _bump(email, kind if kind in KINDS else "call", n)  # guard an unexpected kind into "call"
-    for email, n in (await db.execute(select(RunRecord.user_email, func.count()).where(
-            RunRecord.org_id == org_id, RunRecord.created_at >= since).group_by(RunRecord.user_email))).all():
-        _bump(email, "server_run", n)
+    for email, kind, tool, n in (await db.execute(
+            select(CallRecord.user_email, CallRecord.kind, CallRecord.tool_name, func.count()).where(
+                CallRecord.org_id == org_id, CallRecord.created_at >= since
+            ).group_by(CallRecord.user_email, CallRecord.kind, CallRecord.tool_name))).all():
+        _bump(email, kind if kind in KINDS else "call", tool, n)  # guard an unexpected kind into "call"
+    for email, tool, n in (await db.execute(
+            select(RunRecord.user_email, RunRecord.bundle_name, func.count()).where(
+                RunRecord.org_id == org_id, RunRecord.created_at >= since
+            ).group_by(RunRecord.user_email, RunRecord.bundle_name))).all():
+        _bump(email, "server_run", tool, n)
 
     by_user = sorted(
         ({**u, "total": sum(u[k] for k in KINDS)} for u in users.values()),
         key=lambda r: -r["total"])
     totals["total"] = sum(totals[k] for k in KINDS)
-
-    tools: dict[str, int] = {}
-    for name, n in (await db.execute(select(CallRecord.tool_name, func.count()).where(
-            CallRecord.org_id == org_id, CallRecord.created_at >= since).group_by(CallRecord.tool_name))).all():
-        tools[name] = tools.get(name, 0) + n
-    for name, n in (await db.execute(select(RunRecord.bundle_name, func.count()).where(
-            RunRecord.org_id == org_id, RunRecord.created_at >= since).group_by(RunRecord.bundle_name))).all():
-        tools[name] = tools.get(name, 0) + n
-    by_tool = sorted(({"name": k, "total": v} for k, v in tools.items()), key=lambda r: -r["total"])
+    by_tool = sorted(({"name": k, "total": v} for k, v in tools.items()), key=lambda r: (-r["total"], r["name"]))
 
     days: dict[str, int] = {}  # func.date() → 'YYYY-MM-DD' on sqlite, a date on Postgres; str() both
     for tbl in (CallRecord, RunRecord):

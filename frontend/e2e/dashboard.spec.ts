@@ -18,7 +18,7 @@ test('sign in, create team, switch pages, refresh and navigate back', async ({ p
   await expect(navigation.getByRole('button', { name: 'Team', exact: true })).toHaveAttribute('aria-current', 'page')
   await page.locator('.rd-account-menu summary').click()
   await page.locator('.rd-account-menu').getByRole('button', { name: 'Billing', exact: true }).click()
-  await expect(page).toHaveURL(/#orgs$/)
+  await expect(page).toHaveURL(/#orgs\/billing$/)   // the Team page names its tab in the address
   const referral = page.getByRole('link', { name: 'Referral: Give $5, get $5, or become an affiliate partner', exact: true })
   await expect(referral).toHaveText('Referral')
   await referral.click()
@@ -205,7 +205,8 @@ test('Activity offers no older page while a new filter is loading', async ({ pag
   await page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('button', { name: 'Activity', exact: true }).click()
   const all = page.getByRole('radio', { name: /^All/ })
   await expect(all).toHaveText('All 100')
-  await page.getByRole('combobox', { name: 'API key' }).selectOption('7')
+  await page.getByRole('button', { name: /^API key: / }).click()
+  await page.getByRole('option', { name: 'bot', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Load older activity' })).toHaveCount(0)
   release()
   await expect(all).toHaveText('All 3')

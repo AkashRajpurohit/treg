@@ -383,7 +383,9 @@ shared HTTP client. `/auth/logout` remains an HTTP-only cookie action.
 - **Usage metering + caps** (usage-metering v1, `docs/USAGE-METERING-PLAN.md`): `org_usage`
   (`GET /orgs/{id}/usage?days=`, admin+) rolls up `CallRecord` + `RunRecord` since the window start into
   **by-user** (with a `call`/`local_run`/`server_run` split), **by-tool**, **by-day**, and totals - pure
-  `GROUP BY`, **no request/response bodies** (they aren't stored). `set_member_cap`
+  `GROUP BY`, **no request/response bodies** (they aren't stored). It reads the window's audit rows
+  twice, not once per section: one grouped pass answers member, kind and tool together, and the
+  per-day count is the second. `set_member_cap`
   (`PATCH /orgs/{id}/members/{user}/cap`, admin+) sets `Membership.daily_call_cap` (`-1` = unlimited,
   rejects `< -1`). `my_usage` (`GET /usage/me`, any member) returns the caller's own `used_today` + `cap`.
   `list_members` also returns each member's `daily_call_cap` + `used_today`. **Enforcement:**

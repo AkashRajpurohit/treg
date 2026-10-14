@@ -63,5 +63,6 @@ async keyAction(k,action){ if(this.blockKeyAction()) return;
         if(!live()) return;
         if(r.agent_revoked) await this.loadOrgAdmin(); else await this.loadApiKeys(); }
       catch(e){ if(issue) this.failCredentialIssue(issue); else if(live()) this.keyErr='Key action failed: '+(e.detail||e.status); } finally{ if(live()) this.keyBusy=false; } },
-showKeyActivity(k){ this.activityKey=String(k.id); this.go('activity'); }
+// A key's Activity button opens its calls, with the key picked: '#activity/calls?key=<id>'.
+showKeyActivity(k){ this._tabRoute={view:'activity', tab:'feed', key:String(k.id)}; this.go('activity'); }
 }

@@ -138,6 +138,20 @@ rollup's history ("History starts on ..."). The card loads on its own, never wai
 counts below it, and says "Spend history is being prepared. It will appear here within a few days." like the API Keys tab until the rollup has
 caught up once.
 
+The rest of Usage loads in parallel with the card, each section on its own and with its own
+error: the counts (`GET /orgs/{id}/usage`: the stat cards, By member, Top tools, Per day) and each
+"Spend by <tag>" section. The 7/30/90-day buttons reload only those, not the card. Top tools and
+Per day show ten rows at a time (Per day newest first), paged in the browser: one answer already
+holds every row, so a page turn costs no request.
+
+Activity and Team carry their tab in the address (`state/navigation.js`, `parseTabHash`):
+`#activity/calls`, `#activity/usage`, `#orgs/members`, `#orgs/keys`, `#orgs/billing` and the rest,
+and the Calls tab also its key filter, by id: `#activity/calls?key=7`. The spend chart's key filter
+stays inside its card and out of the address, since it filters the chart only, not the tab. A reload
+or a shared link opens the same tab and key; changing a tab or key rewrites the current history entry, so Back leaves the page. An API
+key's Activity button opens `#activity/calls?key=<id>`. The old `#usage` and `#billing` links still
+land, and the address then names the tab. Opening Activity without a tab still lands on Calls.
+
 ## Catalog, Connections, a provider
 
 - **Two questions, two pages.** The Catalog says what an agent can call; Connections says whose

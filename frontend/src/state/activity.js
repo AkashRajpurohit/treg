@@ -1,10 +1,13 @@
 
 export default {
-async loadUsage(){ if(!this.canAdmin || !this.activeOrgId) return; this.usage=null; const live=this.ticket('usage');
-      this.loadUsageSpend();  // its own request: the chart never waits for the counts
+// Every section loads on its own and shows itself when ready: the page never waits for the slowest
+// one (the counts read the audit table), and a failed section does not take the others with it.
+async loadUsage(){ if(!this.canAdmin || !this.activeOrgId) return;
+      this.usageToolPage=0; this.usageDayPage=0;
+      await Promise.all([this.loadUsageCounts(), this.loadUsageSpend(), this.loadTagUsage()]); },
+async loadUsageCounts(){ if(!this.canAdmin || !this.activeOrgId) return; this.usage=null; this.usageErr=''; const live=this.ticket('usage');
       try{ const usage=await this.api('/orgs/'+this.activeOrgId+'/usage?days='+this.usageDays); if(live()) this.usage=usage; }
-      catch(e){ if(live()) this.err='Failed to load usage: '+(e.detail||e.status); }
-      await this.loadTagUsage(); },
+      catch(e){ if(live()) this.usageErr='Could not load usage counts: '+(e.detail||e.status); } },
 // The spend chart reads only the daily spend rollup. It keeps its last answer on screen (dimmed)
 // while a filter change loads the next. Days are UTC.
 spendQuery(){ const r=this.spendRange, f=this.spendFilter, today=new Date().toISOString().slice(0,10);

@@ -34,6 +34,10 @@ export default {
   data: () => ({ feedColumns: FEED, memberColumns: BY_MEMBER, toolColumns: BY_TOOL, dayColumns: BY_DAY, tagColumns: BY_TAG, spendColumns: BY_SERIES, GROUPS, STACKS, PAGE, NO_KEY }),
   computed: {
     // The filter lists keep the current choice even when the new range has no spend for it.
+    daysNewestFirst() { return [...(this.usage?.by_day || [])].reverse() },
+    activityKeyOptions() {
+      return [{ value: '', label: 'All API keys' }, ...this.apiKeys.map(k => ({ value: String(k.id), label: this.keyLabel(k) }))]
+    },
     spendKeyOptions() {
       return [{ value: '', label: 'All API keys' }, ...(this.usageSpend?.options?.keys || []).map(k => ({ value: String(k.id), label: k.name }))]
     },
@@ -103,9 +107,7 @@ export default {
 
   <template v-if="actTab==='feed'">
   <div class="cn-filters">
-    <select class="pl-select act-key" v-model="activityKey" @change="loadCalls" aria-label="API key">
-      <option value="">All API keys</option><option v-for="k in apiKeys" :key="k.id" :value="String(k.id)">{{k.identity}} - {{k.name}}</option>
-    </select>
+    <SelectMenu v-model="activityKey" class="act-key" size="lg" icon="key" label="API key" :options="activityKeyOptions" @change="loadCalls" />
     <div class="seg pl-seg" role="radiogroup" aria-label="Which calls">
       <button role="radio" :aria-checked="actOkOnly" :class="{on:actOkOnly}" @click="actOkOnly=true" title="Hide failed and refused calls">Succeeded <span>{{activityOkRows.length}}</span></button>
       <button role="radio" :aria-checked="!actOkOnly" :class="{on:!actOkOnly}" @click="actOkOnly=false" title="Include failed and refused calls">All <span>{{activityRows.length}}</span></button>
@@ -197,12 +199,14 @@ export default {
 
   <div class="cn-filters">
     <div class="seg pl-seg" role="radiogroup" aria-label="Window">
-      <button v-for="d in [7,30,90]" :key="d" role="radio" :aria-checked="usageDays===d" :class="{on:usageDays===d}" @click="usageDays=d; loadUsage()">{{d}} days</button>
+      <button v-for="d in [7,30,90]" :key="d" role="radio" :aria-checked="usageDays===d" :class="{on:usageDays===d}" @click="usageDays=d; usageToolPage=0; usageDayPage=0; loadUsageCounts(); loadTagUsage()">{{d}} days</button>
     </div>
     <span class="pl-meta pl-push">Counts only. No request or response content is stored.</span>
   </div>
 
-  <div v-if="usage">
+  <p v-if="usageErr" class="pl-empty">{{usageErr}}</p>
+  <p v-else-if="!usage" class="pl-empty">Loading counts…</p>
+  <template v-else>
     <div class="act-stats">
       <div v-for="[n, l] in [[usage.totals.total, 'Total events'], [usage.totals.call, 'API calls'], [usage.totals.local_run, 'Local runs'], [usage.totals.server_run, 'Server runs']]"
            :key="l" class="pl-card act-stat"><b>{{n}}</b><span>{{l}}</span></div>
@@ -217,17 +221,29 @@ export default {
     </section>
 
     <div class="act-pair">
+      <!-- Ten rows at a time, paged here: one request already holds every row, so Next is free. -->
       <section v-if="usage.by_tool.length" class="pl-sec">
-        <h2 class="pl-h"><span>Top tools</span><i></i></h2>
-        <DataTable :columns="toolColumns" :rows="usage.by_tool" :row-key="t => t.name" surface />
+        <h2 class="pl-h"><span>Top tools</span><i></i><em>{{usage.by_tool.length}}</em></h2>
+        <DataTable :columns="toolColumns" :rows="page(usage.by_tool, usageToolPage)" :row-key="t => t.name" surface />
+        <div v-if="usage.by_tool.length > PAGE" class="us-pager">
+          <span class="muted">{{pageLabel(usage.by_tool, usageToolPage)}}</span>
+          <button class="btn sm" :disabled="!usageToolPage" @click="usageToolPage--">Previous</button>
+          <button class="btn sm" :disabled="(usageToolPage+1)*PAGE >= usage.by_tool.length" @click="usageToolPage++">Next</button>
+        </div>
       </section>
       <section v-if="usage.by_day.length" class="pl-sec">
-        <h2 class="pl-h"><span>Per day</span><i></i></h2>
-        <DataTable :columns="dayColumns" :rows="usage.by_day" :row-key="d => d.day" surface>
+        <h2 class="pl-h"><span>Per day</span><i></i><em>{{usage.by_day.length}}</em></h2>
+        <DataTable :columns="dayColumns" :rows="page(daysNewestFirst, usageDayPage)" :row-key="d => d.day" surface>
           <template #cell-day="{ row: d }"><span class="mono muted">{{d.day}}</span></template>
         </DataTable>
+        <div v-if="usage.by_day.length > PAGE" class="us-pager">
+          <span class="muted">{{pageLabel(usage.by_day, usageDayPage)}}</span>
+          <button class="btn sm" :disabled="!usageDayPage" @click="usageDayPage--">Newer</button>
+          <button class="btn sm" :disabled="(usageDayPage+1)*PAGE >= usage.by_day.length" @click="usageDayPage++">Older</button>
+        </div>
       </section>
     </div>
+  </template>
 
     <!-- SPEND BY CALLER TAG - one section per key the team has ACTUALLY SENT, not a picker.
          A dropdown hides the other dimensions behind an interaction, and the whole point of
@@ -250,8 +266,6 @@ export default {
         </DataTable>
       </section>
     </template>
-  </div>
-  <p v-else class="pl-empty">Loading…</p>
   </template>
 </div>
 </template>
