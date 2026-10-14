@@ -37,10 +37,10 @@ async def test_start_copy_keeps_the_public_promises(clients: AsyncClient):
     assert "monid" not in html.lower()
     # The page only sells: one action, and the per-call prices it quotes come from real runs.
     assert len(re.findall(r'<button[^>]* data-cta="', html)) == 3
-    assert "Clay $0.88" in html and "13.2 credits" in html and "$238" in html
+    assert "Sales Navigator $119.99/mo" in html and "$0.019" in html and "$358" in html
     # Retired or mismatched comparisons must not come back: X dropped its subscription tiers, and
     # SpyFu researches Google ads, not Meta's.
-    assert "$200" not in html and "SpyFu" not in html and "$471" not in html
+    assert "$200" not in html and "SpyFu" not in html and "$471" not in html and "$238" not in html
     # One price per vendor: the bill quotes Apollo Basic at $49 and Semrush at $139.95.
     assert "$59" not in html and "$139/" not in html and "$139 " not in html
     # The custom page-view event is sent from the page script, so the tracker must load before it.
