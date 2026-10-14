@@ -481,12 +481,15 @@ async def _run_routed(parent: CallContext, ep: dict, body_bytes: bytes, get_head
                         f"no provider for {ep['id']} can honour every filter you sent for this identity "
                         f"(X-Treg-Route-Strict-Filters): " + "; ".join(f"{d['endpoint_id']} {d['why']}" for d in strict_drop)
                         + ". Send an identity a filter-aware provider accepts, or drop the header to accept a looser answer")})
-    first = plan.candidates[0]
-    if options.max_cost_micro is not None and (first.price_micro or 0) > options.max_cost_micro:
+    # rank() puts specificity ahead of price, so candidates[0] can cost more than a later
+    # one. Refuse only when none of them fit the ceiling, and name the true minimum.
+    if options.max_cost_micro is not None and all(
+            (cand.price_micro or 0) > options.max_cost_micro for cand in plan.candidates):
+        cheapest = min(plan.candidates, key=lambda cand: cand.price_micro or 0)
         raise ResolutionFailed("route_max_cost", status_code=402, detail={
             "error": "route_max_cost", "endpoint_id": ep["id"], "max_cost_micro": options.max_cost_micro,
-            "cheapest_micro": first.price_micro, "plan": plan.view()["plan"],
-            "message": f"the cheapest candidate ({first.endpoint['id']}) costs more than {MAX_COST_HEADER}"})
+            "cheapest_micro": cheapest.price_micro, "plan": plan.view()["plan"],
+            "message": f"the cheapest candidate ({cheapest.endpoint['id']}) costs more than {MAX_COST_HEADER}"})
     tried: list[Attempt] = []
     spent = 0
     errors = 0
