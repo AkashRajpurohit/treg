@@ -25,7 +25,7 @@ from treg.domain.identity.access import Caller
 from treg.infra import kv, money_admission
 from treg.infra.money_session import money_session
 from treg.infra.db import reset_db, session_maker
-from treg.models import AsyncTaskRecord, Hold, HubTool, LedgerEntry, Membership, Org, Tool, User
+from treg.models import AsyncTaskRecord, Hold, HubTool, IdempotentCall, LedgerEntry, Membership, Org, Tool, User
 from treg.timeutil import utcnow_naive
 
 from test_marketplace_call import EP, platform_on  # noqa: F401 - real call fixture
@@ -815,7 +815,7 @@ async def test_same_org_reserve_does_not_checkout_while_a_lease_is_held(money_db
 
 
 @pytest.mark.parametrize("kind", ["platform", "hub"])
-async def test_reserve_timeout_refuses_before_checkout_without_a_hold(money_db, monkeypatch, kind):
+async def test_reserve_timeout_refuses_before_checkout_without_a_hold(money_db, monkeypatch, caplog, kind):
     org_id, caller = await _payer("timeout-reserve")
     store = _enable_real_admission(monkeypatch, wait_s=0.02)
     store.values[f"money-admission:org:{org_id}"] = ("another-owner", time.monotonic() + 30)
@@ -832,11 +832,15 @@ async def test_reserve_timeout_refuses_before_checkout_without_a_hold(money_db, 
         assert seen == [], "a rejected reserve must never check out a DB connection"
         assert caught.value.kind == "money_admission_timeout"
         assert caught.value.status_code == 429 and caught.value.blame == "treg"
-        assert caught.value.retry_after_s == 1
+        base = get_settings().org_concurrency_retry_after_s
+        assert base <= caught.value.retry_after_s <= 2 * base
     finally:
         _stop_listening(engine, checkout)
     assert not money_admission._local_lock(org_id).locked()
     assert store.values[f"money-admission:org:{org_id}"][0] == "another-owner"
+    logs = [r.getMessage() for r in caplog.records if r.name == "treg.money_admission"]
+    assert logs == [f"money_admission_rejected operation=reserve org_id={org_id} "
+                    f"reason=wait_timeout retry_after_s={caught.value.retry_after_s}"]
     async with session_maker() as db:
         assert await ledger.balance_of(db, org_id) == 1_000
         assert await ledger.open_holds_of(db, org_id) == []
@@ -845,12 +849,35 @@ async def test_reserve_timeout_refuses_before_checkout_without_a_hold(money_db, 
         assert entries == ["grant"]
 
 
-@pytest.mark.parametrize("surface", ["/call/", "/catalog/call/", "/mcp/", "/mcp/v2/"])
-async def test_reserve_timeout_reaches_http_and_mcp_without_money_or_upstream(
-    clients, platform_on, monkeypatch, surface,
-):
-    from treg.application.call import service as call_service
+async def _admission_request(clients, surface):
+    """The same client-supplied key on each of the public call adapters."""
     from test_mcp_directory import _call_tool, paired_mcp_session
+
+    if surface.startswith("/mcp"):
+        async with paired_mcp_session() as client:
+            return await _call_tool(
+                client, "call" if surface == "/mcp/" else "catalog_call_read",
+                {"endpoint_id": EP, "params": {"aweme_id": "admission"},
+                 "idempotency_key": "admission-retry"},
+                clients.headers["X-Treg-Token"], path=surface)
+    response = await clients.get(f"{surface}{EP}?aweme_id=admission",
+                                 headers={"Idempotency-Key": "admission-retry"})
+    return {"status": response.status_code, "body": response.json(),
+            "retry_after": response.headers.get("Retry-After"),
+            "whose_error": "treg" if response.headers.get("X-Treg-Error") == "1" else None,
+            "call_id": response.headers["X-Treg-Call-Id"],
+            "replayed": response.headers.get("X-Treg-Idempotent-Replay") == "true"}
+
+
+@pytest.mark.parametrize("surface", ["/call/", "/catalog/call/", "/mcp/", "/mcp/v2/"])
+@pytest.mark.parametrize("release_pool_timeout", [False, True])
+async def test_reserve_timeout_releases_idempotency_key_then_retries_and_replays(
+    clients, platform_on, monkeypatch, surface, release_pool_timeout,
+):
+    from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+
+    from treg.application.call import idempotency, service as call_service
+    from treg.routers import call as call_routes
 
     org_id = (await clients.get("/orgs")).json()[0]["org_id"]
     async with session_maker() as db:
@@ -858,32 +885,121 @@ async def test_reserve_timeout_reaches_http_and_mcp_without_money_or_upstream(
     store = _enable_real_admission(monkeypatch, wait_s=0.02)
     key = f"money-admission:org:{org_id}"
     store.values[key] = ("another-owner", time.monotonic() + 30)
-    relay = AsyncMock(side_effect=AssertionError("a rejected reserve must not call upstream"))
+    relay = AsyncMock(wraps=call_service.relay)
     monkeypatch.setattr(call_service, "relay", relay)
-    monkeypatch.setattr(call_reserve, "session_maker", lambda: pytest.fail("reserve session opened"))
-    if surface.startswith("/mcp"):
-        async with paired_mcp_session() as client:
-            result = await _call_tool(
-                client, "call" if surface == "/mcp/" else "catalog_call_read",
-                {"endpoint_id": EP, "params": {"aweme_id": "admission"}},
-                clients.headers["X-Treg-Token"], path=surface)
-        assert result["status"] == 429 and result["retry_after"] == "1"
-        assert result["whose_error"] == "treg"
-        assert result["body"]["detail"]["error"] == "money_admission_timeout"
-        call_id = result["call_id"]
-    else:
-        response = await clients.get(f"{surface}{EP}?aweme_id=admission")
-        assert response.status_code == 429, response.text
-        assert response.headers["Retry-After"] == "1"
-        assert response.headers["X-Treg-Error"] == "1"
-        assert response.json()["detail"]["error"] == "money_admission_timeout"
-        call_id = response.headers["X-Treg-Call-Id"]
+    release = AsyncMock(wraps=call_routes.release_idempotent_claim)
+    monkeypatch.setattr(call_routes, "release_idempotent_claim", release)
+    monkeypatch.setattr(get_settings(), "org_concurrency_retry_after_s", 7)
+    monkeypatch.setattr(call_reserve.random, "randint", lambda lo, hi: 11)
+    attempts = []
+
+    def flaky_release_session():
+        attempts.append(1)
+        if release_pool_timeout and len(attempts) == 1:
+            raise PoolTimeoutError("test claim cleanup pool timeout")
+        return session_maker()
+
+    with monkeypatch.context() as rejected:
+        rejected.setattr(call_reserve, "session_maker", lambda: pytest.fail("reserve session opened"))
+        rejected.setattr(idempotency, "session_maker", flaky_release_session)
+        rejected.setattr(idempotency, "_POOL_RETRY_PAUSE_S", 0)
+        result = await _admission_request(clients, surface)
+    assert result["status"] == 429 and result["retry_after"] == "11"
+    assert result["whose_error"] == "treg"
+    assert result["body"]["detail"]["error"] == "money_admission_timeout"
+    call_id = result["call_id"]
+    release.assert_awaited_once()
+    assert release.await_args.args[0] is not None, "the refusal must release a real claim"
+    assert len(attempts) == 1 + release_pool_timeout
     relay.assert_not_awaited()
     async with session_maker() as db:
+        assert (await db.execute(select(IdempotentCall))).scalars().all() == []
         assert await db.get(Hold, call_id) is None
         assert await ledger.balance_of(db, org_id) == before
         assert (await db.execute(select(LedgerEntry).where(
             LedgerEntry.call_id == call_id))).scalars().all() == []
+
+    del store.values[key]
+    success = await _admission_request(clients, surface)
+    replay = await _admission_request(clients, surface)
+    assert success["status"] == replay["status"] == 200
+    assert not success.get("replayed") and replay["replayed"] is True
+    assert replay["body"] == success["body"]
+    assert success["call_id"] == replay["call_id"] != call_id
+    relay.assert_awaited_once()
+    async with session_maker() as db:
+        [row] = (await db.execute(select(IdempotentCall))).scalars().all()
+        assert row.status == "done" and row.response_status == 200
+        assert row.call_ref == success["call_id"] and row.charged_micro > 0
+        assert await ledger.balance_of(db, org_id) == before - row.charged_micro
+        assert await ledger.open_holds_of(db, org_id) == []
+        entries = (await db.execute(select(LedgerEntry).where(
+            LedgerEntry.call_id == success["call_id"], LedgerEntry.kind == "settle"))).scalars().all()
+        assert len(entries) == 1 and entries[0].amount_micro == -row.charged_micro
+
+
+@pytest.mark.parametrize("base", [1, 7, 60])
+@pytest.mark.parametrize("upper", [False, True])
+async def test_reserve_retry_jitter_uses_org_limit_setting(monkeypatch, base, upper):
+    @asynccontextmanager
+    async def refuse(*args, **kwargs):
+        raise money_admission.ReserveAdmissionTimeout("wait_timeout")
+        yield  # pragma: no cover - makes this an async context manager
+
+    bounds = []
+
+    def choose(lo, hi):
+        bounds.append((lo, hi))
+        return hi if upper else lo
+
+    monkeypatch.setattr(money_admission, "admit", refuse)
+    monkeypatch.setattr(get_settings(), "org_concurrency_retry_after_s", base)
+    monkeypatch.setattr(call_reserve.random, "randint", choose)
+    with pytest.raises(ReservationFailed) as caught:
+        async with call_reserve.reserve_admission(7):
+            pytest.fail("refusal entered reserve")
+    assert bounds == [(base, 2 * base)]
+    assert caught.value.retry_after_s == (2 * base if upper else base)
+
+
+async def test_reserve_timeout_does_not_cache_429_if_claim_cleanup_keeps_failing(
+    clients, platform_on, monkeypatch, caplog,
+):
+    from sqlalchemy.exc import TimeoutError as PoolTimeoutError
+
+    from treg.application.call import idempotency, service as call_service
+
+    org_id = (await clients.get("/orgs")).json()[0]["org_id"]
+    store = _enable_real_admission(monkeypatch, wait_s=0.02)
+    key = f"money-admission:org:{org_id}"
+    store.values[key] = ("another-owner", time.monotonic() + 30)
+    relay = AsyncMock(side_effect=AssertionError("no request may reach upstream"))
+    monkeypatch.setattr(call_service, "relay", relay)
+    attempts = []
+
+    def broken():
+        attempts.append(1)
+        raise PoolTimeoutError("test pool still unavailable")
+
+    with monkeypatch.context() as rejected:
+        # Cleanup gives one pool retry; neither attempt can delete the pending row here.
+        rejected.setattr(idempotency, "session_maker", broken)
+        rejected.setattr(idempotency, "_POOL_RETRY_PAUSE_S", 0)
+        result = await _admission_request(clients, "/call/")
+    assert result["status"] == 429
+    assert len(attempts) == 2
+    async with session_maker() as db:
+        [row] = (await db.execute(select(IdempotentCall))).scalars().all()
+        assert row.status == "pending" and row.response_status is None and row.response_body is None
+        assert await ledger.open_holds_of(db, org_id) == []
+    assert "could not release idempotency claim" in caplog.text
+    del store.values[key]
+    retry = await _admission_request(clients, "/call/")
+    assert retry["status"] == 409 and "is still in progress" in retry["body"]["detail"]
+    monkeypatch.setattr(idempotency, "IDEMPOTENCY_STALE_PENDING_S", 0)
+    stale = await _admission_request(clients, "/call/")
+    assert stale["status"] == 410 and stale["body"]["detail"]["error"] == "idempotency_outcome_unknown"
+    relay.assert_not_awaited()
 
 
 async def test_kv_fallback_still_completes_reserve_and_release(money_db, monkeypatch):

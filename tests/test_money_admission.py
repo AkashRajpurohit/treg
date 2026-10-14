@@ -157,6 +157,7 @@ async def test_non_reserve_waits_and_all_kv_failures_keep_fallback(gate, monkeyp
     assert row["operation"] == operation
     assert row["mode"] == "fallback" and row["fallback_" + reason] == 1
     assert row["failed"] == 0
+    assert row["rejected"] == 0
 
 
 @pytest.mark.parametrize("phase", ["local", "redis"])
@@ -183,8 +184,9 @@ async def test_reserve_timeout_uses_configured_wait_and_cleans_partial_gates(gat
         else:
             assert not store.calls
         [row] = completed()
-        assert row["mode"] == "redis" and row["fallback_wait_timeout"] == 1
-        assert row["failed"] == 1 and row["execution_total_ms"] == 0
+        assert row["mode"] == "redis" and row["rejected"] == 1
+        assert row["failed"] == row["cancelled"] == row["fallback_wait_timeout"] == 0
+        assert row["execution_total_ms"] == 0
         assert row["waiting"] == row["active"] == row["active_peak"] == 0
     finally:
         if phase == "local":
@@ -242,6 +244,7 @@ async def test_cancellation_during_reserve_timeout_joins_partial_cleanup(gate, m
         assert not admission._local_lock(9).locked()
         [row] = completed()
         assert row["cancelled"] == 1 and row["active_peak"] == 0
+        assert row["rejected"] == row["fallback_wait_timeout"] == 0
     finally:
         finish_release.set()
         if not task.done():
@@ -340,6 +343,7 @@ async def test_timeout_in_admitted_reserve_body_is_not_an_admission_rejection(ga
     [row] = completed()
     assert row["mode"] == "redis" and row["fallback_wait_timeout"] == 0
     assert row["failed"] == 1 and row["active_peak"] == 1
+    assert row["rejected"] == 0
     assert not gate[1].values
 
 

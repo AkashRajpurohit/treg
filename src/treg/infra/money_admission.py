@@ -44,6 +44,7 @@ _opened = _clock()
 class _Window:
     completed: int = 0
     failed: int = 0
+    rejected: int = 0
     cancelled: int = 0
     wait_total_ms: float = 0.0
     wait_max_ms: float = 0.0
@@ -119,7 +120,9 @@ class _Observation:
             with _metrics_lock:
                 row = _windows.setdefault((self.operation, self.mode), _Window())
                 row.completed += 1
-                row.failed += exc is not None
+                rejected = isinstance(exc, ReserveAdmissionTimeout)
+                row.rejected += rejected
+                row.failed += exc is not None and not rejected
                 row.cancelled += isinstance(exc, asyncio.CancelledError)
                 for name, value in (("wait", wait_ms), ("execution", execution_ms),
                                     ("total", total_ms)):
@@ -340,11 +343,13 @@ async def admit(org_ids: Iterable[int | None], *, operation: str) -> AsyncIterat
                     observation.kv_errors += 1
                     reason = "gate_error"
                 if reason:
-                    observation.reason = reason
+                    reject = operation == "reserve" and reason == "wait_timeout"
+                    if not reject:
+                        observation.reason = reason
                     mode = "fallback"
                     await _release_safely(gate)
                     gate = None
-                    if operation == "reserve" and reason == "wait_timeout":
+                    if reject:
                         # Cleanup precedes rejection; never yield into a reserve DB session.
                         raise ReserveAdmissionTimeout("wait_timeout")
                 else:
@@ -388,7 +393,7 @@ def snapshot() -> list[dict]:
             "operation": operation, "mode": mode, "process_instance": PROCESS_INSTANCE,
             "window_s": round(elapsed, 3),
             **{name: round(getattr(window, name), 3) for name in (
-                "completed", "failed", "cancelled", "wait_total_ms", "wait_max_ms",
+                "completed", "failed", "rejected", "cancelled", "wait_total_ms", "wait_max_ms",
                 "execution_total_ms", "execution_max_ms", "total_total_ms", "total_max_ms",
                 "waiting_peak", "active_peak", "lease_lost", "deadline_expired", "kv_errors")},
             **current.get((operation, mode), {"waiting": 0, "active": 0}),

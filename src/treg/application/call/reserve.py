@@ -1,6 +1,7 @@
 """Reservation and spend-cap helpers for metered calls."""
 
 import logging
+import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -37,10 +38,19 @@ async def reserve_admission(org_id: int) -> AsyncIterator[None]:
         ):
             yield
     except money_admission.ReserveAdmissionTimeout as exc:
+        # Share the org limiter's retry floor, with integer-second jitter for Retry-After.
+        retry_base_s = get_settings().org_concurrency_retry_after_s
+        retry_after_s = random.randint(retry_base_s, 2 * retry_base_s)
+        try:
+            logging.getLogger("treg.money_admission").warning(
+                "money_admission_rejected operation=reserve org_id=%s reason=wait_timeout retry_after_s=%s",
+                org_id, retry_after_s)
+        except Exception:  # noqa: BLE001 - diagnostics cannot change the refusal
+            pass
         raise ReservationFailed("money_admission_timeout", status_code=429, detail={
             "error": "money_admission_timeout",
             "message": "the team's money queue is busy; retry shortly. Nothing was reserved or charged.",
-        }, retry_after_s=1) from exc
+        }, retry_after_s=retry_after_s) from exc
 
 
 async def _enforce_trial_allowance(caller: Caller, provider: str, endpoint_id: str,

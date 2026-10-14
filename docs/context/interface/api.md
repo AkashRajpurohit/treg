@@ -249,8 +249,12 @@ and separately mapped `blame`; the compatibility header remains the literal `1`.
 
 When enabled money admission exhausts its configured reserve wait, `reserve_admission` refuses
 before the funds transaction with HTTP 429, `detail.error: money_admission_timeout`, blame `treg`
-and `Retry-After: 1`. No hold is created and no upstream request starts for that attempt. Both
+and `Retry-After` with integer-second jitter from `org_concurrency_retry_after_s` through twice
+that value (inclusive). No hold is created and no upstream request starts for that attempt. Both
 MCP surfaces preserve the underlying status and expose the retry header as `retry_after`.
+The 429 is not stored under `Idempotency-Key`: normal error cleanup releases its pending claim,
+so the same key can retry. A database failure during that cleanup can still strand the pending
+claim under the existing 409/410 recovery behavior (see money.md, "Idempotency and retries").
 
 `routers.auth_helpers.require_managed_cli` also sets `X-Treg-Error: 1` on its HTTP 426
 update response. Released CLIs therefore identify this as a treg refusal instead of a provider

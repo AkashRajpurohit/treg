@@ -662,11 +662,13 @@ These observations remain best effort through the existing bounded analytics que
 org list on `close`, `deferred`, `async`, or `hub` still skips the observation. `reserve` and
 `release` with an empty or invalid org raise `AdmissionRefused` before a session and do not record
 a fallback row. `fallback_*` counts in mode `fallback` are degradation: the body still ran on the
-database path. A reserve acquisition timeout instead records `failed=1` in mode `redis`, with
-zero execution time and no active scope. Its existing `fallback_wait_timeout` counter records the
-exhausted budget despite the legacy field name; the body did not run. Release and settlement
-timeouts still record mode `fallback`. A Redis lease serializes admitted same-org balance work;
-reserve timeout rejection keeps those expired waiters out of the funds transaction.
+database path. A reserve acquisition timeout instead records `rejected=1` in mode `redis`, with
+`failed=0`, zero execution time and no active scope or fallback count. Cancellation during its
+cleanup remains a cancellation, not a rejection or fallback. `reserve_admission` also emits one
+best-effort `money_admission_rejected` WARNING per refusal with the numeric `org_id`, operation,
+reason and jittered `retry_after_s`; org IDs remain out of aggregate dimensions. Release and
+settlement timeouts still record mode `fallback`. A Redis lease serializes admitted same-org
+balance work; reserve timeout rejection keeps those expired waiters out of the funds transaction.
 
 `money_admission_reporting.emit_snapshot` writes one local JSON record and queues one PostHog event
 per populated operation/mode, through the existing web minute timer and final partial window.

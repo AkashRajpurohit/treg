@@ -346,8 +346,10 @@ and `release`, and does not yield into the body. That refusal is not a fallback 
 429. For `reserve` only, expiry of the configured acquisition budget releases partial local
 locks and token-owned Redis leases, then raises `ReserveAdmissionTimeout` without entering the
 session. `application.call.reserve.reserve_admission` maps it to `ReservationFailed` with kind
-`money_admission_timeout`, blame `treg`, HTTP 429 and `Retry-After: 1`. Both platform reserves and
-Hub seller-price reserves use that mapping; no hold or upstream call starts on rejection. HTTP
+`money_admission_timeout`, blame `treg`, and HTTP 429. `Retry-After` is a random integer between
+`org_concurrency_retry_after_s` and twice that setting (inclusive), sharing the org limiter's
+retry floor while spreading retries. Both platform and Hub seller-price reserves use that
+mapping; no hold or upstream call starts on rejection. HTTP
 retains `X-Treg-Error: 1`; both MCP surfaces expose the status, body and `retry_after` metadata.
 
 The feature defaults off; `money_admission_org_ids` selects an opt-in subset, or all orgs when
@@ -968,6 +970,13 @@ still pay the provider twice.
   original reservation there.
 - Refusal and cancellation cleanup return an acquired label. Expired entries are swept lazily,
   scoped to the caller, at claim time.
+
+A reserve admission 429 never reaches `_store_idempotent`; the HTTP exception handler's
+`_stamp_call_exit` releases its pending claim, including calls from either MCP surface. The same
+key can then acquire admission and run; only its subsequent success is replayed. Cleanup still
+needs the database and retries a pool timeout once. If both attempts fail, the row remains pending
+(409 on retry), then the existing stale-claim resolver stores 410 `idempotency_outcome_unknown`
+when no money evidence exists. That is a cleanup failure, not a cached admission 429.
 
 This protects retries that opt in. Ordinary non-billable failures already release their hold;
 a retry without a label after a paid success remains a new charge.

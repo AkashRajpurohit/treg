@@ -149,8 +149,9 @@ maker knows what one run costs), else $1.00 (price plus steps, counting what is 
 
 The seller-price reserve uses `reserve_admission`, just like a metered catalog reserve. When its
 configured money admission wait expires, it returns 429 `money_admission_timeout` with
-`Retry-After: 1` before opening the price hold or starting any steps. Redis infrastructure errors
-retain the existing database fallback; seller-price settlement and release are unchanged.
+the same jittered `Retry-After` as catalog reserves before opening the price hold or starting any
+steps. Redis infrastructure errors retain the existing database fallback; seller-price settlement
+and release are unchanged.
 
 Each unit is one `execute_call` under the child hold `{run}:s{n}` (`{run}:s{n}.{i}` for an
 item): the same gates, the same key injection, the same reserve-and-settle as a direct call.
