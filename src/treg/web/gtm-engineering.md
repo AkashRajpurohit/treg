@@ -1,6 +1,6 @@
 # The GTM engineering playbook (2026), with Claude Code and AI agents
 
-Updated 14 Oct 2026. Updated 8 Oct 2026 with three new studies (chapters 8, 9 and 10). The page: {BASE}/gtm-engineering
+Updated 14 Oct 2026; three new studies added 8 Oct 2026 (chapters 8, 9 and 10). The page: {BASE}/gtm-engineering
 
 Sixteen chapters, from defining your ICP to rolling automation out safely. Each starts from a problem GTM
 engineers post about on Reddit and LinkedIn, then gives the play, a prompt to run in your agent, and the rule
@@ -12,7 +12,7 @@ Set up once, in Claude Code, Codex or Cursor: `set up treg - {BASE}/llms.txt`
 
 ## What is GTM engineering?
 
-GTM engineering is the practice of turning a company's go-to-market playbook into systems that run every week: the ICP written as filters, lead lists built and enriched, buying signals that say who to contact now, research behind every first line, and routing for inbound leads, with a person approving what goes out. A GTM engineer owns those systems. The role grew out of RevOps and sales ops, and in 2026 more of the work runs from an agent such as Claude Code or Codex instead of a visual table.
+GTM engineering is the practice of designing, building and maintaining systems that help sales and marketing teams turn their go-to-market strategy into repeatable workflows. Examples include account targeting, lead enrichment, scoring, signal monitoring, research and inbound routing. A GTM engineer connects data and tools, tests the workflows and measures their effect on pipeline. The work often overlaps with RevOps, sales ops and engineering. This playbook shows how to build those workflows with Claude Code or Codex, with human review before outbound messages are sent.
 
 ## Where to start (symptoms and chapters)
 
