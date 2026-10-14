@@ -54,6 +54,7 @@ sources:
   - src/treg/alembic/versions/0066_endpointdaystat_verdicts.py
   - src/treg/alembic/versions/0070_api_key_spend_rollup.py
   - src/treg/alembic/versions/0072_callrecord_call_ref_index.py
+  - src/treg/alembic/versions/0073_ad_click_stash.py
   - src/treg/timeutil.py
   - src/treg/infra/db.py
   - src/treg/infra/money_timing.py
@@ -956,3 +957,11 @@ the index. PostgreSQL uses `CREATE INDEX CONCURRENTLY` in this separate revision
 transactions commit. It retains valid indexes, rebuilds invalid debris from an interrupted build,
 and restores the normal migration timeouts. SQLite creates the same partial indexes normally.
 The PostgreSQL build still scans each table and uses I/O; no production build duration is claimed.
+
+## Email-to-click attribution stash
+
+`AdClickStash` (additive revision `0073`) is owned by `application.signup.stash_ad_click`.
+Its email primary key supplies uniqueness and indexed lookup; `raw_cookie` stores the encoded,
+length-capped click fields, and `created_at`/`updated_at` use naive UTC. Authentication routes
+submit successful email observations; cookie-less signup uses observations from the last 90 days.
+No cleanup job or analytics/audit emission is involved. See [ads conversions](ads-conversions.md).

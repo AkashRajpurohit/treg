@@ -1,7 +1,8 @@
 """Identity provisioning and first-team creation use cases."""
 
 import logging
-from urllib.parse import unquote
+from datetime import timedelta
+from urllib.parse import quote, unquote
 
 from sqlalchemy import inspect as sa_inspect, update
 from sqlalchemy.exc import IntegrityError
@@ -16,7 +17,7 @@ from ..domain.governance.teams import _make_org_membership, _slugify, reserved_r
 from ..domain.identity.access import _email_domain, _is_blocked_email, _is_machine_email, _norm_email
 from ..domain.identity.promotions import claim_signup_promo, promo_inbox, signup_promo_email
 from ..infra.db import session_maker
-from ..models import Membership, Org, User
+from ..models import AdClickStash, Membership, Org, User
 from ..timeutil import utcnow_naive as _utcnow_naive
 
 
@@ -195,7 +196,11 @@ def _ad_attribution_from(raw_cookie: str) -> tuple[str, str, str]:
         return "", "", ""
     if not raw_cookie:
         return "", "", ""
-    first, separator, rest = unquote(raw_cookie).partition("|")
+    decoded = unquote(raw_cookie)
+    parts = decoded.split("|")
+    if len(parts) not in (2, 3) or (len(parts) == 3 and parts[0] not in ("gclid", "gbraid", "wbraid")):
+        return "", "", ""
+    first, separator, rest = decoded.partition("|")
     if separator and first in ("gclid", "gbraid", "wbraid"):
         click_id, _, landing = rest.partition("|")
         click_field = first
@@ -203,6 +208,42 @@ def _ad_attribution_from(raw_cookie: str) -> tuple[str, str, str]:
         # Old cookies were `CLICK_ID|landing` and always held a GCLID.
         click_field, click_id, landing = "gclid", first, rest
     return click_field, click_id.strip()[:255], landing.strip()[:64]
+
+
+async def stash_ad_click(email: str, raw_cookie: str) -> None:
+    """Remember an observed click for this email; never log this first-party association."""
+    try:
+        kind, click_id, landing = _ad_attribution_from(raw_cookie)
+        if not click_id:
+            return
+        async with session_maker() as db:
+            if db.bind.dialect.name == "postgresql":
+                from sqlalchemy.dialects.postgresql import insert
+            else:
+                from sqlalchemy.dialects.sqlite import insert
+            now = _utcnow_naive()
+            stmt = insert(AdClickStash).values(
+                email=email.strip().lower(), raw_cookie=quote(f"{kind}|{click_id}|{landing}", safe=""),
+                created_at=now, updated_at=now,
+            )
+            await db.execute(stmt.on_conflict_do_update(
+                index_elements=["email"],
+                set_={"raw_cookie": stmt.excluded.raw_cookie, "updated_at": now},
+                where=AdClickStash.updated_at <= now,
+            ))
+            await db.commit()
+    except Exception:
+        # Exception text can contain SQL parameters (email and click id), so omit it too.
+        logging.getLogger("treg").warning("ad click stash failed; sign-in continues")
+
+
+async def _ad_cookie_for(db: AsyncSession, email: str, raw_cookie: str) -> str:
+    if raw_cookie or not adsconv.enabled():
+        return raw_cookie
+    stash = await db.get(AdClickStash, email.strip().lower())
+    if stash is not None and stash.updated_at >= _utcnow_naive() - timedelta(days=90):
+        return stash.raw_cookie
+    return ""
 
 
 _UTM_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_referrer")
@@ -280,7 +321,8 @@ async def register_user(
         org, token = await _make_org_membership(
             db, user, name=email, slug_base=base, role="owner", webhook_url=webhook_url,
         )
-        click_field, gclid, landing = _ad_attribution_from(ad_cookie)
+        click_field, gclid, landing = _ad_attribution_from(
+            await _ad_cookie_for(db, user.email, ad_cookie))
         if gclid:
             org.ad_gclid = gclid
             org.ad_click_id_type = click_field
@@ -321,7 +363,8 @@ async def create_org(
             raise SignupError("blocked_domain")
         if not user.is_superadmin and reserved_reason(name, reserved_team_names()):
             raise SignupError("reserved_name")
-        click_field, gclid, landing = _ad_attribution_from(ad_cookie)
+        click_field, gclid, landing = _ad_attribution_from(
+            await _ad_cookie_for(db, user.email, ad_cookie))
         # A browser sign-in reaches this door instead of /users, so both doors must read attribution.
         for _ in range(3):  # a concurrent create can claim the slug before commit; retry a fresh lookup
             org, token = await _make_org_membership(

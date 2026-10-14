@@ -112,8 +112,10 @@ async def auth_email_start(
     brute-force counter at will. All this state is in the DB (survives restart, correct multi-instance)."""
     require_managed_cli(request)
     try:
-        return await auth_use_cases.start_email_login(
+        result = await auth_use_cases.start_email_login(
             body.email, _client_ip(request), captcha_token=body.captcha_token, client=_client(request))
+        await signup.stash_ad_click(body.email, request.cookies.get("treg_ad", ""))
+        return result
     except auth_use_cases.EmailAuthError as exc:
         raise _email_http_error(exc, _client(request)) from exc
 
@@ -131,6 +133,7 @@ async def auth_email_verify(
             entry_surface=request.cookies.get("treg_entry_surface", ""), client=_client(request))
     except auth_use_cases.EmailAuthError as exc:
         raise _email_http_error(exc) from exc
+    await signup.stash_ad_click(verified.email, request.cookies.get("treg_ad", ""))
     resp = JSONResponse({"token": verified.token, "email": verified.email})
     resp.headers["Cache-Control"] = "no-store"
     resp.set_cookie(sess.COOKIE, verified.session_cookie, httponly=True,
@@ -184,7 +187,7 @@ _AUTH_HEAD = (
     ".pbtn{display:inline-block;background:linear-gradient(180deg,#fdfcf7,#eae7de);color:#1c1b19;border:0;"
     "border-radius:999px;padding:12px 24px;font:500 14px var(--mono);cursor:pointer;"
     "box-shadow:rgba(178,168,165,.2) -1.3px -1.3px 2.5px 0, rgba(0,0,0,.4) 2px 2px 1.5px 0}"
-    "</style></head>"
+    '</style><script src="/adtrack.js" defer></script></head>'
 )
 
 
@@ -329,6 +332,7 @@ async def auth_github_callback(
         return _social_login_failure(auth_use_cases.SocialLoginError("callback_failed"))
     except auth_use_cases.SocialLoginError as exc:
         return _social_login_failure(exc)
+    await signup.stash_ad_click(proof.user.email, request.cookies.get("treg_ad", ""))
     return _finish_oauth_login(request, proof.user, proof.cli_state)
 
 
@@ -363,6 +367,7 @@ async def auth_google_callback(
         return _social_login_failure(auth_use_cases.SocialLoginError("callback_failed"))
     except auth_use_cases.SocialLoginError as exc:
         return _social_login_failure(exc)
+    await signup.stash_ad_click(proof.user.email, request.cookies.get("treg_ad", ""))
     return _finish_oauth_login(request, proof.user, proof.cli_state)
 
 
@@ -458,12 +463,13 @@ async def auth_cli_approve(
 
 
 @app.get("/login", include_in_schema=False)
-async def login_page(cli: str = "", treg_session: str = Cookie(default="")):
+async def login_page(request: Request, cli: str = "", treg_session: str = Cookie(default="")):
     """The universal sign-in page `treg login` opens: reuses an existing dashboard session with one
     click ("Continue as …"), else offers every configured door — GitHub, Google, email one-time code.
     The email door is always present, so login works even with no OAuth app configured."""
     if not cli:
-        return RedirectResponse("/app", status_code=302)  # a bare visit belongs on the dashboard
+        return RedirectResponse("/app" + ("?" + request.url.query if request.url.query else ""),
+                                status_code=302)  # preserve incoming attribution for the SPA
     if not _LOGIN_ID_RE.fullmatch(cli):
         return _auth_page("Login failed", "Bad login link. Run <code>treg login</code> again.", ok=False, status=400)
     s = get_settings()
