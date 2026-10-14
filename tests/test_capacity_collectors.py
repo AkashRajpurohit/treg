@@ -703,11 +703,11 @@ def test_every_platform_key_has_a_balance_decision():
     """A new platform-key slot ships with a collector or a recorded reason there is none, so no
     provider's balance goes unwatched without anyone deciding it. Names are slot spellings
     (`fiber_ai`, not `fiber-ai`); a hyphenated entry would never match a sweep row."""
-    slots = set(collectors.all_platform_providers())
+    slots = set(policy.policy_population())
     decided = set(collectors.BALANCE_ROUTES) | set(collectors.NO_BALANCE_API)
     assert not slots - decided, (
         f"add a collector to BALANCE_ROUTES or a reason to NO_BALANCE_API for: {sorted(slots - decided)}")
-    assert not decided - slots, f"entries with no platform-key slot: {sorted(decided - slots)}"
+    assert not decided - slots, f"entries with no capacity credential slot: {sorted(decided - slots)}"
 
 
 @pytest.mark.parametrize(
@@ -935,3 +935,78 @@ async def test_documented_balance_collectors(collector, payload, value, unit):
 async def test_documented_balance_collectors_reject_missing_or_negative(collector, payload):
     with pytest.raises(ValueError):
         await _serve_json(collector, payload)
+
+
+@pytest.mark.parametrize('provider,path,payload,expected,unit', [
+    ('aviato', '/billing/balance', {'balance': 1250.5, 'lastTopupBalance': 2000}, 1250.5, 'credits'),
+    ('justoneapi', '/user/get-balance', {'code': 0, 'data': {
+        'availableBalance': 40.25, 'ledgerBalance': 50, 'reservedAmount': 9.75, 'currency': 'CNY'}}, 40.25, 'CNY'),
+    ('openrouter', '/api/v1/credits', {'data': {'total_credits': 100, 'total_usage': 27.5}}, 72.5, 'USD'),
+    ('openrouter', '/api/v1/credits', {'data': {'total_credits': 10, 'total_usage': 12}}, -2, 'USD'),
+    ('overflow:monid', '/v1/wallet/balance', {'balance': {'value': 12.34, 'currency': 'USD'}}, 12.34, 'USD'),
+    ('overflow:orthogonal', '/v1/credits/balance', {'balance': '$12.25'}, 12.25, 'USD'),
+])
+async def test_new_capacity_routes_use_existing_credentials(monkeypatch, provider, path, payload, expected, unit):
+    variable = ('TREG_OVERFLOW_KEY_' + provider.split(':')[1].upper() if provider.startswith('overflow:')
+                else 'TREG_PLATFORM_KEY_' + provider.upper())
+    monkeypatch.setenv(variable, 'test-balance-credential')
+    collectors.get_settings.cache_clear()
+
+    def probe(request):
+        assert request.method == 'GET' and request.url.path == path
+        if provider == 'justoneapi':
+            assert request.url.params['token'] == 'test-balance-credential'
+        else:
+            assert request.headers['authorization'] == 'Bearer test-balance-credential'
+        return httpx.Response(200, json=payload)
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(probe)) as client:
+            row = await collectors.provider_balance(provider, client)
+    finally:
+        collectors.get_settings.cache_clear()
+    assert row['value'] == expected and row['unit'] == unit
+    assert sweep.snapshot_from(provider, row).confidence == 'exact'
+
+
+@pytest.mark.parametrize('provider,payload', [
+    ('aviato', {}), ('aviato', {'balance': True}), ('aviato', {'balance': -1}),
+    ('aviato', {'balance': 'Infinity'}), ('aviato', {'balance': 'NaN'}),
+    ('justoneapi', {'code': 601, 'data': {'availableBalance': 0, 'currency': 'USD'}}),
+    ('justoneapi', {'code': 0, 'data': {'ledgerBalance': 50, 'currency': 'USD'}}),
+    ('justoneapi', {'code': 0, 'data': {'availableBalance': 50}}),
+    ('openrouter', {'data': {'total_credits': 10}}),
+    ('openrouter', {'data': {'total_credits': 10, 'total_usage': True}}),
+    ('overflow:monid', {'balance': {'value': 10, 'currency': 'EUR'}}),
+    ('overflow:monid', {'balance': {'value': None, 'currency': 'USD'}}),
+    ('overflow:orthogonal', {'balance': '12.25'}),
+    ('overflow:orthogonal', {'balance': '$NaN'}),
+    ('overflow:orthogonal', {'balance': '$-10'}),
+])
+async def test_new_capacity_routes_reject_uncertain_balance(provider, payload):
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json=payload))) as client:
+        with pytest.raises(ValueError):
+            await collectors.BALANCE_ROUTES[provider](client, 'test')
+
+
+@pytest.mark.parametrize('failure', ['http', 'timeout'])
+async def test_justoneapi_query_credential_never_reaches_failed_snapshot(monkeypatch, failure):
+    credential = 'private-balance-credential'
+    monkeypatch.setenv('TREG_PLATFORM_KEY_JUSTONEAPI', credential)
+    collectors.get_settings.cache_clear()
+
+    def probe(request):
+        if failure == 'timeout':
+            raise httpx.ReadTimeout(f'upstream error echoed {credential}', request=request)
+        return httpx.Response(401, json={'message': credential})
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(probe)) as client:
+            row = await collectors.provider_balance('justoneapi', client)
+    finally:
+        collectors.get_settings.cache_clear()
+    snap = sweep.snapshot_from('justoneapi', row)
+    assert row['value'] is None and snap.confidence == 'stale'
+    assert credential not in str(row) and credential not in snap.error
+    assert 'token=' not in snap.error
