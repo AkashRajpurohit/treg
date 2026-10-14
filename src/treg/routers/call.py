@@ -352,7 +352,8 @@ async def run_call_surface(rest: str, request: Request, caller: Caller, *, prefi
     rest)` runs inside the same try, so a fault there is audited and released like any other.
     `headers`, when given, replaces the request's raw headers for the upstream call (`/table/` asks
     the provider for uncompressed bytes); `/call/` never passes it."""
-    org_traffic.identify(request.scope, caller.org_id, enter=True)
+    org_traffic.identify(request.scope, caller.org_id, enter=True,
+                         api_key_id=caller.api_key.id if caller.api_key else None)
     # Identity for the refusal fallback in `_mark_treg_own_errors`: a raise anywhere below (unknown
     # tool, deny rule, daily cap) leaves this handler without an audit row, and the exception handler
     # is the one place every such refusal passes through — but it has no Caller of its own.
@@ -444,7 +445,8 @@ async def call_catalog_endpoint(
     caller: Caller = Depends(require_member),
 ):
     """Call one catalog endpoint through the same policy, billing, audit, and relay path as /call."""
-    org_traffic.identify(request.scope, caller.org_id)
+    org_traffic.identify(request.scope, caller.org_id,
+                         api_key_id=caller.api_key.id if caller.api_key else None)
     if not get_settings().claude_connector_enabled:
         raise HTTPException(status_code=404, detail="Claude catalog connector is not enabled")
     request.state.catalog_only = True
