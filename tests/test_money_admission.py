@@ -100,12 +100,13 @@ def completed():
     return [row for row in admission.snapshot() if row["completed"]]
 
 
-async def test_disabled_baseline_never_contacts_kv_or_locks(gate, monkeypatch):
+@pytest.mark.parametrize("operation", ["close", "reserve"])
+async def test_disabled_baseline_never_contacts_kv_or_locks(gate, monkeypatch, operation):
     settings, store = gate
     settings.money_admission_enabled = False
     monkeypatch.setattr(admission, "_local_lock", lambda _: pytest.fail("must not queue"))
     monkeypatch.setattr(kv, "configured", lambda: pytest.fail("must not contact store"))
-    async with admission.admit([7], operation="close"):
+    async with admission.admit([7], operation=operation):
         pass
     [row] = completed()
     assert row["mode"] == "disabled" and row["completed"] == 1
@@ -132,9 +133,13 @@ async def test_balance_ops_refuse_missing_identity_before_the_body(gate, operati
         admission.require_balance_orgs(orgs)
 
 
-@pytest.mark.parametrize("operation", ["reserve", "release"])
-@pytest.mark.parametrize("reason", ["kv_not_configured", "kv_unavailable", "wait_timeout"])
-async def test_balance_ops_keep_existing_wait_and_kv_fallback(gate, monkeypatch, operation, reason):
+@pytest.mark.parametrize("operation,reason", [
+    (operation, reason)
+    for operation in ("reserve", "release", "close", "deferred", "async", "hub")
+    for reason in ("kv_not_configured", "kv_unavailable", "wait_timeout")
+    if (operation, reason) != ("reserve", "wait_timeout")
+])
+async def test_non_reserve_waits_and_all_kv_failures_keep_fallback(gate, monkeypatch, operation, reason):
     settings, store = gate
     if reason == "kv_not_configured":
         monkeypatch.setattr(kv, "configured", lambda: False)
@@ -152,6 +157,99 @@ async def test_balance_ops_keep_existing_wait_and_kv_fallback(gate, monkeypatch,
     assert row["operation"] == operation
     assert row["mode"] == "fallback" and row["fallback_" + reason] == 1
     assert row["failed"] == 0
+    assert row["rejected"] == 0
+
+
+@pytest.mark.parametrize("phase", ["local", "redis"])
+@pytest.mark.parametrize("wait_s", [0.01, 0.03])
+async def test_reserve_timeout_uses_configured_wait_and_cleans_partial_gates(gate, phase, wait_s):
+    settings, store = gate
+    settings.money_admission_wait_s = wait_s
+    lock = admission._local_lock(9)
+    if phase == "local":
+        await lock.acquire()
+    else:
+        store.values["money-admission:org:9"] = ("another-owner", time.monotonic() + 10)
+    started = time.monotonic()
+    try:
+        with pytest.raises(admission.ReserveAdmissionTimeout, match="wait_timeout"):
+            async with admission.admit([3, 9], operation="reserve"):
+                pytest.fail("a timed-out reserve must not enter its money session")
+        assert time.monotonic() - started >= wait_s
+        assert not admission._local_lock(3).locked()
+        assert lock.locked() == (phase == "local")
+        if phase == "redis":
+            assert list(store.values) == ["money-admission:org:9"]
+            assert store.values["money-admission:org:9"][0] == "another-owner"
+        else:
+            assert not store.calls
+        [row] = completed()
+        assert row["mode"] == "redis" and row["rejected"] == 1
+        assert row["failed"] == row["cancelled"] == row["fallback_wait_timeout"] == 0
+        assert row["execution_total_ms"] == 0
+        assert row["waiting"] == row["active"] == row["active_peak"] == 0
+    finally:
+        if phase == "local":
+            lock.release()
+
+
+async def test_reserve_timeout_cleans_an_acquired_lease_with_an_unobserved_reply(gate, monkeypatch):
+    settings, store = gate
+    settings.money_admission_wait_s = 0.02
+    original = store.acquire_lease
+
+    async def uncertain(*args):
+        await original(*args)
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(store, "acquire_lease", uncertain)
+    with pytest.raises(admission.ReserveAdmissionTimeout):
+        async with admission.admit([7], operation="reserve"):
+            pytest.fail("unconfirmed acquisition must not enter")
+    assert not store.values
+    assert not admission._local_lock(7).locked()
+
+
+async def test_cancellation_during_reserve_timeout_joins_partial_cleanup(gate, monkeypatch):
+    settings, store = gate
+    settings.money_admission_wait_s = 0.01
+    store.values["money-admission:org:9"] = ("another-owner", time.monotonic() + 10)
+    releasing, finish_release = asyncio.Event(), asyncio.Event()
+    original = store.release_lease
+
+    async def release(*args):
+        releasing.set()
+        await finish_release.wait()
+        return await original(*args)
+
+    monkeypatch.setattr(store, "release_lease", release)
+
+    async def work():
+        async with admission.admit([3, 9], operation="reserve"):
+            pytest.fail("cancelled reserve must not enter")
+
+    task = asyncio.create_task(work())
+    try:
+        await asyncio.wait_for(releasing.wait(), 2)
+        for _ in range(2):
+            task.cancel()
+            await asyncio.sleep(0)
+        assert not task.done() and admission._local_lock(3).locked()
+        finish_release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 2)
+        assert list(store.values) == ["money-admission:org:9"]
+        assert store.values["money-admission:org:9"][0] == "another-owner"
+        assert not admission._local_lock(3).locked()
+        assert not admission._local_lock(9).locked()
+        [row] = completed()
+        assert row["cancelled"] == 1 and row["active_peak"] == 0
+        assert row["rejected"] == row["fallback_wait_timeout"] == 0
+    finally:
+        finish_release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_reserve_and_release_share_one_org_lease(gate):
@@ -225,16 +323,28 @@ async def test_org_order_is_sorted_deduplicated_and_idle_locks_are_reclaimed(gat
     assert not store.values
 
 
-async def test_allowlist_only_gates_selected_orgs(gate):
+@pytest.mark.parametrize("operation", ["close", "reserve"])
+async def test_allowlist_only_gates_selected_orgs(gate, operation):
     settings, store = gate
     settings.money_admission_org_ids = [7]
-    async with admission.admit([8], operation="close"):
+    async with admission.admit([8], operation=operation):
         pass
     async with admission.admit([8, 7], operation="deferred"):
         assert list(store.values) == ["money-admission:org:7"]
     rows = completed()
     assert {(row["operation"], row["mode"]) for row in rows} == {
-        ("close", "disabled"), ("deferred", "redis")}
+        (operation, "disabled"), ("deferred", "redis")}
+
+
+async def test_timeout_in_admitted_reserve_body_is_not_an_admission_rejection(gate):
+    with pytest.raises(TimeoutError, match="transaction timeout"):
+        async with admission.admit([7], operation="reserve"):
+            raise TimeoutError("transaction timeout")
+    [row] = completed()
+    assert row["mode"] == "redis" and row["fallback_wait_timeout"] == 0
+    assert row["failed"] == 1 and row["active_peak"] == 1
+    assert row["rejected"] == 0
+    assert not gate[1].values
 
 
 async def test_unknown_identity_falls_back_as_a_whole_without_locking_known_org(gate):
@@ -276,10 +386,11 @@ async def test_total_deadline_covers_multi_org_wait_and_releases_partial_leases(
     assert store.values["money-admission:org:9"][0] == "another-owner"
 
 
-async def test_cancelled_local_waiter_does_not_enter_or_leak(gate):
-    async with admission.admit([7], operation="close"):
+@pytest.mark.parametrize("operation", ["close", "reserve"])
+async def test_cancelled_local_waiter_does_not_enter_or_leak(gate, operation):
+    async with admission.admit([7], operation=operation):
         async def waiting():
-            async with admission.admit([7], operation="close"):
+            async with admission.admit([7], operation=operation):
                 pytest.fail("cancelled waiter must not enter")
         task = asyncio.create_task(waiting())
         await asyncio.sleep(0)
@@ -292,7 +403,8 @@ async def test_cancelled_local_waiter_does_not_enter_or_leak(gate):
     assert row["completed"] == 2 and row["cancelled"] == 1 and row["waiting"] == 0
 
 
-async def test_cancel_during_set_cleans_lease_even_if_response_was_not_observed(gate, monkeypatch):
+@pytest.mark.parametrize("operation", ["close", "reserve"])
+async def test_cancel_during_set_cleans_lease_even_if_response_was_not_observed(gate, monkeypatch, operation):
     _, store = gate
     acquired = asyncio.Event()
     original = store.acquire_lease
@@ -304,7 +416,7 @@ async def test_cancel_during_set_cleans_lease_even_if_response_was_not_observed(
 
     monkeypatch.setattr(store, "acquire_lease", uncertain)
     async def work():
-        async with admission.admit([7], operation="close"):
+        async with admission.admit([7], operation=operation):
             pytest.fail("cancelled acquisition")
     task = asyncio.create_task(work())
     await acquired.wait()
@@ -656,11 +768,13 @@ async def test_redis_outage_during_renewal_does_not_interrupt_the_transaction(ga
     assert not admission._local_lock(7).locked()
 
 
-async def test_unexpected_store_exception_also_falls_back(gate, monkeypatch):
+@pytest.mark.parametrize("operation", ["close", "reserve"])
+@pytest.mark.parametrize("error", [TimeoutError, RuntimeError])
+async def test_unexpected_store_exception_also_falls_back(gate, monkeypatch, operation, error):
     async def broken(*_):
-        raise RuntimeError("store failure")
+        raise error("store failure")
     monkeypatch.setattr(gate[1], "acquire_lease", broken)
-    async with admission.admit([7], operation="close"):
+    async with admission.admit([7], operation=operation):
         assert not admission._local_lock(7).locked()
     [row] = completed()
     assert row["mode"] == "fallback" and row["fallback_gate_error"] == 1

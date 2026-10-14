@@ -1,6 +1,9 @@
 """Reservation and spend-cap helpers for metered calls."""
 
 import logging
+import random
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from sqlalchemy import func
@@ -24,6 +27,30 @@ from ...models import CallRecord, Org, TagBudget
 from .intake import CallMeta, _NO_META
 from .resolve import MarketplaceCall
 from .types import ReservationFailed
+
+
+@asynccontextmanager
+async def reserve_admission(org_id: int) -> AsyncIterator[None]:
+    """Reject a contended reserve before its money session, after releasing partial gates."""
+    try:
+        async with money_admission.admit(
+            money_admission.require_balance_orgs([org_id]), operation="reserve",
+        ):
+            yield
+    except money_admission.ReserveAdmissionTimeout as exc:
+        # Share the org limiter's retry floor, with integer-second jitter for Retry-After.
+        retry_base_s = get_settings().org_concurrency_retry_after_s
+        retry_after_s = random.randint(retry_base_s, 2 * retry_base_s)
+        try:
+            logging.getLogger("treg.money_admission").warning(
+                "money_admission_rejected operation=reserve org_id=%s reason=wait_timeout retry_after_s=%s",
+                org_id, retry_after_s)
+        except Exception:  # noqa: BLE001 - diagnostics cannot change the refusal
+            pass
+        raise ReservationFailed("money_admission_timeout", status_code=429, detail={
+            "error": "money_admission_timeout",
+            "message": "the team's money queue is busy; retry shortly. Nothing was reserved or charged.",
+        }, retry_after_s=retry_after_s) from exc
 
 
 async def _enforce_trial_allowance(caller: Caller, provider: str, endpoint_id: str,
@@ -247,8 +274,7 @@ async def _platform_reserve(mk: MarketplaceCall, caller: Caller, meta: CallMeta 
             # Admit before checkout. The lease covers this session only, including the lazy
             # reaper's releases on the same org; upstream work happens after this returns.
             async with (
-                money_admission.admit(
-                    money_admission.require_balance_orgs([caller.org_id]), operation="reserve"),
+                reserve_admission(caller.org_id),
                 money_session(session_maker()) as db,
             ):
                 mark_money(db, "reserve", org_id=caller.org_id, call_id=call_ref)

@@ -343,15 +343,23 @@ their existing database behavior.
 `require_balance_orgs` refuses an empty, missing, or non-positive org before checkout on every
 application session that will touch a balance row. `admit` does the same for operations `reserve`
 and `release`, and does not yield into the body. That refusal is not a fallback and not an HTTP
-429. Wait timeouts and key-value failures still enter the original database path for every
-operation, including `reserve` and `release`.
+429. For `reserve` only, expiry of the configured acquisition budget releases partial local
+locks and token-owned Redis leases, then raises `ReserveAdmissionTimeout` without entering the
+session. `application.call.reserve.reserve_admission` maps it to `ReservationFailed` with kind
+`money_admission_timeout`, blame `treg`, and HTTP 429. `Retry-After` is a random integer between
+`org_concurrency_retry_after_s` and twice that setting (inclusive), sharing the org limiter's
+retry floor while spreading retries. Both platform and Hub seller-price reserves use that
+mapping; no hold or upstream call starts on rejection. HTTP
+retains `X-Treg-Error: 1`; both MCP surfaces expose the status, body and `retry_after` metadata.
 
 The feature defaults off; `money_admission_org_ids` selects an opt-in subset, or all orgs when
 empty and enabled. Non-selected operations supply the disabled timing baseline. Admission never
 replaces Hold claims, CreditBlock locks or transaction atomicity. For `close`, `deferred`, `async`,
 and `hub`, a missing identity, unavailable Redis, or expired acquisition budget releases any
-partially acquired gates and executes the original database path. `reserve` and `release` share the
-Redis and wait-budget fallback, but a missing identity refuses instead of executing that path.
+partially acquired gates and executes the original database path. `release` keeps that wait-budget
+fallback so financial cleanup still runs. Every operation, including `reserve`, retains fallback
+on Redis infrastructure errors, an unconfigured store or lease loss. A store-raised timeout is
+an infrastructure error, distinguished from expiry of the gate's own acquisition budget.
 Lost renewal does not cancel or restart a money transaction already in
 progress. These fallback paths preserve database correctness but give up admission isolation; they are
 counted separately and are not a successful rollout. Owner-checked renewal and deletion prevent an old lease holder from extending
@@ -962,6 +970,13 @@ still pay the provider twice.
   original reservation there.
 - Refusal and cancellation cleanup return an acquired label. Expired entries are swept lazily,
   scoped to the caller, at claim time.
+
+A reserve admission 429 never reaches `_store_idempotent`; the HTTP exception handler's
+`_stamp_call_exit` releases its pending claim, including calls from either MCP surface. The same
+key can then acquire admission and run; only its subsequent success is replayed. Cleanup still
+needs the database and retries a pool timeout once. If both attempts fail, the row remains pending
+(409 on retry), then the existing stale-claim resolver stores 410 `idempotency_outcome_unknown`
+when no money evidence exists. That is a cleanup failure, not a cached admission 429.
 
 This protects retries that opt in. Ordinary non-billable failures already release their hold;
 a retry without a label after a paid success remains a new charge.

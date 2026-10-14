@@ -38,6 +38,7 @@ from ...infra import money_admission
 from ...infra.money_session import money_session
 from ...models import HubRun, HubTool, Org
 from ..call.types import CallContext, CallFailure, CallInput, ResolutionFailed, UpstreamResponse
+from ..call.reserve import reserve_admission
 
 RUN_MAX_COST_HEADER = "X-Treg-Run-Max-Cost"
 DEFAULT_RUN_MAX_COST_MICRO = 1_000_000      # $1.00 for the whole run, seller price included later
@@ -410,8 +411,7 @@ async def _reserve_price(parent: CallContext, tool: HubTool, run_id: str, reserv
     if reserve_micro <= 0 or caller.org_id == tool.org_id:
         return 0  # no session and no balance row
     async with (
-        money_admission.admit(
-            money_admission.require_balance_orgs([caller.org_id]), operation="reserve"),
+        reserve_admission(caller.org_id),
         money_session(session_maker()) as s,
     ):
         try:
