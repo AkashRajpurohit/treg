@@ -70,7 +70,7 @@ test('a member with no daily cap reads as no limit, a cap can be set and cleared
     return route.fulfill(json({
       ready: true, history_from: '2026-09-11', from: '2026-09-12', to: '2026-10-11', stack: 'key',
       group: new URL(route.request().url()).searchParams.get('group') || 'day',
-      spent_micro: 1_500_000, charges: 4,
+      spent_micro: 1_504_321, charges: 4,
       series: [{ id: '7', name: 'Laptop · dev', spent_micro: 1_000_000, slot: 0 }, { id: 'none', name: 'No API key', spent_micro: 500_000, slot: 3 }],
       // By day, thirty bars; by month, two. A bar remembered from the day view must not break the month view.
       buckets: new URL(route.request().url()).searchParams.get('group') === 'month'
@@ -101,6 +101,19 @@ test('a member with no daily cap reads as no limit, a cap can be set and cleared
   await expect(page.getByText(/History starts on/)).toBeVisible()
   await expect(page.getByRole('img', { name: /Billed spend by day: \$1\.50/ })).toBeVisible()
   await expect(page.locator('.us-totals')).toContainText('4charges')
+  // The card reads to the cent; the exact amount appears at once on hover, and on keyboard focus.
+  const total = page.locator('.us-totals b').first()
+  await expect(total).toContainText('$1.50')
+  const exact = total.getByRole('tooltip')
+  await expect(exact).toBeHidden()
+  await total.locator('.money').hover()
+  await expect(exact).toBeVisible()
+  await expect(exact).toHaveText('$1.504321')
+  await page.mouse.move(0, 0)
+  await expect(exact).toBeHidden()
+  await total.locator('.money').focus()
+  await expect(exact).toBeVisible()
+  await total.locator('.money').blur()
   await expect(page.locator('.us-totals')).not.toContainText(/calls?/i)   // a count of charges, never of calls
   // The picker offers nothing older than the history: no "Last 3 months", no day before it.
   await page.getByRole('button', { name: /^Date range:/ }).click()
