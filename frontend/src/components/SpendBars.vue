@@ -1,6 +1,7 @@
 <script>
 import billing from '../state/billing.js'
 import InfoTip from './ui/InfoTip.vue'
+import Money from './ui/Money.vue'
 
 // Billed spend as bars, one per bucket, stacked by series when there is more than one. Bars, not
 // a smoothed area: spend is often idle for days, and a curve would draw money between charges
@@ -13,11 +14,11 @@ const W = 600, H = 160, R = 4, GAP = 2
 let uid = 0
 
 export default {
-  components: { InfoTip },
+  components: { InfoTip, Money },
   props: {
     // [{ id, label, tick, parts: { [seriesId]: micro }, charges?, others?: [{ name, value }] }]
     buckets: { type: Array, required: true },
-    // [{ id, name, slot?, color?, info?, members?, folded? }]; `folded` lists what Other holds. `slot` is the series' own color (the server keeps
+    // [{ id, name, slot?, color?, info?, members?, folded? }]; `folded` lists what Other holds ([{ id, name, micro }]). `slot` is the series' own color (the server keeps
     // it stable across filters); without one, the series takes its position's.
     series: { type: Array, required: true },
     ariaLabel: { type: String, default: 'Billed spend' },
@@ -32,7 +33,7 @@ export default {
       return [1, 2, 2.5, 5, 10].map(m => m * step).find(v => v >= top)
     },
     slot() { return W / Math.max(this.buckets.length, 1) },
-    grid() { return [1, 0.5].map(f => ({ y: H - f * H, text: this.money(Math.round(this.max * f)) })) },
+    grid() { return [1, 0.5].map(f => ({ y: H - f * H, text: this.moneyGlance(Math.round(this.max * f)) })) },
     colors() {
       return Object.fromEntries(this.series.map((s, i) =>
         [s.id, s.color || (s.id === '__other' ? 'var(--sb-other)' : `var(--sb-${((s.slot ?? i) % 7) + 1})`)]))
@@ -68,16 +69,16 @@ export default {
       const flip = center > 0.62
       const rows = this.series.length > 1
         ? this.series.filter(s => (b.parts || {})[s.id] > 0).map(s => ({
-            id: s.id, name: s.name, color: this.colors[s.id], value: this.money(b.parts[s.id]),
+            id: s.id, name: s.name, color: this.colors[s.id], value: this.moneyGlance(b.parts[s.id]),
             // What the Other slice holds in this bucket, biggest first; the rest is counted, not listed.
-            inside: s.id === '__other' ? (b.others || []).slice(0, 4).map(o => ({ name: o.name, value: this.money(o.value) })) : [],
+            inside: s.id === '__other' ? (b.others || []).slice(0, 4).map(o => ({ name: o.name, value: this.moneyGlance(o.value) })) : [],
             more: s.id === '__other' ? Math.max((b.others || []).length - 4, 0) : 0,
           }))
         : []
       return {
         flip, left: (flip ? center - half : center + half) * 100,
         top: Math.min(Math.max(this.pointerY - this.tipH / 2, 0), Math.max(H - this.tipH, 0)),
-        label: b.label, rows, total: this.money(this.totals[this.hover]), charges: b.charges,
+        label: b.label, rows, total: this.moneyGlance(this.totals[this.hover]), charges: b.charges,
       }
     },
   },
@@ -87,6 +88,9 @@ export default {
   watch: { buckets() { this.hover = null } },
   methods: {
     money: billing.money,
+    // Every amount on the card reads to the cent, cut down, never rounded up (the hover tooltip
+    // follows the pointer and cannot be hovered itself, so it shows only the short figure).
+    moneyGlance: billing.moneyGlance,
     rounded(x, y, w, bottom) {
       const rr = Math.min(R, w / 2, bottom - y)
       return `M${x},${bottom}V${y + rr}Q${x},${y} ${x + rr},${y}H${x + w - rr}Q${x + w},${y} ${x + w},${y + rr}V${bottom}Z`
@@ -136,7 +140,7 @@ export default {
           <s :style="{ background: colors[s.id] }"></s><u>{{s.name}}</u>
           <span :id="'sb-folded-' + uid" role="tooltip" class="sb-folded-tip"><span class="sb-folded-box">
             <strong>{{s.name}}</strong>
-            <span v-for="f in s.folded" :key="f.id" class="sb-folded-row"><i :title="f.name">{{f.name}}</i><em>{{f.value}}</em></span>
+            <span v-for="f in s.folded" :key="f.id" class="sb-folded-row"><i :title="f.name">{{f.name}}</i><em><Money :micro="f.micro" /></em></span>
           </span></span>
         </span>
         <span v-else><s :style="{ background: colors[s.id] }"></s>{{s.name}}<InfoTip v-if="s.info" :title="s.info.title" :text="s.info.text" /></span>
