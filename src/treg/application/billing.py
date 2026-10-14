@@ -38,6 +38,7 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 from sqlmodel import select
 
 from .. import adsconv
@@ -682,22 +683,76 @@ def _lock(org_id: int) -> asyncio.Lock:
     return lock
 
 
-def _idempotency_key(org_id: int, amount_micro: int, crossing: int, payment_method: str) -> str:
-    """One key per threshold CROSSING, not per attempt.
+def _idempotency_key(org_id: int, amount_micro: int, crossing: int, payment_method: str,
+                     generation: int = 0) -> str:
+    """One key per credited purchase and Stripe-recorded invoice generation.
 
-    `crossing` is how many automatic top-ups this org has already bought this month, so every caller
-    that notices the same dip computes the same key and Stripe collapses them into a single charge —
-    while a genuine later dip (crossing+1) is free to charge again. The day is included so a stuck
-    counter can't suppress tomorrow's charge forever.
+    `crossing` counts all credited Stripe purchases, not just this month's. A day or month in the
+    key would lose an unresolved invoice at midnight. A void invoice advances `generation` and
+    permits a new invoice; an uncertain Stripe response keeps the same invoice for reconciliation.
 
     `payment_method` is in the key because Stripe rejects a reused key whose PARAMETERS changed, with
     an error, not a replay. Without it, one failed attempt would poison the crossing: swap the declined
     card for a working one and the retry dies on "keys for idempotent requests can only be used with
-    the same parameters" until the day rolls over. Including it keeps the collapse-a-burst property
+    the same parameters" until the key changes. Including it keeps the collapse-a-burst property
     (same card, same key) while letting a genuinely different charge through.
     """
-    raw = f"autotopup:{org_id}:{_now():%Y-%m-%d}:{crossing}:{amount_micro}:{payment_method}"
+    raw = f"autotopup:{org_id}:{crossing}:{generation}:{amount_micro}:{payment_method}"
     return "treg_" + hashlib.sha256(raw.encode()).hexdigest()[:40]
+
+
+async def _attempt_invoice(customer: str, base_key: str) -> tuple[dict | None, int]:
+    """Find the durable attempt in Stripe's customer list, not its delayed search index.
+
+    Walk every page: an incomplete lookup cannot prove that a charge was never started. Stripe
+    removes idempotency records after 24 hours, but invoices and their attempt metadata persist.
+    """
+    cursor = ""
+    found: dict[int, dict] = {}
+    while True:
+        kw = {"customer": customer, "limit": 100}
+        if cursor:
+            kw["starting_after"] = cursor
+        page = await _sdk(stripe_adapter.INVOICE_LIST, **kw)
+        invoices = page.get("data") or []
+        for invoice in invoices:
+            metadata = invoice.get("metadata") or {}
+            if metadata.get("treg_attempt_base") == base_key:
+                generation = int(metadata.get("treg_attempt_generation", "0"))
+                if generation in found:
+                    raise ValueError("multiple Stripe invoices for one auto top-up attempt")
+                found[generation] = invoice
+        if not page.get("has_more"):
+            if not found:
+                return None, 0
+            active = [invoice for invoice in found.values() if invoice.get("status") != "void"]
+            if len(active) > 1:
+                raise ValueError("multiple active Stripe invoices for one auto top-up crossing")
+            if active:
+                invoice = active[0]
+                return invoice, int((invoice.get("metadata") or {})["treg_attempt_generation"])
+            return None, max(found) + 1
+        if not invoices or not invoices[-1].get("id") or invoices[-1]["id"] == cursor:
+            raise ValueError("incomplete Stripe invoice pagination")
+        cursor = invoices[-1]["id"]
+
+
+async def _attempt_has_item(invoice_id: str, key: str) -> bool:
+    """A draft recovered after Stripe's 24-hour key retention must not gain a second line item."""
+    cursor = ""
+    while True:
+        kw = {"invoice": invoice_id, "limit": 100}
+        if cursor:
+            kw["starting_after"] = cursor
+        page = await _sdk(stripe_adapter.INVOICE_ITEM_LIST, **kw)
+        items = page.get("data") or []
+        if any((item.get("metadata") or {}).get("treg_attempt") == key for item in items):
+            return True
+        if not page.get("has_more"):
+            return False
+        if not items or not items[-1].get("id") or items[-1]["id"] == cursor:
+            raise ValueError("incomplete Stripe invoice item pagination")
+        cursor = items[-1]["id"]
 
 
 async def _invoice_payment_intent(invoice: dict) -> str:
@@ -735,7 +790,7 @@ async def _stop_failed_invoice(invoice_id: str, key: str) -> None:
     try:
         invoice = await _sdk(stripe_adapter.INVOICE_RETRIEVE, id=invoice_id)
         if invoice.get("status") == "open":
-            await _sdk(stripe_adapter.INVOICE_VOID, id=invoice_id,
+            await _sdk(stripe_adapter.INVOICE_VOID, invoice=invoice_id,
                        idempotency_key=f"{key}:void")
         # A draft cannot collect, and a paid invoice must remain available to the webhook.
     except Exception as exc:  # noqa: BLE001 - auto_advance=False is the retry backstop
@@ -812,35 +867,71 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
         db.add(org)
         await db.commit()
 
-        crossing = spent // max(1, amount_micro)
+        crossing = (await db.execute(select(func.count(CreditBlock.id)).where(
+            CreditBlock.org_id == org_id, CreditBlock.stripe_payment_intent.is_not(None)
+        ))).scalar_one()
         to = await owner_email(db, org_id)
-        key = _idempotency_key(org_id, amount_micro, crossing, org.stripe_default_pm)
+        base_key = _idempotency_key(org_id, amount_micro, crossing, org.stripe_default_pm)
         invoice_id = ""
         cents = micro_to_cents(amount_micro)
         try:
-            invoice = await _sdk(
-                stripe_adapter.INVOICE_CREATE,
-                customer=org.stripe_customer_id,
-                currency="usd",  # the Stripe account's default is AUD
-                collection_method="charge_automatically",
-                auto_advance=False,
-                default_payment_method=org.stripe_default_pm,
-                pending_invoice_items_behavior="exclude",
-                discounts="",  # a customer-level coupon must not change the refill amount
-                description=f"Prepaid API call balance for {org.name or org.slug}",
-                metadata={"treg_org_id": str(org_id), "treg_kind": "topup", "treg_auto": "1"},
-                idempotency_key=f"{key}:invoice",
-            )
+            invoice, generation = await _attempt_invoice(org.stripe_customer_id, base_key)
+            key = _idempotency_key(org_id, amount_micro, crossing, org.stripe_default_pm,
+                                   generation)
+            if invoice is None:
+                invoice = await _sdk(
+                    stripe_adapter.INVOICE_CREATE,
+                    customer=org.stripe_customer_id,
+                    currency="usd",  # the Stripe account's default is AUD
+                    collection_method="charge_automatically",
+                    auto_advance=False,
+                    default_payment_method=org.stripe_default_pm,
+                    pending_invoice_items_behavior="exclude",
+                    discounts="",  # a customer-level coupon must not change the refill amount
+                    description=f"Prepaid API call balance for {org.name or org.slug}",
+                    metadata={"treg_org_id": str(org_id), "treg_kind": "topup", "treg_auto": "1",
+                              "treg_attempt": key, "treg_attempt_base": base_key,
+                              "treg_attempt_generation": str(generation)},
+                    idempotency_key=f"{key}:invoice",
+                )
             invoice_id = invoice["id"]
-            await _sdk(stripe_adapter.INVOICE_ITEM_CREATE,
-                       customer=org.stripe_customer_id, invoice=invoice_id, amount=cents,
-                       currency="usd", description="treg balance top-up", discountable=False,
-                       idempotency_key=f"{key}:item")
-            await _sdk(stripe_adapter.INVOICE_FINALIZE, id=invoice_id,
-                       auto_advance=False, idempotency_key=f"{key}:finalize")
-            paid = await _sdk(stripe_adapter.INVOICE_PAY, id=invoice_id,
-                              off_session=True, payment_method=org.stripe_default_pm,
-                              idempotency_key=f"{key}:pay")
+            status = invoice.get("status")
+            if status == "draft":
+                if not await _attempt_has_item(invoice_id, key):
+                    await _sdk(stripe_adapter.INVOICE_ITEM_CREATE,
+                               customer=org.stripe_customer_id, invoice=invoice_id, amount=cents,
+                               currency="usd", description="treg balance top-up", discountable=False,
+                               metadata={"treg_attempt": key},
+                               idempotency_key=f"{key}:item")
+                invoice = await _sdk(stripe_adapter.INVOICE_FINALIZE, invoice=invoice_id,
+                                     auto_advance=False, idempotency_key=f"{key}:finalize")
+                status = invoice.get("status")
+            if status == "open":
+                invoice = await _sdk(stripe_adapter.INVOICE_RETRIEVE, id=invoice_id)
+                if invoice.get("status") == "open":
+                    existing_pi = await _invoice_payment_intent(invoice)
+                    if existing_pi:
+                        previous_payment = await _sdk(stripe_adapter.PAYMENT_INTENT_RETRIEVE,
+                                                      id=existing_pi)
+                        previous_status = previous_payment.get("status")
+                        if previous_status in ("requires_payment_method", "canceled"):
+                            await _stop_failed_invoice(invoice_id, key)
+                            return await _record_failure(db, org_id, "card_declined")
+                        if previous_status != "requires_confirmation":
+                            # Finalizing creates an unconfirmed PaymentIntent before any pay call.
+                            # Once it has moved beyond that state, a prior payment may still settle.
+                            return {"ok": False, "reason": "stripe_unconfirmed"}
+                    paid = await _sdk(stripe_adapter.INVOICE_PAY, invoice=invoice_id,
+                                      off_session=True, payment_method=org.stripe_default_pm,
+                                      idempotency_key=f"{key}:pay")
+                elif invoice.get("status") == "void":
+                    return await _record_failure(db, org_id, "invoice_void")
+                else:
+                    paid = invoice
+            elif status == "paid":
+                paid = invoice
+            else:
+                raise ValueError(f"unresolved auto top-up invoice status: {status}")
             pi_id = await _invoice_payment_intent(paid)
             if not pi_id:
                 raise ValueError("paid auto top-up invoice has no PaymentIntent")
@@ -864,14 +955,21 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
             return await _record_failure(db, org_id, code or "card_declined")
         except Exception as e:  # noqa: BLE001 — a Stripe outage must not surface as a 500 elsewhere
             log.warning("billing: auto top-up for org %s failed: %s", org_id, e)
-            await _stop_failed_invoice(invoice_id, key)
-            return await _record_failure(db, org_id, "stripe_error")
+            # A timeout can arrive after Stripe charged. Keep the same attempt key and the invoice
+            # available for the next lookup; auto_advance=False prevents autonomous collection.
+            return {"ok": False, "reason": "stripe_unconfirmed"}
 
         if (paid.get("status") != "paid" or paid.get("amount_paid") != cents
                 or pi.get("status") != "succeeded" or pi.get("currency") != "usd"
                 or pi.get("amount_received") != cents):
-            # `requires_action` off-session is 3DS by another name; anything else pending is not money
-            # we can credit. Either way the balance stays as it was.
+            # An unfinished payment is not money we can credit. Keep an actionable PaymentIntent
+            # for the cardholder, and never void a payment that may still settle.
+            if pi.get("status") == "requires_action":
+                await _disable_autotopup(db, org, "authentication_required", recovery_pi=pi_id)
+                return {"ok": False, "reason": "authentication_required", "payment_intent": pi_id}
+            if pi.get("status") in ("processing", "requires_confirmation", "requires_capture") or (
+                    pi.get("status") == "succeeded" and paid.get("status") == "open"):
+                return {"ok": False, "reason": "stripe_unconfirmed"}
             await _stop_failed_invoice(invoice_id, key)
             return await _record_failure(db, org_id, f"status_{pi.get('status')}")
 

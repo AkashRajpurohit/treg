@@ -600,15 +600,27 @@ adds one item, finalizes it with `auto_advance=false`, then pays it off-session 
 Pending items and inherited discounts are excluded so the invoice charges the configured refill
 amount rather than another purchase or coupon amount.
 The invoice carries the same description and org/kind metadata as the manual invoice. Each write has
-a separate deterministic idempotency key derived from the threshold-crossing key. The paid invoice's
+a separate deterministic idempotency key derived from the credited-purchase count and invoice
+generation. The key does not change at midnight or after an uncertain Stripe response. The attempt
+key, base key, and generation are invoice metadata; the item also carries the attempt key. Before a
+new charge, `attempt_auto_topup` pages through the customer's invoice list to recover a draft, open,
+or paid attempt. If prior generations are all void, it starts the next generation. This still works
+when a user re-enables auto-top-up and resets the local failure counter. An incomplete or failed
+lookup leaves the attempt unresolved and does not increment that counter.
+An open invoice with an associated PaymentIntent is not paid again while that payment may still
+settle. Finalization itself creates a `requires_confirmation` PaymentIntent, which is safe to pay
+with the attempt's existing idempotency key. A `processing` payment stays open and unresolved. This recovery
+uses invoice listing rather than Stripe's delayed search index, and needs no
+additional database table. The paid invoice's
 `payments` association identifies the PaymentIntent; `ledger.topup` still keys its purchased block on
 that ID. Historical bare auto-top-up charges remain without invoices.
 
 An invoice-created PaymentIntent does not inherit invoice metadata. `_invoice_metadata_for_payment`
 resolves the invoice through `InvoicePayment.list` when a payment webhook has no metadata, so a
 webhook that arrives before the synchronous credit can still identify the org. The ledger's
-PaymentIntent uniqueness makes the later path a no-op. Failed finalized invoices are voided where
-possible; `auto_advance=false` also prevents Stripe's automatic retries and dunning. An
+PaymentIntent uniqueness makes the later path a no-op. Confirmed failed finalized invoices are voided
+where possible; an uncertain payment result leaves its invoice intact for a later lookup.
+`auto_advance=false` prevents Stripe's automatic retries and dunning. An
 authentication-required invoice stays open with automatic advancement off so its recovery
 PaymentIntent remains usable. The invoice is a document; `invoice.created` and `invoice.paid` still
 do not credit balance.

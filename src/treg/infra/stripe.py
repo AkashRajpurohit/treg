@@ -19,6 +19,7 @@ INVOICE_FINALIZE = "Invoice.finalize_invoice"
 INVOICE_PAY = "Invoice.pay"
 INVOICE_VOID = "Invoice.void_invoice"
 INVOICE_ITEM_CREATE = "InvoiceItem.create"
+INVOICE_ITEM_LIST = "InvoiceItem.list"
 INVOICE_PAYMENT_LIST = "InvoicePayment.list"
 PAYMENT_INTENT_CREATE = "PaymentIntent.create"
 SETUP_INTENT_RETRIEVE = "SetupIntent.retrieve"
@@ -40,6 +41,7 @@ def _operation(name: str) -> Callable:
         INVOICE_PAY: stripe_sdk.Invoice.pay,
         INVOICE_VOID: stripe_sdk.Invoice.void_invoice,
         INVOICE_ITEM_CREATE: stripe_sdk.InvoiceItem.create,
+        INVOICE_ITEM_LIST: stripe_sdk.InvoiceItem.list,
         INVOICE_PAYMENT_LIST: stripe_sdk.InvoicePayment.list,
         PAYMENT_INTENT_CREATE: stripe_sdk.PaymentIntent.create,
         SETUP_INTENT_RETRIEVE: stripe_sdk.SetupIntent.retrieve,
