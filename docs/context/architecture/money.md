@@ -603,10 +603,15 @@ The invoice carries the same description and org/kind metadata as the manual inv
 a separate deterministic idempotency key derived from the credited-purchase count and invoice
 generation. The key does not change at midnight or after an uncertain Stripe response. The attempt
 key, base key, and generation are invoice metadata; the item also carries the attempt key. Before a
-new charge, `attempt_auto_topup` pages through the customer's invoice list to recover a draft, open,
-or paid attempt. If prior generations are all void, it starts the next generation. This still works
+new charge, `attempt_auto_topup` pages through the customer's invoices created since one day before
+the last credited automatic top-up to recover a draft, open, or paid attempt. If prior generations
+are all void, it starts the next generation. This still works
 when a user re-enables auto-top-up and resets the local failure counter. An incomplete or failed
-lookup leaves the attempt unresolved and does not increment that counter.
+lookup leaves the attempt unresolved and counts toward the consecutive-failure limit without
+changing the invoice key. Each unknown outcome is logged as an error. At the limit, auto top-up is
+paused with a specific billing banner and email asking the customer to check billing history and
+contact support. A later manual top-up does not advance the invoice lookup boundary. Before any
+credited automatic top-up, the lookup checks the full customer invoice history.
 An open invoice with an associated PaymentIntent is not paid again while that payment may still
 settle. Finalization itself creates a `requires_confirmation` PaymentIntent, which is safe to pay
 with the attempt's existing idempotency key. A `processing` payment stays open and unresolved. This recovery

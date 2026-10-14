@@ -747,7 +747,53 @@ async def test_auto_topup_stripe_error_preserves_unconfirmed_invoice(c: AsyncCli
     assert sdk.state["status"] == "open" and sdk.state["charge_count"] == 0
     assert (await c.get(f"/orgs/{org_id}/balance", headers=_h(owner))).json()["balance_micro"] == 100
     state = (await c.get("/billing", headers=_h(owner))).json()["autotopup"]
-    assert state["failures"] == 0 and state["enabled"] is True
+    assert state["failures"] == 1 and state["enabled"] is True
+
+
+async def test_repeated_unknown_outcomes_pause_without_another_charge(c: AsyncClient,
+                                                                       monkeypatch, caplog):
+    org_id, owner = await _org(c)
+    await _armed(org_id)
+    sdk = _invoice_sdk(pay_error=RuntimeError("simulated Stripe outage"))
+    monkeypatch.setattr(billing, "_sdk", sdk)
+    notices = []
+
+    async def disabled_notice(*args, **kwargs):
+        notices.append((args, kwargs))
+
+    monkeypatch.setattr(billing.email_mod, "send_autotopup_disabled", disabled_notice)
+    limit = get_settings().autotopup_max_attempts
+    for n in range(1, limit + 1):
+        await _set_org(org_id, autotopup_last_attempt_at=None)
+        result = await _attempt(org_id)
+        assert result["reason"] == ("max_attempts" if n == limit else "stripe_unconfirmed")
+    state = (await c.get("/billing", headers=_h(owner))).json()["autotopup"]
+    assert state["enabled"] is False and state["disabled_reason"] == "stripe_unconfirmed"
+    assert sdk.state["invoice_count"] == sdk.state["item_count"] == 1
+    assert sdk.state["charge_count"] == 0 and sdk.state["status"] == "open"
+    assert len(notices) == 1 and notices[0][0][2] == "stripe_unconfirmed"
+    assert sum("outcome unconfirmed" in record.message for record in caplog.records) == limit
+
+
+async def test_invoice_lookup_starts_before_last_auto_credit_not_later_manual_credit(
+        c: AsyncClient, monkeypatch):
+    org_id, _ = await _org(c)
+    await _armed(org_id)
+    async with session_maker() as db:
+        await ledger.topup(db, org_id, 10_000_000, "pi_prior_auto", meta={"auto": True})
+        await db.commit()
+        auto_credit_at = await billing._last_auto_credit_at(db, org_id)
+        await ledger.topup(db, org_id, 10_000_000, "pi_later_manual", meta={"source": "stripe"})
+        await db.commit()
+        assert await billing._last_auto_credit_at(db, org_id) == auto_credit_at
+    await _set_org(org_id, balance_micro=100)
+    sdk = _invoice_sdk()
+    monkeypatch.setattr(billing, "_sdk", sdk)
+    assert (await _attempt(org_id))["ok"] is True
+    lookups = [kw for fn, kw in sdk.calls if fn == billing.stripe_adapter.INVOICE_LIST]
+    assert lookups[0]["created"] == {
+        "gte": int(auto_credit_at.replace(tzinfo=timezone.utc).timestamp()) - 86400
+    }
 
 
 async def test_auto_topup_pay_error_then_retry_pays_same_invoice(c: AsyncClient, monkeypatch):

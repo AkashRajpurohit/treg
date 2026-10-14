@@ -340,7 +340,12 @@ export default {
                       Auto top-up is set up and will switch on as soon as a top-up saves your card.
                     </p>
                     <div v-else-if="billing.autotopup.disabled_reason" class="banner" style="margin:14px 0 0">
-                      Auto top-up switched itself off ({{billing.autotopup.disabled_reason}}). Once the balance runs out, calls will fail until it's funded.
+                      <template v-if="billing.autotopup.disabled_reason==='stripe_unconfirmed'">
+                        Auto top-up paused because we could not confirm a Stripe payment. Calls may stop when the balance runs out. Check billing history and contact support before turning it back on.
+                      </template>
+                      <template v-else>
+                        Auto top-up switched itself off ({{billing.autotopup.disabled_reason}}). Once the balance runs out, calls will fail until it's funded.
+                      </template>
                     </div>
                     <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
                       <label style="display:flex;gap:10px;align-items:center;cursor:pointer">

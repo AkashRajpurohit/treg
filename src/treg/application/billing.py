@@ -701,8 +701,9 @@ def _idempotency_key(org_id: int, amount_micro: int, crossing: int, payment_meth
     return "treg_" + hashlib.sha256(raw.encode()).hexdigest()[:40]
 
 
-async def _attempt_invoice(customer: str, base_key: str) -> tuple[dict | None, int]:
-    """Find the durable attempt in Stripe's customer list, not its delayed search index.
+async def _attempt_invoice(customer: str, base_key: str,
+                           created_gte: int | None = None) -> tuple[dict | None, int]:
+    """Find the durable attempt in Stripe's bounded customer list, not its delayed search index.
 
     Walk every page: an incomplete lookup cannot prove that a charge was never started. Stripe
     removes idempotency records after 24 hours, but invoices and their attempt metadata persist.
@@ -711,6 +712,8 @@ async def _attempt_invoice(customer: str, base_key: str) -> tuple[dict | None, i
     found: dict[int, dict] = {}
     while True:
         kw = {"customer": customer, "limit": 100}
+        if created_gte is not None:
+            kw["created"] = {"gte": created_gte}
         if cursor:
             kw["starting_after"] = cursor
         page = await _sdk(stripe_adapter.INVOICE_LIST, **kw)
@@ -735,6 +738,24 @@ async def _attempt_invoice(customer: str, base_key: str) -> tuple[dict | None, i
         if not invoices or not invoices[-1].get("id") or invoices[-1]["id"] == cursor:
             raise ValueError("incomplete Stripe invoice pagination")
         cursor = invoices[-1]["id"]
+
+
+async def _last_auto_credit_at(db: AsyncSession, org_id: int) -> datetime | None:
+    """Manual top-ups cannot advance the invoice recovery boundary."""
+    offset = 0
+    while True:
+        rows = (await db.execute(
+            select(LedgerEntry.created_at, LedgerEntry.meta).where(
+                LedgerEntry.org_id == org_id, LedgerEntry.kind == "topup"
+            ).order_by(LedgerEntry.created_at.desc(), LedgerEntry.id.desc())
+            .limit(100).offset(offset)
+        )).all()
+        for created_at, meta in rows:
+            if isinstance(meta, dict) and meta.get("auto"):
+                return created_at
+        if len(rows) < 100:
+            return None
+        offset += 100
 
 
 async def _attempt_has_item(invoice_id: str, key: str) -> bool:
@@ -812,6 +833,14 @@ async def _disable_autotopup(db: AsyncSession, org: Org, reason: str, *, recover
                                                 recovery_pi=bool(recovery_pi))
 
 
+async def _record_unconfirmed(db: AsyncSession, org_id: int, invoice_id: str,
+                              detail: str) -> dict:
+    """An unknown outcome is a failed attempt, but it never rotates the Stripe invoice key."""
+    log.error("billing: auto top-up outcome unconfirmed for org %s invoice %s: %s",
+              org_id, invoice_id or "unknown", detail)
+    return await _record_failure(db, org_id, "stripe_unconfirmed")
+
+
 async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
     """Charge the saved card off-session to refill a low balance. Returns
     `{"ok": bool, "reason": str, ...}` and never raises at the caller — a failed refill must degrade
@@ -870,12 +899,16 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
         crossing = (await db.execute(select(func.count(CreditBlock.id)).where(
             CreditBlock.org_id == org_id, CreditBlock.stripe_payment_intent.is_not(None)
         ))).scalar_one()
+        last_auto_credit = await _last_auto_credit_at(db, org_id)
+        created_gte = (int(last_auto_credit.replace(tzinfo=timezone.utc).timestamp()) - 86400
+                       if last_auto_credit else None)
         to = await owner_email(db, org_id)
         base_key = _idempotency_key(org_id, amount_micro, crossing, org.stripe_default_pm)
         invoice_id = ""
         cents = micro_to_cents(amount_micro)
         try:
-            invoice, generation = await _attempt_invoice(org.stripe_customer_id, base_key)
+            invoice, generation = await _attempt_invoice(org.stripe_customer_id, base_key,
+                                                         created_gte)
             key = _idempotency_key(org_id, amount_micro, crossing, org.stripe_default_pm,
                                    generation)
             if invoice is None:
@@ -920,7 +953,8 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
                         if previous_status != "requires_confirmation":
                             # Finalizing creates an unconfirmed PaymentIntent before any pay call.
                             # Once it has moved beyond that state, a prior payment may still settle.
-                            return {"ok": False, "reason": "stripe_unconfirmed"}
+                            return await _record_unconfirmed(
+                                db, org_id, invoice_id, f"payment_{previous_status}")
                     paid = await _sdk(stripe_adapter.INVOICE_PAY, invoice=invoice_id,
                                       off_session=True, payment_method=org.stripe_default_pm,
                                       idempotency_key=f"{key}:pay")
@@ -954,10 +988,9 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
             await _stop_failed_invoice(invoice_id, key)
             return await _record_failure(db, org_id, code or "card_declined")
         except Exception as e:  # noqa: BLE001 — a Stripe outage must not surface as a 500 elsewhere
-            log.warning("billing: auto top-up for org %s failed: %s", org_id, e)
             # A timeout can arrive after Stripe charged. Keep the same attempt key and the invoice
             # available for the next lookup; auto_advance=False prevents autonomous collection.
-            return {"ok": False, "reason": "stripe_unconfirmed"}
+            return await _record_unconfirmed(db, org_id, invoice_id, type(e).__name__)
 
         if (paid.get("status") != "paid" or paid.get("amount_paid") != cents
                 or pi.get("status") != "succeeded" or pi.get("currency") != "usd"
@@ -969,7 +1002,8 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
                 return {"ok": False, "reason": "authentication_required", "payment_intent": pi_id}
             if pi.get("status") in ("processing", "requires_confirmation", "requires_capture") or (
                     pi.get("status") == "succeeded" and paid.get("status") == "open"):
-                return {"ok": False, "reason": "stripe_unconfirmed"}
+                return await _record_unconfirmed(
+                    db, org_id, invoice_id, f"payment_{pi.get('status')}")
             await _stop_failed_invoice(invoice_id, key)
             return await _record_failure(db, org_id, f"status_{pi.get('status')}")
 
@@ -995,9 +1029,11 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
 
 
 async def _record_failure(db: AsyncSession, org_id: int, reason: str) -> dict:
-    """Count a decline and disable auto-top-up once they stop looking like bad luck. Consecutive, not
-    cumulative: one success clears the count, because a card that works now is not a card with a
-    history problem."""
+    """Count a failed or unconfirmed attempt and disable auto-top-up at the limit.
+
+    Consecutive, not cumulative: one confirmed success clears the count. An uncertain result keeps
+    its invoice key even while this counter rises, so the next lookup cannot start a fresh charge.
+    """
     org = await db.get(Org, org_id)
     if org is None:
         return {"ok": False, "reason": reason}
@@ -1005,7 +1041,9 @@ async def _record_failure(db: AsyncSession, org_id: int, reason: str) -> dict:
     db.add(org)
     await db.commit()
     if org.autotopup_failures >= get_settings().autotopup_max_attempts:
-        await _disable_autotopup(db, org, f"max_attempts:{reason}")
+        disabled_reason = ("stripe_unconfirmed" if reason == "stripe_unconfirmed"
+                           else f"max_attempts:{reason}")
+        await _disable_autotopup(db, org, disabled_reason)
         return {"ok": False, "reason": "max_attempts", "last_error": reason}
     return {"ok": False, "reason": reason, "failures": org.autotopup_failures}
 
