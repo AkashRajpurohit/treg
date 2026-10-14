@@ -205,7 +205,8 @@ free of the balance rather than duplicating them.
 2. the org stored a secret for the provider → injected via a virtual tool;
 3. neither, and the endpoint has a verified public route → **no provider key**, free;
 4. otherwise → **treg's own key**, billed per call to the team's prepaid balance. Fractions of a
-   cent (a TikTok profile is ~$0.001); new verified accounts receive **$1.00 free once**, when creating an eligible team. No provider
+   cent (a TikTok profile is ~$0.001); new verified accounts receive **$1.00 free once**, when creating an eligible team (a team made
+   before verifying receives it at the first verified sign-in). No provider
    signup, no subscription.
 
 The anonymous price assumes the caller does not send a provider credential header. The faithful

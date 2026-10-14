@@ -43,13 +43,58 @@ async def test_legacy_registration_cannot_mint_credit(clients):
     for index in range(3):
         teams.append(await _team(clients, created['token'], f'unverified-{index}'))
     assert await _funding([t['org_id'] for t in teams]) == (0, [])
-    # A legacy token never becomes proof. A real inbox proof enables ONE future team.
+    # A legacy token never becomes proof. A real inbox proof funds ONE team, once.
     token = await verified_identity(clients, 'unverified@example.org')
     teams.append(await _team(clients, token, 'after-proof'))
     teams.append(await _team(clients, created['token'], 'old-token-after-proof'))
+    await verified_identity(clients, 'unverified@example.org')
     balance, entries = await _funding([t['org_id'] for t in teams])
     assert balance == get_settings().promo_grant_micro
     assert len(entries) == 1
+
+
+async def test_verifying_after_making_a_team_funds_that_team(clients):
+    """The legacy door makes a team before any inbox proof; proving the inbox later funds it."""
+    r = await clients.post('/users', json={'email': 'later@example.org'})
+    assert r.status_code == 200, r.text
+    registered = r.json()
+    assert await _funding([registered['org_id']]) == (0, [])
+    token = await verified_identity(clients, 'later@example.org')
+    balance, entries = await _funding([registered['org_id']])
+    assert balance == get_settings().promo_grant_micro
+    assert [(e.meta['source'], e.meta['user_id']) for e in entries] == [('signup', registered['id'])]
+    # The claim is spent: a second sign-in and a new team add nothing.
+    await verified_identity(clients, 'later@example.org')
+    second = await _team(clients, token, 'later-second')
+    assert await _funding([second['org_id']]) == (0, [])
+    assert (await _funding([registered['org_id']]))[0] == get_settings().promo_grant_micro
+
+
+async def test_only_one_of_two_racing_proofs_is_the_first(clients):
+    from treg.application import signup
+    async with session_maker() as db:
+        db.add(User(email='racing-proof@example.org'))
+        await db.commit()
+    proven = [set(), set()]
+    async with session_maker() as first, session_maker() as second:
+        # Both hold the user loaded while still unverified (as a door does), then prove it in turn.
+        held = [await signup.find_or_create_user(first, 'racing-proof@example.org'),
+                await signup.find_or_create_user(second, 'racing-proof@example.org')]
+        await signup.find_or_create_user(first, 'racing-proof@example.org', verified=True, proven=proven[0])
+        await first.commit()
+        await signup.find_or_create_user(second, 'racing-proof@example.org', verified=True, proven=proven[1])
+        await second.commit()
+    assert [len(p) for p in proven] == [1, 0]
+    assert held[0].email_verified_at is not None
+
+
+async def test_verifying_with_no_team_keeps_the_claim_for_the_first_team(clients):
+    token = await verified_identity(clients, 'no-team-yet@example.org')
+    async with session_maker() as db:
+        user = (await db.execute(select(User).where(User.email == 'no-team-yet@example.org'))).scalar_one()
+        assert user.signup_promo_available
+    first = await _team(clients, token, 'no-team-yet')
+    assert (await _funding([first['org_id']]))[0] == get_settings().promo_grant_micro
 
 
 @pytest.mark.parametrize('concurrent', [False, True])

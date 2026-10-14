@@ -323,10 +323,11 @@ async def verify_email_login(
             raise EmailAuthError("invalid_code")
         await ratestore.kv_pop(db, OTP_NS, email)
         created: set[int] = set()
+        proven: set[int] = set()
         try:
             user = await signup.find_or_create_user(
                 db, email, door="otp_verify", created=created, verified=True,
-                promo_eligible=entry.get("promo", True))
+                promo_eligible=entry.get("promo", True), proven=proven)
         except signup.MachineIdentityError as exc:
             raise EmailAuthError("machine_identity") from exc
         except signup.BlockedEmailError as exc:  # a code minted before the domain was listed
@@ -334,6 +335,8 @@ async def verify_email_login(
         if user.suspended:
             raise EmailAuthError("suspended")
         await db.commit()
+        if proven:
+            await signup.grant_signup_promo_on_proof(user.id)
         if entry.get("captcha"):
             # Paired with event=turnstile_email_start: per outcome, how many code requests were
             # redeemed, i.e. how many people enforce would have refused. Existing users included.
@@ -594,10 +597,11 @@ async def start_google_login(cli: str, callback_base: Callable[[], str]) -> Soci
 async def _provision_social_user(email: str, state: str, door: str, entry_surface: str = "",
                                  *, github_login: str = "", name: str = "") -> SocialLoginProof:
     created: set[int] = set()
+    proven: set[int] = set()
     async with database.session_maker() as db:
         try:
             user = await signup.find_or_create_user(
-                db, email, door=door, created=created, verified=True,
+                db, email, door=door, created=created, verified=True, proven=proven,
             )  # first login creates only the user
         except signup.MachineIdentityError as exc:
             raise SocialLoginError("machine_identity") from exc
@@ -606,6 +610,8 @@ async def _provision_social_user(email: str, state: str, door: str, entry_surfac
         if user.suspended:  # a banned account may prove its email but must not receive a live session
             raise SocialLoginError("suspended")
         await db.commit()
+        if proven:
+            await signup.grant_signup_promo_on_proof(user.id)
         signup.track_signup(user, created, door, entry_surface)
         if user.id in created:  # what the door knew, for the first-run lookup (onboard.first_run)
             await first_run.remember_hints(user.id, user.email, door=door, github_login=github_login, name=name)
@@ -797,9 +803,10 @@ async def confirm_invite_signin(email_token: str) -> InviteSigninProof:
         invite = await _live_invite_by_email_token(db, email_token)
         if invite is None:  # consumed / expired / revoked / suspended org → the SPA's expired banner
             raise InviteSigninError("expired")
+        proven: set[int] = set()
         try:
             user = await signup.find_or_create_user(
-                db, invite.email, door="invite_link", verified=True,
+                db, invite.email, door="invite_link", verified=True, proven=proven,
             )  # only the inbox-only link proves the email
         except signup.MachineIdentityError as exc:
             raise InviteSigninError("machine_identity") from exc
@@ -810,6 +817,8 @@ async def confirm_invite_signin(email_token: str) -> InviteSigninProof:
         invite.email_token_hash = None  # consume: one sign-in per emailed link
         db.add(invite)
         await db.commit()
+        if proven:
+            await signup.grant_signup_promo_on_proof(user.id)
         # A share-born invite lands on the shared page itself (the SPA auto-accepts + switches org);
         # a plain invite lands on the dashboard with the accept banner, as before. `landing` was
         # allowlist-validated at create time, so this can never redirect off-app.

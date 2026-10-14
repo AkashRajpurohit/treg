@@ -130,8 +130,13 @@ arbiter and manual/referral grants retain their own semantics.
 
 `User.email_verified_at` is set only by successful OTP, verified social login or an inbox-only
 invitation link. Legacy `/users` and admin-visible invite codes do not prove email ownership. An
-unverified account may create teams with zero signup credit; after verifying it may claim once on
-a subsequently created eligible team. Existing teams are not automatically backfilled. The grant
+unverified account may create teams with zero signup credit. The sign-in that first verifies it
+(`find_or_create_user(..., proven=)`, then `signup.grant_signup_promo_on_proof` after that commit)
+offers the claim to the oldest eligible team it owns, through the same `_grant_signup_promo`
+(decision point, claim and grant) without a second ad conversion; with no owned team, it claims on
+its first eligible team. Later sign-ins never re-offer it: a proof-time grant that fails or is
+interrupted leaves the user eligible for their next team, exactly like a failed team-time grant. The
+grant
 amount is `promo_grant_micro` (default 1,000,000); zero skips the claim as well as the credit.
 
 Before claiming, `_grant_signup_promo` asks the `signup_credit` decision point

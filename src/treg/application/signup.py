@@ -3,7 +3,7 @@
 import logging
 from urllib.parse import unquote
 
-from sqlalchemy import inspect as sa_inspect
+from sqlalchemy import inspect as sa_inspect, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -16,7 +16,7 @@ from ..domain.governance.teams import _make_org_membership, _slugify, reserved_r
 from ..domain.identity.access import _email_domain, _is_blocked_email, _is_machine_email, _norm_email
 from ..domain.identity.promotions import claim_signup_promo, promo_inbox, signup_promo_email
 from ..infra.db import session_maker
-from ..models import Org, User
+from ..models import Membership, Org, User
 from ..timeutil import utcnow_naive as _utcnow_naive
 
 
@@ -65,13 +65,15 @@ def blocked_email(email: str, door: str) -> bool:
 async def find_or_create_user(
     db: AsyncSession, email: str, *, door: str = "login",
     created: set[int] | None = None, verified: bool = False, promo_eligible: bool = True,
+    proven: set[int] | None = None,
 ) -> User:
     """Find a user by email, else register them — the user ONLY, **no auto personal org**. The shared
     core of every identity door (GitHub / Google / email OTP). A brand-new user therefore lands with
     zero teams and is asked to NAME + CREATE their first team (the dashboard's mandatory welcome, or
     `treg org create`) — we never spawn a throwaway personal org they didn't ask for. Their identity
     token is user-scoped, so it works before they have any org (org chosen per-request via X-Treg-Org).
-    Only trusted email-proof callers pass verified=True. promo_eligible=False creates the user
+    Only trusted email-proof callers pass verified=True; `proven` collects a user this call verified
+    for the first time (see `grant_signup_promo_on_proof`). promo_eligible=False creates the user
     without a signup-credit claim; it never touches an existing user. Caller commits."""
     email = _norm_email(email)
     # Machine identities (agents, the published demo token) are minted by an admin and act ONLY by
@@ -97,8 +99,14 @@ async def find_or_create_user(
             if created is not None:
                 created.add(user.id)
     if verified and user.email_verified_at is None:
-        user.email_verified_at = _utcnow_naive()
-        db.add(user)
+        # Conditional, so of two proofs racing for one unverified user only the one that flips the
+        # column is the first proof; the other sees no row and is an ordinary sign-in.
+        flipped = await db.execute(
+            update(User).where(User.id == user.id, User.email_verified_at.is_(None))
+            .values(email_verified_at=_utcnow_naive())
+        )
+        if flipped.rowcount == 1 and proven is not None:
+            proven.add(user.id)
     return user
 
 
@@ -114,7 +122,27 @@ def track_signup(
         analytics.capture(user.email, "signup_completed", properties)
 
 
-async def _grant_signup_promo(db: AsyncSession, org: Org, *, user_id: int) -> None:
+async def grant_signup_promo_on_proof(user_id: int) -> None:
+    """Fund the team a user made before proving their inbox. Call after the proving commit.
+
+    The legacy `POST /users` door makes a team for an unverified user, and team creation is the
+    only other claim point, so without this the first proof would leave that team at zero until the
+    user made a second one. Runs only on the sign-in that first verifies the user, so a deferred
+    claim is not re-asked on every sign-in. With no team yet, the claim waits for their first team.
+    """
+    async with session_maker() as db:
+        org = (await db.execute(
+            select(Org).join(Membership, Membership.org_id == Org.id)
+            .where(Membership.user_id == user_id, Membership.role == "owner",
+                   Org.demo.is_(False), Org.public_demo.is_(False), Org.suspended.is_(False))
+            .order_by(Org.created_at, Org.id).limit(1)
+        )).scalar_one_or_none()
+        if org is not None:
+            # The team's signup conversion was queued when it was made.
+            await _grant_signup_promo(db, org, user_id=user_id, conversion=False)
+
+
+async def _grant_signup_promo(db: AsyncSession, org: Org, *, user_id: int, conversion: bool = True) -> None:
     """Queue team attribution and grant at most once to its verified creator.
 
     The user claim, money block, balance and ledger entry share one transaction. A
@@ -129,7 +157,8 @@ async def _grant_signup_promo(db: AsyncSession, org: Org, *, user_id: int) -> No
     try:
         claimed = amount > 0 and await _policy_grants(db, org_id, user_id) and await claim_signup_promo(db, user_id)
         try:
-            await adsconv.queue(db, org, adsconv.ACTION_SIGNUP)
+            if conversion:
+                await adsconv.queue(db, org, adsconv.ACTION_SIGNUP)
         except Exception as exc:  # noqa: BLE001 - marketing cannot take away the signup benefit
             logging.getLogger("treg").warning("ad conversion queue failed for org %s: %s", org_id, exc)
         if claimed:

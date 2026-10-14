@@ -199,8 +199,8 @@ Team deletion removes evaluations before their runs through `ORG_SCOPED_MODELS`.
   no mail), `find_or_create_user` (so OTP verify, the GitHub and Google callbacks and the emailed
   invite link `POST /auth/invite-signin` refuse before the row lookup, raising
   `signup.BlockedEmailError` which each door translates to a `blocked_domain` kind), `register_user`
-  (`POST /users` mints user + team + promo in one call), `create_org` (`POST /orgs`, the other promo
-  door, reachable with a token minted before the listing) and the code-based `POST /invites/accept`
+  (`POST /users` mints an unverified user + team in one call; the team is funded when that user
+  first verifies), `create_org` (`POST /orgs`, the promo door, reachable with a token minted before the listing) and the code-based `POST /invites/accept`
   (which constructs a `User` directly, so it guards itself). Every refusal is the `machine_identity`
   sibling's exact 403 `this address cannot be used to sign in` (a brand page on the browser doors,
   like `suspended`): the caller learns neither that a list exists nor what is on it. Deliberately a

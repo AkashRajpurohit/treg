@@ -48,8 +48,9 @@ The mechanics:
 
 New verified accounts receive $1.00 of signup credit once, when creating an eligible team.
 Additional teams start with no signup credit, and aliases of one inbox (`+tag`, Gmail dots) share
-a single credit. Legacy `POST /users` registration does not verify
-an email or grant credit; use email OTP or Google/GitHub sign-in. Existing balances remain usable.
+a single credit. Legacy `POST /users` registration does not verify an email, so its team starts
+at zero and receives the credit when you first sign in with email OTP or Google/GitHub.
+Existing balances remain usable.
 
 ## First: install + sign in
 ```bash
