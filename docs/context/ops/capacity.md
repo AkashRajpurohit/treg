@@ -212,6 +212,8 @@ balance. Its `rolling_quota` type means the quota is measured over rolling windo
 10/second smoothing policy is a routing pace, not a reinterpretation of the 5,000-request/5h
 capacity allowance.
 
+`collectors._apollo` reads `num_credits_remaining` from the free `api_profile`: the lead-credit pool that every enrich match and search page draws on, and the one Apollo names (`credit_type: lead credits`) in its out-of-credits 422. `total_unified_credits_used` tracks phone reveals only (`num_direct_dial_credits_used`), so the granted pool minus it is not a balance and is never used as one: without the lead field the reading is stale. The direct-dial remainder goes in the note.
+
 `collectors._sumble` reads `credits_remaining` from a free technology-search miss. Its monthly allowance and optional vendor top-ups remain separate from per-call pricing; no renewal date or auto-funding status is assumed.
 
 `collectors._getleadsio` reads numeric nonnegative `credits_remaining` from the free fair-use route.

@@ -646,21 +646,27 @@ async def _thecompaniesapi(c, key):
     return {"value": team.get("credits"), "unit": "credits", "note": ""}
 
 
+def _number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 async def _apollo(c, key):
-    # api_profile with include_credit_usage returns the caller's remaining balances directly.
-    # `num_credits_remaining` is the LEGACY field and went stale at 0 on 2026-08-24 while the
-    # account was still fine: a live 1-credit /people/match returned a verified email (200) with
-    # the field still reading 0, and only `total_unified_credits_used` moved. Apollo has moved
-    # this account to unified credits, so derive what is left from the granted lead pool minus
-    # unified usage, and keep the legacy field as a fallback for accounts still on the old model.
+    # api_profile with include_credit_usage meters each pool. The one that runs out is the LEAD
+    # pool (Apollo's 422 names `credit_type: lead credits`, `credit_balance: 0`), which every enrich
+    # match and search page draws on, and `num_credits_remaining` counts it down.
+    # `total_unified_credits_used` moves with `num_direct_dial_credits_used` (phone reveals) only:
+    # the granted pool minus it stays high while Apollo refuses every enrich. The legacy field has
+    # read a stale 0 on a healthy account before; that costs a minute of refusals per sweep (a
+    # probe's 2xx lifts the reading), where a stale high reading relays every call into the 422.
+    # Without the lead field there is no reading (stale): the unified meter is no stand-in for it.
     d = await _get(c, "https://api.apollo.io/api/v1/users/api_profile",
                    params={"include_credit_usage": "true"}, headers={"X-Api-Key": key})
-    granted, used = d.get("effective_num_lead_credits"), d.get("total_unified_credits_used")
-    left = (granted - used if isinstance(granted, (int, float)) and isinstance(used, (int, float))
-            else d.get("num_credits_remaining"))
+    lead = d.get("num_credits_remaining")
+    left = lead if _number(lead) else None
+    dial, dial_used = d.get("effective_num_direct_dial_credits"), d.get("num_direct_dial_credits_used")
+    dial_left = dial - dial_used if _number(dial) and _number(dial_used) else dial
     return {"value": left, "unit": "credits",
-            "note": f"lead pool {granted} granted / {used} unified credits used, "
-                    f"direct-dial {d.get('effective_num_direct_dial_credits')}, "
+            "note": f"lead pool {d.get('effective_num_lead_credits')} granted, direct-dial {dial_left} left, "
                     f"ai {d.get('effective_num_ai_credits')}"}
 
 
