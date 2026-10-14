@@ -279,6 +279,7 @@ endpoints:
       source_url: https://www.apollo.io/pricing
       checked: '2026-08-13'
       confidence: documented
+      reported_charge: {path: credits_consumed, unit: credit}
       note: 'priced per person MATCHED in the batch on the same 1-credit baseline as single enrichment (apollo.people.enrich), +8 if a mobile is revealed, not per call; unmatched rows are free. CONFIRMED live 2026-08-13 the route matches (200, 1/1 person). Same documented Basic-plan rate as fx.yaml credit_rates_usd.apollo.'
     docs_url: https://docs.apollo.io/reference/bulk-people-enrichment
 
