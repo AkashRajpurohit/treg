@@ -594,12 +594,24 @@ review and accepted deliberately (2026-08-17): coupling the credit's fate to the
 would be backwards, because the credit must stand whatever happens after it; full reasoning and the
 cheap future fix in [ads-conversions](ads-conversions.md).
 
-**Invoices exist on the manual path only.** The top-up Checkout sets `invoice_creation`, so a
-one-off purchase produces a real Stripe Invoice - number, PDF, billing address, tax ID - which is the
-document a finance team accepts; Stripe's card receipt is not. Auto-top-up charges a bare off-session
-PaymentIntent and therefore has **no** invoice, only a receipt: attaching one would mean rebuilding
-the automatic charge as InvoiceItem + Invoice paid off-session, rewriting the money path and its
-idempotency guarantees for the minority of payments. Say "invoice" only about the manual path.
+**Every future top-up has an invoice.** The manual top-up Checkout sets `invoice_creation`. For an
+automatic top-up, `attempt_auto_topup` creates a USD draft invoice for the existing Stripe Customer,
+adds one item, finalizes it with `auto_advance=false`, then pays it off-session using the saved card.
+Pending items and inherited discounts are excluded so the invoice charges the configured refill
+amount rather than another purchase or coupon amount.
+The invoice carries the same description and org/kind metadata as the manual invoice. Each write has
+a separate deterministic idempotency key derived from the threshold-crossing key. The paid invoice's
+`payments` association identifies the PaymentIntent; `ledger.topup` still keys its purchased block on
+that ID. Historical bare auto-top-up charges remain without invoices.
+
+An invoice-created PaymentIntent does not inherit invoice metadata. `_invoice_metadata_for_payment`
+resolves the invoice through `InvoicePayment.list` when a payment webhook has no metadata, so a
+webhook that arrives before the synchronous credit can still identify the org. The ledger's
+PaymentIntent uniqueness makes the later path a no-op. Failed finalized invoices are voided where
+possible; `auto_advance=false` also prevents Stripe's automatic retries and dunning. An
+authentication-required invoice stays open with automatic advancement off so its recovery
+PaymentIntent remains usable. The invoice is a document; `invoice.created` and `invoice.paid` still
+do not credit balance.
 
 The address on that invoice comes from `billing_address_collection="required"` **plus**
 `customer_update={"address": "auto", "name": "auto"}` on the same session. Both are needed: the first
@@ -651,17 +663,18 @@ or it is a newly saved card. The declined card saved again is not proof. 3DS
 (`authentication_required`) and a deliberate off (reason `None`, consent still on file) stay off;
 a redelivered payment webhook must not switch a deliberately disabled policy back on.
 
-Turning `invoice_creation` on makes Stripe emit `invoice.created` / `invoice.paid` for every top-up.
+Creating an invoice makes Stripe emit `invoice.created` / `invoice.paid` for every top-up.
 `handle_webhook_event` drops them, deliberately: crediting on an invoice event as well as on the
 PaymentIntent would be a second door onto the same money. The invoice is a document; the
-PaymentIntent is the payment. Note also that `invoice_creation` on one-time Checkout is **priced
-separately** by Stripe, and invoice emails only go out with Customer emails → Successful payments
-enabled in the dashboard.
+PaymentIntent is the payment. Note also that invoice creation can be **priced separately** by Stripe,
+and Stripe invoice emails depend on Customer emails → Successful payments being enabled in the
+dashboard. treg's own receipt email is sent independently.
 
 **`list_payments` reads rows from us and documents from Stripe.** The payment list is built from our
 own `CreditBlock` rows - the same table the balance is computed from, so the history can never show a
 payment the balance disagrees with, and amounts and dates need no network call. Stripe is asked only
-for the links, in two list calls (`Charge.list` + `Invoice.list`, joined in memory) rather than two
+for the links, in two list calls (`Charge.list` + `Invoice.list`, joined through invoice payments or
+the legacy charge invoice field) rather than two
 per row; a failure degrades to rows without links and reports `stripe_ok: false`, because a Stripe
 hiccup should cost the payer a download button, not their payment history. Both Stripe windows cap at
 100 payments, so a very old top-up on a busy account comes back link-less - the portal is the

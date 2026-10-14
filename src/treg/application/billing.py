@@ -625,9 +625,10 @@ def _assemble_payments(
 async def _payment_documents(org: Org, wanted: int) -> tuple[dict[str, dict], bool]:
     """`{payment_intent_id: {receipt_url, number, invoice_pdf, hosted_invoice_url}}` for one customer.
 
-    Two list calls (charges, invoices) rather than two per row, joined in memory through the charge's
-    `invoice` field. Both windows cap at 100 payments, so a very old top-up on a heavily-used account
-    can come back link-less; the portal (`create_portal_session`) is the unbounded archive. Returns
+    Two list calls (charges, invoices) rather than two per row, joined in memory through invoice
+    payments (or the charge's legacy `invoice` field). Both windows cap at 100 payments, so a very
+    old top-up on a heavily-used account can come back link-less; the portal
+    (`create_portal_session`) is the unbounded archive. Returns
     `({}, False)` on any Stripe failure — the caller renders amounts without links rather than a 500.
     """
     if not (org.stripe_customer_id and wanted and configured()):
@@ -635,17 +636,25 @@ async def _payment_documents(org: Org, wanted: int) -> tuple[dict[str, dict], bo
     window = max(wanted, 100)
     try:
         charges = await _sdk(stripe_adapter.CHARGE_LIST, customer=org.stripe_customer_id, limit=window)
-        invoices = await _sdk(stripe_adapter.INVOICE_LIST, customer=org.stripe_customer_id, limit=window)
+        invoices = await _sdk(stripe_adapter.INVOICE_LIST, customer=org.stripe_customer_id,
+                              limit=window, expand=["data.payments"])
     except Exception as e:  # noqa: BLE001 — see docstring: links are optional, the history is not
         log.warning("billing: could not load payment documents for org %s: %s", org.id, e)
         return {}, False
 
     by_invoice = {}
+    by_pi = {}
     for inv in (invoices.get("data") or []):
         if inv.get("id"):
             by_invoice[inv["id"]] = {"number": inv.get("number") or "",
                                      "invoice_pdf": inv.get("invoice_pdf") or "",
                                      "hosted_invoice_url": inv.get("hosted_invoice_url") or ""}
+            for entry in (inv.get("payments") or {}).get("data") or []:
+                payment = entry.get("payment") or {}
+                pi = payment.get("payment_intent")
+                pi_id = pi if isinstance(pi, str) else (pi or {}).get("id")
+                if pi_id:
+                    by_pi[pi_id] = by_invoice[inv["id"]]
     out: dict[str, dict] = {}
     for ch in (charges.get("data") or []):
         pi = ch.get("payment_intent")
@@ -654,7 +663,8 @@ async def _payment_documents(org: Org, wanted: int) -> tuple[dict[str, dict], bo
             continue
         inv = ch.get("invoice")
         inv = inv if isinstance(inv, str) else (inv or {}).get("id")
-        out[pi] = {"receipt_url": ch.get("receipt_url") or "", **by_invoice.get(inv or "", {})}
+        out[pi] = {"receipt_url": ch.get("receipt_url") or "",
+                   **(by_pi.get(pi) or by_invoice.get(inv or "", {}))}
     return out, True
 
 
@@ -688,6 +698,48 @@ def _idempotency_key(org_id: int, amount_micro: int, crossing: int, payment_meth
     """
     raw = f"autotopup:{org_id}:{_now():%Y-%m-%d}:{crossing}:{amount_micro}:{payment_method}"
     return "treg_" + hashlib.sha256(raw.encode()).hexdigest()[:40]
+
+
+async def _invoice_payment_intent(invoice: dict) -> str:
+    """The pinned Stripe API exposes invoice payments, not invoice.payment_intent."""
+    payments = (invoice.get("payments") or {}).get("data") or []
+    if not payments:
+        payments = (await _sdk(stripe_adapter.INVOICE_PAYMENT_LIST,
+                               invoice=invoice["id"], limit=10)).get("data") or []
+    for entry in payments:
+        payment = entry.get("payment") or {}
+        pi = payment.get("payment_intent")
+        pi_id = pi if isinstance(pi, str) else (pi or {}).get("id")
+        if pi_id:
+            return pi_id
+    return ""
+
+
+async def _invoice_metadata_for_payment(pi_id: str) -> dict:
+    """Invoice-created PaymentIntents do not inherit invoice metadata."""
+    matches = await _sdk(stripe_adapter.INVOICE_PAYMENT_LIST,
+                         payment={"type": "payment_intent", "payment_intent": pi_id}, limit=1)
+    for match in matches.get("data") or []:
+        invoice = match.get("invoice")
+        invoice_id = invoice if isinstance(invoice, str) else (invoice or {}).get("id")
+        if invoice_id:
+            invoice = await _sdk(stripe_adapter.INVOICE_RETRIEVE, id=invoice_id)
+            return invoice.get("metadata") or {}
+    return {}
+
+
+async def _stop_failed_invoice(invoice_id: str, key: str) -> None:
+    """No failed automatic invoice may be retried or dunned by Stripe."""
+    if not invoice_id:
+        return
+    try:
+        invoice = await _sdk(stripe_adapter.INVOICE_RETRIEVE, id=invoice_id)
+        if invoice.get("status") == "open":
+            await _sdk(stripe_adapter.INVOICE_VOID, id=invoice_id,
+                       idempotency_key=f"{key}:void")
+        # A draft cannot collect, and a paid invoice must remain available to the webhook.
+    except Exception as exc:  # noqa: BLE001 - auto_advance=False is the retry backstop
+        log.warning("billing: could not close failed auto top-up invoice %s: %s", invoice_id, exc)
 
 
 async def _disable_autotopup(db: AsyncSession, org: Org, reason: str, *, recovery_pi: str = "") -> None:
@@ -762,19 +814,37 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
 
         crossing = spent // max(1, amount_micro)
         to = await owner_email(db, org_id)
+        key = _idempotency_key(org_id, amount_micro, crossing, org.stripe_default_pm)
+        invoice_id = ""
+        cents = micro_to_cents(amount_micro)
         try:
-            pi = await _sdk(
-                stripe_adapter.PAYMENT_INTENT_CREATE,
-                amount=micro_to_cents(amount_micro),
-                currency="usd",                    # explicit: the account's own default is AUD
+            invoice = await _sdk(
+                stripe_adapter.INVOICE_CREATE,
                 customer=org.stripe_customer_id,
-                payment_method=org.stripe_default_pm,
-                off_session=True,                  # nobody is at the keyboard — declare it
-                confirm=True,
+                currency="usd",  # the Stripe account's default is AUD
+                collection_method="charge_automatically",
+                auto_advance=False,
+                default_payment_method=org.stripe_default_pm,
+                pending_invoice_items_behavior="exclude",
+                discounts="",  # a customer-level coupon must not change the refill amount
+                description=f"Prepaid API call balance for {org.name or org.slug}",
                 metadata={"treg_org_id": str(org_id), "treg_kind": "topup", "treg_auto": "1"},
-                **({"receipt_email": to} if to else {}),
-                idempotency_key=_idempotency_key(org_id, amount_micro, crossing, org.stripe_default_pm),
+                idempotency_key=f"{key}:invoice",
             )
+            invoice_id = invoice["id"]
+            await _sdk(stripe_adapter.INVOICE_ITEM_CREATE,
+                       customer=org.stripe_customer_id, invoice=invoice_id, amount=cents,
+                       currency="usd", description="treg balance top-up", discountable=False,
+                       idempotency_key=f"{key}:item")
+            await _sdk(stripe_adapter.INVOICE_FINALIZE, id=invoice_id,
+                       auto_advance=False, idempotency_key=f"{key}:finalize")
+            paid = await _sdk(stripe_adapter.INVOICE_PAY, id=invoice_id,
+                              off_session=True, payment_method=org.stripe_default_pm,
+                              idempotency_key=f"{key}:pay")
+            pi_id = await _invoice_payment_intent(paid)
+            if not pi_id:
+                raise ValueError("paid auto top-up invoice has no PaymentIntent")
+            pi = await _sdk(stripe_adapter.PAYMENT_INTENT_RETRIEVE, id=pi_id)
         except stripe_adapter.CardError as e:
             code = (getattr(e, "code", "") or (e.error.code if getattr(e, "error", None) else "") or "")
             # The declined PaymentIntent hangs off the error as a StripeObject (not a dict), so reach
@@ -790,14 +860,19 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
                 # fresh charge the bank will decline the same way.
                 await _disable_autotopup(db, org, "authentication_required", recovery_pi=pi_id)
                 return {"ok": False, "reason": "authentication_required", "payment_intent": pi_id}
+            await _stop_failed_invoice(invoice_id, key)
             return await _record_failure(db, org_id, code or "card_declined")
         except Exception as e:  # noqa: BLE001 — a Stripe outage must not surface as a 500 elsewhere
             log.warning("billing: auto top-up for org %s failed: %s", org_id, e)
+            await _stop_failed_invoice(invoice_id, key)
             return await _record_failure(db, org_id, "stripe_error")
 
-        if pi.get("status") != "succeeded":
+        if (paid.get("status") != "paid" or paid.get("amount_paid") != cents
+                or pi.get("status") != "succeeded" or pi.get("currency") != "usd"
+                or pi.get("amount_received") != cents):
             # `requires_action` off-session is 3DS by another name; anything else pending is not money
             # we can credit. Either way the balance stays as it was.
+            await _stop_failed_invoice(invoice_id, key)
             return await _record_failure(db, org_id, f"status_{pi.get('status')}")
 
         # Credit here rather than waiting for the webhook: unlike a browser redirect, this succeeded
@@ -805,14 +880,17 @@ async def attempt_auto_topup(db: AsyncSession, org_id: int) -> dict:
         # later delivery of the same PaymentIntent id is a no-op (ledger.topup is idempotent on it).
         # topup only STAGES - the commit below lands credit + failure-counter reset in one
         # transaction.
-        credited = cents_to_micro(pi.get("amount_received") or pi.get("amount") or 0)
+        credited = cents_to_micro(pi["amount_received"])
+        already = (await db.execute(
+            select(CreditBlock.id).where(CreditBlock.stripe_payment_intent == pi["id"])
+        )).first() is not None
         await ledger.topup(db, org_id, credited, pi["id"], meta={"auto": True, "source": "stripe"})
         org = await db.get(Org, org_id)
         org.autotopup_failures = 0
         org.autotopup_disabled_reason = None
         db.add(org)
         await db.commit()
-        if to:
+        if to and not already:
             await email_mod.send_topup_receipt(
                 to, org.name or org.slug, credited, await ledger.balance_of(db, org_id), auto=True)
         return {"ok": True, "payment_intent": pi["id"], "amount_micro": credited}
@@ -1101,9 +1179,11 @@ async def _on_payment_succeeded(db: AsyncSession, pi: dict) -> dict:
     auto-charge; `treg_kind` on the metadata is what tells our top-ups apart from anything else the
     account does (the landing-page demo charges, for one)."""
     meta = pi.get("metadata") or {}
+    if not meta and pi.get("id"):
+        meta = await _invoice_metadata_for_payment(pi["id"])
     if meta.get("treg_kind") != "topup":
         return {"handled": False, "reason": "not a treg top-up"}
-    org_id = _org_id_from(pi)
+    org_id = _org_id_from({"metadata": meta})
     if org_id is None:
         return {"handled": False, "reason": "no org in metadata"}
     amount_micro = cents_to_micro(pi.get("amount_received") or pi.get("amount") or 0)
@@ -1168,9 +1248,11 @@ async def _on_payment_failed(db: AsyncSession, pi: dict) -> dict:
     decline on the hosted page can just try again, but an unattended charge that keeps failing has to
     stop by itself."""
     meta = pi.get("metadata") or {}
+    if not meta and pi.get("id"):
+        meta = await _invoice_metadata_for_payment(pi["id"])
     if meta.get("treg_kind") != "topup":
         return {"handled": False, "reason": "not a treg top-up"}
-    org_id = _org_id_from(pi)
+    org_id = _org_id_from({"metadata": meta})
     if org_id is None:
         return {"handled": False, "reason": "no org in metadata"}
     if meta.get("treg_auto") != "1":
