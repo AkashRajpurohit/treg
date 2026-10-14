@@ -29,6 +29,7 @@ import random
 from ... import oauth_providers
 from ...config import PRIMARY_SLOT, get_settings, platform_setting_name
 from ...domain.capacity.fair_share import fair_share
+from ...domain.capacity.marks import spends_balance
 from ...domain.capacity.view import view as capacity_view
 from ...infra.upstream.limiter import limiter
 from .types import ResolutionFailed
@@ -114,13 +115,13 @@ def capacity_key(service: str, slot: str | None) -> str:
     return f"{service}#{cap}" if cap else service
 
 
-def exhausted(service: str, endpoint_id: str, slot: str | None) -> bool:
-    return capacity_view.is_exhausted(service, endpoint_id, capacity_slot(slot))
+def exhausted(service: str, endpoint_id: str, slot: str | None, *, metered: bool = True) -> bool:
+    return capacity_view.is_exhausted(service, endpoint_id, capacity_slot(slot), metered=metered)
 
 
-def all_exhausted(service: str, endpoint_id: str) -> bool:
+def all_exhausted(service: str, endpoint_id: str, *, metered: bool = True) -> bool:
     """No account of the provider can serve this endpoint now."""
-    return all(exhausted(service, endpoint_id, slot) for slot in _labels(service))
+    return all(exhausted(service, endpoint_id, slot, metered=metered) for slot in _labels(service))
 
 
 def assign(mk) -> None:
@@ -131,7 +132,9 @@ def assign(mk) -> None:
     spreads instead of every call reading the same idle account."""
     if mk.key_slot is not None:
         return
-    slots = [slot for slot in _labels(mk.provider) if not exhausted(mk.provider, mk.endpoint_id, slot)]
+    metered = spends_balance(mk.cost_type)
+    slots = [slot for slot in _labels(mk.provider)
+             if not exhausted(mk.provider, mk.endpoint_id, slot, metered=metered)]
     slots = slots or _labels(mk.provider)
     start = next(_rotation.setdefault(mk.provider, itertools.count(random.randrange(1 << 16)))) % len(slots)
     mk.key_slot = min(slots[start:] + slots[:start],

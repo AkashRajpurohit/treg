@@ -2257,8 +2257,10 @@ async def _resolve_marketplace_call(
         key_slot = keyslots.pinned(
             service, owners=async_owners + resource_owners,
             idempotency_key=_key_affinity(caller, request_headers))
-    if cost is not None and (keyslots.exhausted(service, ep["id"], key_slot) if key_slot is not None
-                             else keyslots.all_exhausted(service, ep["id"])):
+    metered = cost is not None and capacity_marks.spends_balance(str(cost.get("type") or "per_call"))
+    if cost is not None and (keyslots.exhausted(service, ep["id"], key_slot, metered=metered)
+                             if key_slot is not None
+                             else keyslots.all_exhausted(service, ep["id"], metered=metered)):
         # treg's own account for this call is known to be out (the call-path lock, or the sweep).
         # Either admits one probe a minute so a recovered account is noticed. Otherwise never
         # relay a call we know will 402: with an enabled overflow route the ladder skips straight
@@ -2266,8 +2268,8 @@ async def _resolve_marketplace_call(
         # and what else (§4.2). With every account out, the probe goes to the primary.
         key_slot = key_slot or keyslots.PRIMARY_SLOT
         cap_slot = keyslots.capacity_slot(key_slot)
-        lock = capacity_view.active_lock(service, ep["id"], cap_slot)
-        state = capacity_view.get(service) if lock is None and cap_slot is None else None
+        lock = capacity_view.active_lock(service, ep["id"], cap_slot, metered=metered)
+        state = capacity_view.get(service) if lock is None and cap_slot is None and metered else None
         if lock is not None and capacity_marks.probe_due(lock.key):
             probe_lock_id = lock.lock_id
         elif state is not None and capacity_marks.sweep_probe_due(service, state.observed_at):
@@ -2277,7 +2279,8 @@ async def _resolve_marketplace_call(
             skip_direct = True
         else:
             raise _provider_capacity_unavailable(
-                ep, service, capacity_view.exhausted_until(service, ep["id"], cap_slot), probing=True)
+                ep, service, capacity_view.exhausted_until(service, ep["id"], cap_slot, metered=metered),
+                probing=True)
     if cost is not None:
         virtual = Tool(
             org_id=caller.org_id, name=ep["id"], owner=caller.email,

@@ -1476,7 +1476,9 @@ async def _note_capacity_recovery(mk: MarketplaceCall) -> None:
     try:
         await capacity_view.load()
         cleared = False
-        for lock in capacity_view.locks(mk.provider, mk.endpoint_id, keyslots.capacity_slot(mk.key_slot)):
+        # A free route's 2xx says nothing about the balance: it clears only its endpoint's own row.
+        for lock in capacity_view.locks(mk.provider, mk.endpoint_id, keyslots.capacity_slot(mk.key_slot),
+                                        metered=capacity_marks.spends_balance(mk.cost_type)):
             if lock.is_active() and lock.lock_id != mk.probe_lock_id:
                 continue
             if await capacity_marks.clear(lock.key, lock_id=mk.probe_lock_id):
