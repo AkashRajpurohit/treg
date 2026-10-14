@@ -658,19 +658,15 @@ async def _apollo(c, key):
     # the granted pool minus it stays high while Apollo refuses every enrich. The legacy field has
     # read a stale 0 on a healthy account before; that costs a minute of refusals per sweep (a
     # probe's 2xx lifts the reading), where a stale high reading relays every call into the 422.
+    # Without the lead field there is no reading (stale): the unified meter is no stand-in for it.
     d = await _get(c, "https://api.apollo.io/api/v1/users/api_profile",
                    params={"include_credit_usage": "true"}, headers={"X-Api-Key": key})
-    lead, granted = d.get("num_credits_remaining"), d.get("effective_num_lead_credits")
+    lead = d.get("num_credits_remaining")
+    left = lead if _number(lead) else None
     dial, dial_used = d.get("effective_num_direct_dial_credits"), d.get("num_direct_dial_credits_used")
-    if _number(lead):
-        left = lead
-    elif _number(granted) and _number(d.get("total_unified_credits_used")):
-        left = granted - d["total_unified_credits_used"]
-    else:
-        left = None
     dial_left = dial - dial_used if _number(dial) and _number(dial_used) else dial
     return {"value": left, "unit": "credits",
-            "note": f"lead pool {granted} granted, direct-dial {dial_left} left, "
+            "note": f"lead pool {d.get('effective_num_lead_credits')} granted, direct-dial {dial_left} left, "
                     f"ai {d.get('effective_num_ai_credits')}"}
 
 

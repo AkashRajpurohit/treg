@@ -196,15 +196,10 @@ async def test_sweep_reads_apollos_lead_credits_not_the_unified_meter(monkeypatc
     assert "direct-dial 4960 left" in state.note
 
 
-async def test_apollo_without_the_lead_field_falls_back_to_the_pool():
+async def test_apollo_without_the_lead_field_is_no_reading():
     profile = _apollo_profile(None)
     del profile["num_credits_remaining"]
     async with httpx.AsyncClient(transport=httpx.MockTransport(
             lambda _request: httpx.Response(200, json=profile))) as upstream:
         row = await collectors._apollo(upstream, "k")
-    assert row["value"] == 4960
-    profile.pop("total_unified_credits_used")
-    async with httpx.AsyncClient(transport=httpx.MockTransport(
-            lambda _request: httpx.Response(200, json=profile))) as upstream:
-        row = await collectors._apollo(upstream, "k")
-    assert row["value"] is None, "no meter is a stale reading, never a guess"
+    assert row["value"] is None, "the unified meter is no stand-in: stale, never a guess"
