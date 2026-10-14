@@ -84,8 +84,9 @@ read-side Ads catalog calls (`oauth_providers.GOOGLE_ADS`), a separate credentia
    90 days. Rows are not periodically deleted; expiry limits lookup, not physical retention. This
    association goes through neither audit nor analytics. Stash failures do not fail sign-in;
    the warning omits the email, cookie, and exception text (which could contain SQL parameters). Revision `0073` adds the table without a
-   backfill or startup schema mutation. The privacy policy discloses cross-browser URL carry and
-   the email association, including the distinction between lookup expiry and retention.
+   backfill or startup schema mutation. The privacy policy deliberately does not add a separate
+   paragraph for the URL carry or the email association (owner decision, 2026-10-14); its existing
+   `treg_ad` section is the disclosure.
 3. **Fire** — three chokepoints call `adsconv.queue(db, org, action, ...)`, which writes an
    `AdConversion` outbox row inside a `SAVEPOINT` (a nested transaction, not a bare flush or a
    `db.rollback()` — this runs inside the CALLER's transaction, and a plain rollback on a duplicate
