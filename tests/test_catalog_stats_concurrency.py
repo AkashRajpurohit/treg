@@ -13,10 +13,16 @@ import pytest
 from sqlalchemy import event, select, text
 
 from treg.application import catalog_stats
+from treg.domain.catalog import stats
 from treg.domain.catalog import store as catalog_store
+from treg.infra import catalog_stat_dirty
+from treg.infra.catalog_observations import (
+    EndpointObservationUnavailable, PostgresEndpointObservationReader, STALE_AFTER_S,
+)
 from treg.infra.catalog_stat_dirty import mark_dirty
 from treg.infra.db import reset_db, session_maker
 from treg.models import CallRecord, EndpointDayStat, EndpointStatCursor, EndpointStatDirty
+from treg import timeutil
 
 NOW = datetime(2026, 10, 15, 12)
 SUBMITTED = datetime(2026, 10, 14, 23)
@@ -45,13 +51,13 @@ async def _record(endpoint: str = EP, *, hit: bool | None = None) -> int:
         return row.id
 
 
-async def _correct(row_id: int, hit: bool) -> None:
+async def _correct(row_id: int, hit: bool, *, now: datetime = NOW) -> None:
     async with session_maker() as db:
         row = await db.get(CallRecord, row_id)
         row.hit = hit
         row.verdict = "valid" if hit else "not_found"
         db.add(row)
-        await mark_dirty(db, {(row.endpoint_id, DAY)}, now=NOW)
+        await mark_dirty(db, {(row.endpoint_id, DAY)}, now=now)
         await db.commit()
 
 
@@ -87,9 +93,17 @@ async def _wait_until_blocked(waiter_pid: int, blocker_pid: int) -> None:
 async def test_terminal_correction_commits_during_recount_and_keeps_new_revision(
     postgres_catalog_stats, monkeypatch,
 ):
+    clock = [NOW]
+    monkeypatch.setattr(catalog_stats, "utcnow_naive", lambda: clock[0])
+    monkeypatch.setattr(timeutil, "utcnow_naive", lambda: clock[0])
+    monkeypatch.setattr(stats, "_now", lambda: clock[0])
     row_id = await _record()
     await catalog_stats.refresh(session_maker, now=NOW)
-    await _correct(row_id, True)
+    originally_queued = NOW - timedelta(hours=3)
+    await _correct(row_id, True, now=originally_queued)
+    reader = PostgresEndpointObservationReader(session_maker)
+    with pytest.raises(EndpointObservationUnavailable):
+        await reader.get_many([EP])
     read_done, resume = asyncio.Event(), asyncio.Event()
     original_store = catalog_stats._store_tally
     paused = False
@@ -103,27 +117,49 @@ async def test_terminal_correction_commits_during_recount_and_keeps_new_revision
         await original_store(db, endpoint_id, day, tally, at, **kwargs)
 
     monkeypatch.setattr(catalog_stats, "_store_tally", pause_before_store)
+    # A long-running cron pass can have an older `now` than this bucket's source snapshot.
+    # The successful recount covers corrections up to its scan start, not its later commit.
+    scan_started_at = NOW + timedelta(minutes=5)
+    clock[0] = scan_started_at
     repair = asyncio.create_task(catalog_stats.refresh(session_maker, max_rows=0, now=NOW))
     try:
         async with asyncio.timeout(15):
             await read_done.wait()
             # This is a different real transaction, committed while repair holds the cursor
             # lock. Source audit rows and marker revisions must remain writable throughout.
-            await _correct(row_id, False)
+            clock[0] = scan_started_at + timedelta(minutes=7)
+            await _correct(row_id, False, now=clock[0])
             marker, = await _markers()
             assert marker.revision == 2
+            assert marker.queued_at == marker.retry_at == originally_queued
+            clock[0] = scan_started_at + timedelta(minutes=10)
             resume.set()
             result = await repair
             assert result["repaired"] == result["repair_pending"] == 1
             assert (await _bucket()).hits == 1  # the source snapshot preceded the newer commit
             marker, = await _markers()
             assert marker.revision == 2
+            assert marker.queued_at == scan_started_at
+            assert marker.queued_at < clock[0], "commit time must not hide post-snapshot corrections"
+            assert marker.retry_at == originally_queued
+            assert (await reader.get_many([EP]))[EP]["hit_samples"] == 1
 
-            later = await catalog_stats.refresh(session_maker, max_rows=0, now=NOW)
+            # Keeping the append cursor healthy cannot indefinitely hide a stranded correction.
+            clock[0] = scan_started_at + timedelta(seconds=STALE_AFTER_S + 1)
+            append_only = await catalog_stats.refresh(session_maker, max_dirty_buckets=0, now=clock[0])
+            assert append_only["caught_up"] and append_only["repaired"] == 0
+            assert append_only["repair_pending"] == 1
+            assert (await _markers())[0].queued_at == scan_started_at
+            with pytest.raises(EndpointObservationUnavailable) as unavailable:
+                await reader.get_many([EP])
+            assert unavailable.value.completed == {}
+
+            later = await catalog_stats.refresh(session_maker, max_rows=0, now=clock[0])
             assert later["repaired"] == 1 and later["repair_pending"] == 0
             bucket = await _bucket()
             assert bucket.n == bucket.hit_decided == 1 and bucket.hits == 0
             assert bucket.verdicts == {"not_found": 1}
+            assert await _markers() == []
     finally:
         resume.set()
         await _cleanup_tasks([repair])
@@ -185,6 +221,83 @@ async def test_append_fold_waits_for_repair_cursor_lock_without_double_counting(
         event.remove(postgres_catalog_stats.sync_engine, "before_cursor_execute", before_append_lock)
 
 
+async def test_correction_waiting_on_acknowledgement_delete_recreates_a_new_marker(
+    postgres_catalog_stats, monkeypatch,
+):
+    row_id = await _record()
+    await catalog_stats.refresh(session_maker, now=NOW)
+    await _correct(row_id, True)
+    scan_started_at = NOW + timedelta(minutes=1)
+    newly_queued_at = scan_started_at + timedelta(minutes=1)
+    monkeypatch.setattr(catalog_stats, "utcnow_naive", lambda: scan_started_at)
+    deleted, resume, audit_attempt = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_acknowledge = catalog_stat_dirty.acknowledge
+    repair_pid = audit_pid = 0
+    tasks = []
+
+    async def pause_after_matching_delete(db, *args, **kwargs):
+        original_execute = db.execute
+
+        async def execute(statement, *execute_args, **execute_kwargs):
+            nonlocal repair_pid
+            result = await original_execute(statement, *execute_args, **execute_kwargs)
+            if getattr(statement, "is_delete", False) and not deleted.is_set():
+                assert result.rowcount == 1, "the real matching-revision DELETE must own the row lock"
+                repair_pid = (await original_execute(text("SELECT pg_backend_pid()"))).scalar_one()
+                deleted.set()
+                await resume.wait()
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(db, "execute", execute)
+            await original_acknowledge(db, *args, **kwargs)
+
+    def before_audit_upsert(conn, cursor, statement, parameters, context, executemany):
+        nonlocal audit_pid
+        if (len(tasks) > 1 and asyncio.current_task() is tasks[1]
+                and "insert into endpointstatdirty" in " ".join(statement.lower().split())):
+            audit_pid = conn.connection.driver_connection.get_server_pid()
+            audit_attempt.set()
+
+    monkeypatch.setattr(catalog_stat_dirty, "acknowledge", pause_after_matching_delete)
+    event.listen(postgres_catalog_stats.sync_engine, "before_cursor_execute", before_audit_upsert)
+    try:
+        async with asyncio.timeout(15):
+            tasks.append(asyncio.create_task(catalog_stats.refresh(session_maker, max_rows=0, now=NOW)))
+            await deleted.wait()
+            tasks.append(asyncio.create_task(_correct(row_id, False, now=newly_queued_at)))
+            await audit_attempt.wait()
+            await _wait_until_blocked(audit_pid, repair_pid)
+            assert not tasks[1].done()
+            resume.set()
+            repaired, _ = await asyncio.gather(*tasks)
+            assert repaired["repaired"] == 1
+            assert (await _bucket()).hits == 1  # the newer correction was outside the source snapshot
+            marker, = await _markers()
+            assert marker.revision == 1, "the post-DELETE upsert must recreate rather than lose its marker"
+            assert marker.queued_at == marker.retry_at == newly_queued_at
+            async with session_maker() as db:
+                assert (await db.get(CallRecord, row_id)).hit is False
+    finally:
+        resume.set()
+        await _cleanup_tasks(tasks)
+        event.remove(postgres_catalog_stats.sync_engine, "before_cursor_execute", before_audit_upsert)
+
+
+async def test_acknowledgement_does_not_move_a_newer_markers_age_backwards(postgres_catalog_stats):
+    queued_at, retry_at = NOW + timedelta(minutes=1), NOW + timedelta(minutes=2)
+    async with session_maker() as db:
+        db.add(EndpointStatDirty(endpoint_id=EP, day=DAY, revision=2,
+                                 queued_at=queued_at, retry_at=retry_at))
+        await db.commit()
+    async with session_maker() as db:
+        await catalog_stat_dirty.acknowledge(db, EP, DAY, 1, scanned_at=NOW)
+        await db.commit()
+    marker, = await _markers()
+    assert marker.revision == 2
+    assert marker.queued_at == queued_at and marker.retry_at == retry_at
+
+
 async def test_postgres_query_cancellation_rolls_back_replacement_and_reuses_pool(
     postgres_catalog_stats, monkeypatch,
 ):
@@ -214,6 +327,7 @@ async def test_postgres_query_cancellation_rolls_back_replacement_and_reuses_poo
         assert (await _bucket(cool)).hits == 1
         marker, = await _markers()
         assert marker.endpoint_id == hot and marker.revision == 1 and marker.retry_at > NOW
+        assert marker.queued_at == NOW, "failed replacements must not renew correction age"
 
         # A cancelled asyncpg connection may be discarded, but the pool and cursor lock must be
         # immediately usable by another session. NOWAIT proves no abandoned lock survives.

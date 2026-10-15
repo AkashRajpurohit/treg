@@ -2110,8 +2110,9 @@ class EndpointStatDirty(SQLModel, table=True):
 
     Audit marks the actual submission day in the same transaction as its terminal correction.
     The catalog worker replaces that day's folded evidence and acknowledges only the revision
-    it read, so another correction during a recount remains queued. This is lossy analytics,
-    separate from the durable task status and money transaction.
+    it read, so another correction during a recount remains queued. A successful full recount
+    advances a retained marker's age bound to the source scan start; failures preserve its age.
+    This is lossy analytics, separate from the durable task status and money transaction.
     """
 
     __table_args__ = (Index("ix_endpointstatdirty_retry_at_endpoint_id_day",
@@ -2121,16 +2122,15 @@ class EndpointStatDirty(SQLModel, table=True):
     day: str = Field(primary_key=True)
     revision: int = Field(
         default=1, sa_column=Column(BigInteger, nullable=False, server_default=text("1")))
-    queued_at: NaiveUTC = Field(default_factory=_now)
+    queued_at: NaiveUTC = Field(default_factory=_now)  # oldest uncovered correction's age bound
     retry_at: NaiveUTC = Field(default_factory=_now)
 
 
 class EndpointStatCursor(SQLModel, table=True):
     """Where `application.catalog_stats.refresh` has got to in `callrecord`, and whether it has
     caught up. One row (`id = "callrecord"`). `caught_up_at` is NULL until a run drains the backlog,
-    and the catalog keeps computing observations live until then. A stale worker also restores
-    live fallback; async endpoints with result adapters retain live reads even after catch-up.
-    Background terminal repair does not change that reader selection in this stage.
+    and the catalog publishes no observations until a recent run has caught up. Missing or stale
+    worker evidence never authorizes a request-triggered audit-table aggregate.
     """
 
     id: str = Field(primary_key=True)
