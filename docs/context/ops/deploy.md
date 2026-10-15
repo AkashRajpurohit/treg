@@ -251,6 +251,10 @@ provider credential.
 ## Optional money admission
 
 Root Web requests have a separate, default-disabled [Org concurrency guard](../architecture/org-concurrency.md).
+Operator-published [Org pause rules](../architecture/org-flow-control.md) are independently
+enabled with `TREG_ORG_FLOW_CONTROL_ENABLED` and read through the shared Redis destination.
+They do not enable dynamic rate or concurrency limits. Restore published Redis keys before
+enabling workers; failed refreshes refuse new root calls with 503.
 Its per-Org map and exemptions are environment configuration; enabling requires an explicit Redis
 outage policy and shared Redis. See that fragment for placeholder configuration, lease-loss limits,
 and rollback by disabling. It does not change the money admission or financial cleanup below.

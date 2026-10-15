@@ -45,7 +45,7 @@ from ..domain.governance import publicdemo as publicdemo_policy
 from ..domain.governance import usage as usage_policy
 from ..domain.identity.access import Caller, require_member
 from ..infra.db import get_session
-from ..infra import org_concurrency, org_traffic
+from ..infra import org_concurrency, org_flow_control, org_traffic
 from ..models import Tool
 from .auth import _client_ip
 
@@ -399,6 +399,7 @@ async def run_call_surface(rest: str, request: Request, caller: Caller, *, prefi
     streaming = False
     try:
         # Caller is trusted; every root HTTP/MCP call enters here, routing children do not.
+        await org_flow_control.check(caller.org_id, context.call_ref)
         slot = await org_concurrency.acquire(caller.org_id)
         upstream = await execute_call(context, request.app.state.http)
         if slot is not None:
@@ -408,7 +409,8 @@ async def run_call_surface(rest: str, request: Request, caller: Caller, *, prefi
             response = _LeasedStreamingResponse(response, slot, upstream.close)
             streaming = True  # The ASGI response now owns cleanup and slot release.
         return response
-    except org_concurrency.AdmissionRejected as exc:
+    except (org_concurrency.AdmissionRejected, org_flow_control.PauseRejected,
+            org_flow_control.FlowControlUnavailable) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail,
                             headers={"Retry-After": str(exc.retry_after_s)}) from exc
     except CallFailure as exc:
