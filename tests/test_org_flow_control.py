@@ -164,7 +164,7 @@ async def test_mcp_roots_preserve_pause_retry_and_call_identity(
 
 
 async def test_new_pause_does_not_interrupt_an_accepted_stream(clients, monkeypatch):
-    check = AsyncMock()
+    check = AsyncMock(return_value=None)
     monkeypatch.setattr(org_flow_control, "check", check)
     started, proceed = asyncio.Event(), asyncio.Event()
     closed = AsyncMock()
@@ -204,7 +204,7 @@ async def test_pause_does_not_block_accepted_financial_cleanup(
     )
 
     org_id, balance = await _funded_org(clients)
-    check = AsyncMock()
+    check = AsyncMock(return_value=None)
     monkeypatch.setattr(org_flow_control, "check", check)
     stream = _BlockingProviderStream()
     async with httpx.AsyncClient(transport=_BlockingProviderTransport(stream)) as http:
@@ -242,3 +242,31 @@ async def test_pause_does_not_block_accepted_financial_cleanup(
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
+@pytest.mark.parametrize("snapshot", [
+    None,
+    org_flow_control.Snapshot(version=3, pause_until=None, canonical="{}"),
+    org_flow_control.Snapshot(version=4, pause_until=None, canonical="{}", max_in_flight=7),
+])
+async def test_root_forwards_single_published_snapshot_to_concurrency(
+    clients, monkeypatch, path, snapshot,
+):
+    org_id = (await clients.get("/orgs")).json()[0]["org_id"]
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
+    check = AsyncMock(return_value=snapshot)
+    acquire = AsyncMock(return_value=None)
+    monkeypatch.setattr(org_flow_control, "check", check)
+    monkeypatch.setattr(org_concurrency, "acquire", acquire)
+    execute = AsyncMock(return_value=_success())
+    monkeypatch.setattr(routes, "execute_call", execute)
+    response = await clients.get(path + "example/path")
+    assert response.status_code == 200, response.text
+    execute.assert_awaited_once()
+    context = execute.await_args.args[0]
+    assert context.call_ref
+    check.assert_awaited_once_with(org_id, context.call_ref)
+    acquire.assert_awaited_once_with(
+        org_id, limit=snapshot.max_in_flight if snapshot else None,
+        version=snapshot.version if snapshot else 0)

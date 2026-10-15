@@ -9,7 +9,6 @@ import pytest
 
 from treg.infra import kv
 from treg.infra import org_concurrency as guard
-from treg.config import get_settings
 
 
 @pytest.fixture
@@ -85,13 +84,9 @@ async def test_renewal_outlives_original_lease_and_shorter_owner_does_not_shorte
 async def test_guard_heartbeat_retains_slot_past_original_lease(stores, monkeypatch):
     first, second, _ = stores
     org_id = uuid4().int
-    settings = get_settings()
-    monkeypatch.setattr(settings, "org_concurrency_enabled", True)
-    monkeypatch.setattr(settings, "org_concurrency_limits", {org_id: 1})
-    monkeypatch.setattr(settings, "org_concurrency_redis_failure", "fail_closed")
-    monkeypatch.setattr(settings, "org_concurrency_lease_s", 0.6)
+    monkeypatch.setattr(guard, "_LEASE_S", 0.6)
     monkeypatch.setattr(kv, "store", lambda: first)
-    slot = await guard.acquire(org_id)
+    slot = await guard.acquire(org_id, limit=1, version=7)
     try:
         await asyncio.sleep(1.3)
         assert await second.acquire_slot(slot.key, "other-worker", 2000, 1) == "busy"
@@ -111,5 +106,15 @@ async def test_redis_outage_and_local_store_are_distinct_from_contention():
             assert await backend.acquire_slot("key", "owner", 1000, 1) == "unavailable"
             assert await backend.renew_slot("key", "owner", 1000) == "unavailable"
             assert await backend.release_slot("key", "owner") == "unavailable"
+    finally:
+        await store.aclose()
+
+
+async def test_guard_fails_open_for_unavailable_redis_and_local_store(monkeypatch):
+    store = kv.RedisStore("redis://127.0.0.1:1")
+    try:
+        for backend in (store, kv.LocalStore()):
+            monkeypatch.setattr(kv, "store", lambda: backend)
+            assert await guard.acquire(42, limit=1, version=7) is None
     finally:
         await store.aclose()

@@ -250,17 +250,26 @@ provider credential.
 
 ## Optional money admission
 
-Root Web requests have a separate, default-disabled [Org concurrency guard](../architecture/org-concurrency.md).
-Its per-Org map and exemptions are environment configuration; enabling requires an explicit Redis
-outage policy and shared Redis. See that fragment for placeholder configuration, lease-loss limits,
-and rollback by disabling. It does not change the money admission or financial cleanup below.
+Root Web requests have separate, default-disabled [published Org pause and concurrency
+admission](../architecture/org-flow-control.md), enabled with `TREG_ORG_FLOW_CONTROL_ENABLED`
+and read through the shared Redis destination. A full snapshot's non-null
+`concurrency_limit.max_in_flight` controls shared root slots; null removes that limit. Published
+rate limits are validated but not enforced. This does not change the money admission or
+financial cleanup below.
 
-Operator-published [Org pause rules](../architecture/org-flow-control.md) are independently
-enabled with `TREG_ORG_FLOW_CONTROL_ENABLED` and read through the shared Redis destination.
-They do not enable dynamic rate or concurrency limits. Restore published Redis keys before
-enabling workers; Redis connectivity failures and timeouts allow new root calls. Missing keys
-clear local rules; malformed or conflicting publications retain the last valid rule's original
-expiry. Cache saturation allows uncached Orgs. See the pause fragment for recovery limits.
+The old `TREG_ORG_CONCURRENCY_*` configuration no longer controls concurrent request admission.
+There is no automatic migration or static fallback. Review old values and already published
+non-null concurrency values before deploying the new behavior. Any equivalent dynamic rules
+must be separately approved, saved and published, and the shared flag enabled, through an
+authorized rollout. Saving alone does not activate rules; this code change performs none of
+those operational actions. See [concurrency migration](../architecture/org-concurrency.md#configuration-migration-and-rollback)
+for the sequence and the fixed lease/retry behavior.
+
+Restore published Redis keys before enabling workers; Redis connectivity, initialization and
+timeout failures allow new root calls, including failures while acquiring a slot. Missing keys
+clear local rules; malformed or conflicting publications retain the last valid concurrency limit
+and original pause expiry. Cache saturation allows uncached Orgs. Per-worker refresh is eventual,
+not an all-worker acknowledgment. See the flow-control fragment for recovery limits.
 
 `TREG_MONEY_ADMISSION_ENABLED` defaults to `false`. Enabling it requires a shared Redis-compatible
 store at `TREG_KV_URL`; all participating web and money-worker processes must use the same store
@@ -272,8 +281,12 @@ and rollout settings. No database migration or additional database privileges ar
   5 seconds, and bounds the complete local/Redis acquisition attempt. Local-lock waiting uses
   the same budget as Redis waiting. Cleanup is separately bounded by the KV operations. Exhausting this
   budget rejects `reserve` before its funds transaction with HTTP 429 `money_admission_timeout`
-  and a jittered `Retry-After`: an integer from `TREG_ORG_CONCURRENCY_RETRY_AFTER_S` through twice
-  that value (inclusive). No configuration default changes. All other operations still fall back
+  and a jittered `Retry-After`: an integer from `TREG_MONEY_ADMISSION_RETRY_AFTER_S` through twice
+  that value (inclusive). The retry floor defaults to 1 second and accepts integers from 1 to 60.
+  The old `TREG_ORG_CONCURRENCY_RETRY_AFTER_S` name remains a validation alias for this money
+  setting; migrate any custom value to the money-specific name. It does not configure the
+  published concurrency guard, whose contention guidance is fixed at one second.
+  All other operations still fall back
   to the database path, including settlement and release. Redis infrastructure errors retain
   the database fallback for every
   operation. A missing or non-positive

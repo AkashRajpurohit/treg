@@ -260,7 +260,7 @@ and separately mapped `blame`; the compatibility header remains the literal `1`.
 
 When enabled money admission exhausts its configured reserve wait, `reserve_admission` refuses
 before the funds transaction with HTTP 429, `detail.error: money_admission_timeout`, blame `treg`
-and `Retry-After` with integer-second jitter from `org_concurrency_retry_after_s` through twice
+and `Retry-After` with integer-second jitter from `money_admission_retry_after_s` through twice
 that value (inclusive). No hold is created and no upstream request starts for that attempt. Both
 MCP surfaces preserve the underlying status and expose the retry header as `retry_after`.
 The 429 is not stored under `Idempotency-Key`: normal error cleanup releases its pending claim,

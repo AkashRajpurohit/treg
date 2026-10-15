@@ -347,9 +347,12 @@ and `release`, and does not yield into the body. That refusal is not a fallback 
 locks and token-owned Redis leases, then raises `ReserveAdmissionTimeout` without entering the
 session. `application.call.reserve.reserve_admission` maps it to `ReservationFailed` with kind
 `money_admission_timeout`, blame `treg`, and HTTP 429. `Retry-After` is a random integer between
-`org_concurrency_retry_after_s` and twice that setting (inclusive), sharing the org limiter's
-retry floor while spreading retries. Both platform and Hub seller-price reserves use that
-mapping; no hold or upstream call starts on rejection. HTTP
+`money_admission_retry_after_s` and twice that setting (inclusive), spreading retries. The retry
+floor defaults to 1 second and accepts integers from 1 to 60. Its environment name is
+`TREG_MONEY_ADMISSION_RETRY_AFTER_S`; the legacy `TREG_ORG_CONCURRENCY_RETRY_AFTER_S` remains a
+validation alias for money only. It no longer configures Org concurrency admission. Both
+platform and Hub seller-price reserves use that mapping; no hold or upstream call starts on
+rejection. HTTP
 retains `X-Treg-Error: 1`; both MCP surfaces expose the status, body and `retry_after` metadata.
 
 The feature defaults off; `money_admission_org_ids` selects an opt-in subset, or all orgs when

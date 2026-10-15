@@ -399,8 +399,10 @@ async def run_call_surface(rest: str, request: Request, caller: Caller, *, prefi
     streaming = False
     try:
         # Caller is trusted; every root HTTP/MCP call enters here, routing children do not.
-        await org_flow_control.check(caller.org_id, context.call_ref)
-        slot = await org_concurrency.acquire(caller.org_id)
+        snapshot = await org_flow_control.check(caller.org_id, context.call_ref)
+        slot = await org_concurrency.acquire(
+            caller.org_id, limit=snapshot.max_in_flight if snapshot else None,
+            version=snapshot.version if snapshot else 0)
         upstream = await execute_call(context, request.app.state.http)
         if slot is not None:
             upstream.close = org_concurrency.cleanup_once(upstream.close)

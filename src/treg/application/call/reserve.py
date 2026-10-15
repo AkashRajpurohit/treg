@@ -38,8 +38,8 @@ async def reserve_admission(org_id: int) -> AsyncIterator[None]:
         ):
             yield
     except money_admission.ReserveAdmissionTimeout as exc:
-        # Share the org limiter's retry floor, with integer-second jitter for Retry-After.
-        retry_base_s = get_settings().org_concurrency_retry_after_s
+        # Money admission owns its retry floor, with integer-second jitter for Retry-After.
+        retry_base_s = get_settings().money_admission_retry_after_s
         retry_after_s = random.randint(retry_base_s, 2 * retry_base_s)
         try:
             logging.getLogger("treg.money_admission").warning(
