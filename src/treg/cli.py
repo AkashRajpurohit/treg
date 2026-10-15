@@ -67,7 +67,7 @@ PRODUCTION_BASE_URL = "https://treg.to"
 
 def _load_config() -> dict:
     try:
-        raw = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
+        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
     except (json.JSONDecodeError, OSError):
         raw = {}  # a corrupt/half-written config must not brick every command (incl. login/logout)
     base = raw.get("base_url", PRODUCTION_BASE_URL)
@@ -90,7 +90,7 @@ def _save_config(cfg: dict) -> None:
     # Write-then-rename so an interrupted save (kill / full disk) can't leave a truncated,
     # unparseable config that bricks every subsequent command.
     tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2))
+    tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     tmp.chmod(0o600)
     os.replace(tmp, CONFIG_PATH)
     CONFIG_PATH.chmod(0o600)
@@ -397,6 +397,17 @@ def _show_hint_line(resp: httpx.Response) -> None:
               file=sys.stderr)
 
 
+def _treg_saturated(resp: httpx.Response) -> bool:
+    """treg's own 503 when its database pool is exhausted: typed by `treg_saturated` in the body."""
+    if resp.status_code != 503:
+        return False
+    try:
+        body = resp.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("treg_saturated") is True
+
+
 def _show_failure_diagnostics(resp: httpx.Response) -> None:
     """One stderr line an agent can file a failure under: the HTTP status, WHOSE answer it is, and the
     call id support can look up. The body above is printed verbatim, so for a relayed upstream error it
@@ -411,9 +422,15 @@ def _show_failure_diagnostics(resp: httpx.Response) -> None:
         path = resp.request.url.path
     except (AttributeError, RuntimeError):
         path = "/call/"
-    relayed = path.startswith("/call/") and not headers.get("X-Treg-Error")
+    saturated = _treg_saturated(resp)
+    relayed = path.startswith("/call/") and not headers.get("X-Treg-Error") and not saturated
     whose = "the provider answered; treg relayed it unchanged" if relayed else (
         "treg refused the call" if path.startswith("/call/") else "treg answered")
+    if saturated:
+        # Saturation carries no X-Treg-Error by design (bootstrap_handlers._pool_saturated).
+        wait = headers.get("Retry-After")
+        whose = ("treg is overloaded, not the provider; retry "
+                 + (f"in {wait}s" if wait else "in a moment"))
     line = f"treg: HTTP {resp.status_code} — {whose}"
     if call_id := headers.get("X-Treg-Call-Id"):
         line += f"; call id {call_id} (quote it to support; `treg calls` shows the record)"
@@ -1517,9 +1534,9 @@ def cmd_secret_add(args, cfg) -> None:
         except (FileNotFoundError, ValueError) as exc:  # "no X secret" / "ambiguous — use --file"
             sys.exit(str(exc))
         print(f"[using {src_file}]", file=sys.stderr)
-        value = src_file.read_text().strip()  # a trailing newline would become an illegal header value
+        value = src_file.read_text(encoding="utf-8").strip()  # a trailing newline would become an illegal header value
     elif args.file:
-        value = Path(args.file).read_text().strip()
+        value = Path(args.file).read_text(encoding="utf-8").strip()
     elif args.value is not None:
         value = args.value
     else:
@@ -1539,7 +1556,7 @@ def _sync_contract_secret(skill_dir, src_file, name: str, kind: str) -> None:
     if not path.exists() or src_file is None:
         return
     try:
-        contract = json.loads(path.read_text())
+        contract = json.loads(path.read_text(encoding="utf-8"))
         rel = str(Path(src_file).resolve().relative_to(Path(skill_dir).resolve()))
         secrets = contract.setdefault("secrets", [])
         entry = next((s for s in secrets if s.get("file") == rel), None)
@@ -1547,7 +1564,7 @@ def _sync_contract_secret(skill_dir, src_file, name: str, kind: str) -> None:
             secrets.append({"file": rel, "name": name, "kind": kind})
         else:
             entry["name"], entry["kind"] = name, kind
-        path.write_text(json.dumps(contract, indent=2))
+        path.write_text(json.dumps(contract, indent=2), encoding="utf-8")
         print(f"[synced {CONTRACT_FILE}]", file=sys.stderr)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"[warning: could not sync {CONTRACT_FILE}: {exc}]", file=sys.stderr)
@@ -1609,7 +1626,7 @@ def _load_catalog(cfg) -> list:
         if body.get("providers"):
             try:
                 cache.parent.mkdir(parents=True, exist_ok=True)
-                cache.write_text(r.text)
+                cache.write_text(r.text, encoding="utf-8")
             except OSError:
                 pass
             # Prefer the NEWER catalog: a CLI updated ahead of its server (mid-deploy) must NOT regress to
@@ -1621,7 +1638,7 @@ def _load_catalog(cfg) -> list:
         pass
     try:
         if cache.exists():
-            cached = json.loads(cache.read_text())
+            cached = json.loads(cache.read_text(encoding="utf-8"))
             if cached.get("providers") and int(cached.get("version") or 0) >= prov.CATALOG_VERSION:
                 return cached["providers"]
     except (OSError, json.JSONDecodeError):
@@ -2544,6 +2561,10 @@ def _call_envelope(response: httpx.Response, content_type: str) -> dict:
         import base64
         result = {"base64": base64.b64encode(response.content).decode("ascii"), "content_type": content_type}
     meta: dict = {"http_status": response.status_code}
+    if _treg_saturated(response):
+        meta["treg_saturated"] = True
+        if (wait := headers.get("Retry-After", "")).isdigit():
+            meta["retry_after_seconds"] = int(wait)
     if call_id := headers.get("X-Treg-Call-Id"):
         meta["call_id"] = call_id
     if (cost := headers.get("X-Treg-Cost-Micro")) is not None:
@@ -2969,7 +2990,7 @@ def _run_helper(tool, user_args, cfg) -> None:
             env["HOME"] = fsjail_dir      # tool caches land in the private scratch, not a readable HOME
             env["TMPDIR"] = fsjail_dir + "/"
             prof = os.path.join(fsjail_dir, "profile.sb")
-            Path(prof).write_text(fsjail.macos_profile(fsjail_dir))
+            Path(prof).write_text(fsjail.macos_profile(fsjail_dir), encoding="utf-8")
             cmd = fsjail.wrap_macos(cmd, prof)
         else:
             print("  ! --fs-jail is enforced on macOS only for now; running without it", file=sys.stderr)
@@ -3156,7 +3177,7 @@ def _member_registry_url(member: str) -> str | None:
     try:
         import pwd
         home = pwd.getpwnam(member).pw_dir
-        return json.loads((Path(home) / ".treg" / "config.json").read_text()).get("base_url")
+        return json.loads((Path(home) / ".treg" / "config.json").read_text(encoding="utf-8")).get("base_url")
     except Exception:  # noqa: BLE001 — a missing/odd config just means no registry host is added
         return None
 
@@ -3174,19 +3195,19 @@ def _install_egress(registry_url: str | None) -> None:
         return
     os.makedirs("/etc/treg-run", exist_ok=True)
     if sys.platform == "darwin":
-        Path("/etc/treg-run/egress.pf").write_text(egress.pf_ruleset(ips, _RUN_USER))
+        Path("/etc/treg-run/egress.pf").write_text(egress.pf_ruleset(ips, _RUN_USER), encoding="utf-8")
         # A root-owned loader that re-applies Apple's ruleset + our per-uid rules (pf is last-match; our
         # `quick` user rules take effect without disturbing anyone else's traffic).
-        Path(_EGRESS_LOADER).write_text("#!/bin/sh\ncat /etc/pf.conf /etc/treg-run/egress.pf | pfctl -f -\n")
+        Path(_EGRESS_LOADER).write_text("#!/bin/sh\ncat /etc/pf.conf /etc/treg-run/egress.pf | pfctl -f -\n", encoding="utf-8")
         os.chmod(_EGRESS_LOADER, 0o755)
         subprocess.run([_EGRESS_LOADER], capture_output=True)  # enforce now
         plist = "/Library/LaunchDaemons/dev.treg.egress.plist"
-        Path(plist).write_text(_EGRESS_PLIST.format(loader=_EGRESS_LOADER))
+        Path(plist).write_text(_EGRESS_PLIST.format(loader=_EGRESS_LOADER), encoding="utf-8")
         subprocess.run(["launchctl", "load", "-w", plist], capture_output=True)  # re-apply at boot
         print(f"  egress: pf allow-list active — {_RUN_USER} may reach {len(hosts)} host(s), all else dropped")
     else:  # linux
         uid = subprocess.run(["id", "-u", _RUN_USER], capture_output=True, text=True).stdout.strip() or "0"
-        Path("/etc/treg-run/egress.nft").write_text(egress.nft_ruleset(ips, int(uid)))
+        Path("/etc/treg-run/egress.nft").write_text(egress.nft_ruleset(ips, int(uid)), encoding="utf-8")
         subprocess.run(["nft", "-f", "/etc/treg-run/egress.nft"], capture_output=True)
         print(f"  egress: nftables allow-list active — {_RUN_USER} may reach {len(hosts)} host(s), all else dropped")
         print("    (to persist across reboot, load /etc/treg-run/egress.nft from your nftables service)")
@@ -3255,7 +3276,7 @@ def cmd_setup_local_run(args, cfg) -> None:
     proof = args.run_proof or os.environ.get("TREG_RUN_PROOF") or ""
     if proof:
         os.makedirs(os.path.dirname(_RUN_PROOF_PATH), exist_ok=True)
-        Path(_RUN_PROOF_PATH).write_text(proof)
+        Path(_RUN_PROOF_PATH).write_text(proof, encoding="utf-8")
         subprocess.run(["chown", f"{_RUN_USER}:{_RUN_USER}", _RUN_PROOF_PATH], check=True)  # user:group (macOS-safe)
         os.chmod(_RUN_PROOF_PATH, 0o400)  # only treg-run (and root) can read it; the member cannot
         print(f"installed runner proof at {_RUN_PROOF_PATH} (shared-key local runs enabled)")
@@ -3268,7 +3289,7 @@ def cmd_setup_local_run(args, cfg) -> None:
     Path(_RUNNER_PATH).write_text(
         '#!/bin/sh\nexport HOME=/tmp\n'
         f'[ -r {_RUN_PROOF_PATH} ] && export TREG_RUN_PROOF="$(cat {_RUN_PROOF_PATH})"\n'
-        f'exec "{treg_bin}" __run-helper "$@"\n')
+        f'exec "{treg_bin}" __run-helper "$@"\n', encoding="utf-8")
     os.chmod(_RUNNER_PATH, 0o755)  # we are root -> root-owned; the member cannot modify it
     print(f"installed runner at {_RUNNER_PATH}")
 
@@ -3278,7 +3299,7 @@ def cmd_setup_local_run(args, cfg) -> None:
             f'{member} ALL=({_RUN_USER}) NOPASSWD: {_RUNNER_PATH}\n')
     os.makedirs("/etc/sudoers.d", exist_ok=True)  # present on Linux; on macOS it's the @includedir target
     tmp = "/etc/sudoers.d/.treg-run.tmp"
-    Path(tmp).write_text(rule)
+    Path(tmp).write_text(rule, encoding="utf-8")
     os.chmod(tmp, 0o440)
     if subprocess.run(["visudo", "-cf", tmp], capture_output=True).returncode != 0:
         os.unlink(tmp)
@@ -3563,7 +3584,7 @@ def cmd_serve_start(args, cfg) -> None:
         # The child died. Its reason is in the log and nowhere else — printing "see the log" and
         # making the user go read it is one step too many when we can just say what happened.
         try:
-            why = [ln for ln in log.read_text().splitlines() if ln.strip()][-1]
+            why = [ln for ln in log.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()][-1]
         except (OSError, IndexError):
             why = ""
         sys.exit(f"treg: the proxy did not come up.\n  {why}\n  (full log: {log})" if why
@@ -3722,7 +3743,7 @@ def cmd_skill_scaffold(args, cfg) -> None:
     except (NotADirectoryError, OSError) as exc:
         sys.exit(str(exc))
     if args.out:
-        Path(args.out).write_text(manifest)
+        Path(args.out).write_text(manifest, encoding="utf-8")
         print(f"wrote {args.out} (fill in base_url + bindings, then: treg skill push {args.out})")
     else:
         print(manifest)
@@ -3730,7 +3751,7 @@ def cmd_skill_scaffold(args, cfg) -> None:
 
 def cmd_skill_push(args, cfg) -> None:
     try:
-        body = json.loads(Path(args.file).read_text())
+        body = json.loads(Path(args.file).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         sys.exit(f"could not read skill file {args.file!r}: {exc}")
     with _client(cfg) as c:
@@ -3747,7 +3768,7 @@ def cmd_skill_init(args, cfg) -> None:
         sys.exit(str(exc))
     out = Path(args.out) if args.out else Path(args.dir) / CONTRACT_FILE
     fill = contract.pop("_fill", [])
-    out.write_text(json.dumps(contract, indent=2))
+    out.write_text(json.dumps(contract, indent=2), encoding="utf-8")
     print(f"wrote {out}")
     print(f"  auto: base_url={contract['base_url'] or '(none)'} | secrets={[s['name'] for s in contract['secrets']]}")
     if fill:
@@ -3846,7 +3867,7 @@ def cmd_skill_install(args, cfg) -> None:
                 if skill_md.exists() and not args.force:   # don't clobber a hand-edited local skill silently
                     kept_in.append(base); continue
                 dest.mkdir(parents=True, exist_ok=True)
-                skill_md.write_text(recipe)
+                skill_md.write_text(recipe, encoding="utf-8")
                 extra_files = _write_bundle_files(dest, bundle.get("files") or {})  # the rest of the folder
                 wrote_to.append(base)
             tools = bundle.get("tools") or []
@@ -4029,7 +4050,7 @@ def cmd_skill_bootstrap(args, cfg) -> None:
     for b in bases:
         dest = b / "treg"
         dest.mkdir(parents=True, exist_ok=True)
-        (dest / "SKILL.md").write_text(recipe)
+        (dest / "SKILL.md").write_text(recipe, encoding="utf-8")
         print(f"  ✓ treg → {dest / 'SKILL.md'}"); n += 1
         # the skill used to install as "tools-registry"; a leftover copy would load as a duplicate
         # skill and confuse agents, so retire it — but only if it's exactly ours (just a SKILL.md).
@@ -4059,7 +4080,7 @@ def cmd_skill_bootstrap(args, cfg) -> None:
     for name, text in extra:
         for b in bases:
             (b / name).mkdir(parents=True, exist_ok=True)
-            (b / name / "SKILL.md").write_text(text)
+            (b / name / "SKILL.md").write_text(text, encoding="utf-8")
         print(f"  ✓ {name} → {len(bases)} location(s)")
     detected = _agents.detect_installed()
     tail = f"detected: {', '.join(detected)}" if detected else "no agents detected — used sensible defaults"
@@ -5509,16 +5530,16 @@ def _hub_read_folder(path: str) -> dict:
     folder = Path(path)
     if not (folder / "recipe.json").is_file():
         sys.exit(f"treg hub: no recipe.json in {folder} (treg hub init <name> writes one)")
-    manifest = json.loads((folder / "recipe.json").read_text())
+    manifest = json.loads((folder / "recipe.json").read_text(encoding="utf-8"))
     body = {"manifest": manifest, "check": {}, "readme": ""}
     if (folder / "check.json").is_file():
-        body["check"] = json.loads((folder / "check.json").read_text())
+        body["check"] = json.loads((folder / "check.json").read_text(encoding="utf-8"))
     if (folder / "README.md").is_file():
-        body["readme"] = (folder / "README.md").read_text()
+        body["readme"] = (folder / "README.md").read_text(encoding="utf-8")
     if (folder / "run.js").is_file():
-        body["script"] = (folder / "run.js").read_text()
+        body["script"] = (folder / "run.js").read_text(encoding="utf-8")
     if (folder / "data.csv").is_file():
-        body["data"] = (folder / "data.csv").read_text()    # the maker's uploaded CSV: ctx.data in the script
+        body["data"] = (folder / "data.csv").read_text(encoding="utf-8")    # the maker's uploaded CSV: ctx.data in the script
     return body
 
 
@@ -5621,14 +5642,14 @@ def cmd_hub_init(args, cfg) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     skeleton = dict(_HUB_SCRIPT_SKELETON if args.script else _HUB_STEPS_SKELETON)
     skeleton["name"] = name
-    (folder / "recipe.json").write_text(json.dumps(skeleton, indent=2) + "\n")
+    (folder / "recipe.json").write_text(json.dumps(skeleton, indent=2) + "\n", encoding="utf-8")
     if args.script:
-        (folder / "run.js").write_text(_HUB_RUN_JS)
+        (folder / "run.js").write_text(_HUB_RUN_JS, encoding="utf-8")
         check = {"inputs": {"query": "example query", "limit": 3}, "fields": ["items", "count"]}
     else:
         check = {"inputs": {"query": "example query", "limit": 2}, "fields": ["items"]}
-    (folder / "check.json").write_text(json.dumps(check, indent=2) + "\n")
-    (folder / "README.md").write_text(_HUB_README.format(name=name))
+    (folder / "check.json").write_text(json.dumps(check, indent=2) + "\n", encoding="utf-8")
+    (folder / "README.md").write_text(_HUB_README.format(name=name), encoding="utf-8")
     _section(f"① New hub tool: {name}")
     for f in HUB_FILES:
         if (folder / f).exists():
@@ -6199,7 +6220,7 @@ def _byo_body(args) -> dict:
     if not args.name:
         sys.exit("a name is required when bringing your own client secret")
     try:
-        cs = json.loads(Path(args.client_secret).read_text())
+        cs = json.loads(Path(args.client_secret).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         sys.exit(f"could not read client-secret JSON {args.client_secret!r}: {exc}")
     block = cs.get("installed") or cs.get("web") or cs
@@ -7266,11 +7287,26 @@ def _subcommands(parser) -> set[str]:
     return set()
 
 
+def _utf8_stdio() -> None:
+    """Write stdout and stderr as UTF-8 whatever the console's code page. A Windows pipe or a Git
+    Bash terminal reports cp1252 (or cp949, GBK), where any non-ASCII output raises. A real Windows
+    console is already UTF-8 (PEP 528) and is left alone; `backslashreplace` keeps a lone surrogate
+    from raising."""
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "").replace("_", "")
+        if encoding != "utf8" and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (ValueError, OSError):
+                pass
+
+
 def main(argv: list[str] | None = None) -> None:
     """One CLI invocation. `--org` and `--json` live in module globals for the length of this call
     only, so a second `main()` in the same process (tests, embedders) starts from the defaults."""
     global _ORG_OVERRIDE, _JSON_OVERRIDE
     _ORG_OVERRIDE, _JSON_OVERRIDE = None, False
+    _utf8_stdio()
     try:
         _main(list(sys.argv[1:] if argv is None else argv))
     finally:
