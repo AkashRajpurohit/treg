@@ -132,6 +132,27 @@ async def test_a_task_that_fails_after_posting_still_bills_what_dataforseo_charg
     assert task.status == "settled" and task.settled_micro == 3_750
 
 
+async def test_a_batch_whose_first_task_was_refused_bills_the_tasks_dataforseo_accepted(
+    clients: AsyncClient, monkeypatch, dfs_platform,
+):
+    """The accepted task is owned and readable, so the call pays what DataForSEO charged for it."""
+    answers = [
+        _response(200, _envelope([_task(TASK_A, 40501, 0), _task(TASK_B, 20100, 0.00375)])),
+        _response(200, _envelope([_task(TASK_B, 20000, 0, result=[{"items": []}])])),
+    ]
+
+    async def fake_relay(*args, **kwargs):
+        return answers.pop(0)
+
+    monkeypatch.setattr(call_service, "relay", fake_relay)
+    submitted = await clients.post(f"/call/{POST}", json=[{"keyword": ""}, {"keyword": "tea"}])
+    assert submitted.status_code == 200
+    assert submitted.headers["X-Treg-Cost-Micro"] == "3750"
+    assert (await clients.get(f"/call/{GET}", params={"id": TASK_B})).status_code == 200
+    async with session_maker() as db:
+        assert (await db.execute(select(AsyncTaskRecord))).first() is None
+
+
 async def test_an_on_page_crawl_is_readable_only_by_the_team_that_paid_for_it(
     clients: AsyncClient, monkeypatch, dfs_platform,
 ):

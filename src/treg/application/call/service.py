@@ -1571,14 +1571,16 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
                     )
                     deferred = False
             elif rejected:
-                # An async endpoint answered 2xx with no task in it (an error envelope, a WAF
-                # page, a changed schema): nothing to poll, nothing to charge. Closed now, not
-                # parked for 24 hours; the caller gets the body and sees $0.
+                # An async endpoint answered 2xx with no accepted task to track (an error
+                # envelope, a WAF page, a changed schema): nothing to poll. Closed now, not parked
+                # for 24 hours, at what the provider reported charging, else zero. A batch whose
+                # first task was refused can still carry accepted, billed tasks the caller owns.
+                reported = _observed_cost_micro(mk, body, httpx.Headers(response.raw_headers))
                 logging.getLogger("treg.asynctasks").warning(
-                    "call %s on %s: 2xx but not an accepted submission (%s); settled at zero",
-                    call_ref, mk.endpoint_id, rejected)
+                    "call %s on %s: 2xx but not an accepted submission (%s); settled at %s",
+                    call_ref, mk.endpoint_id, rejected, reported or 0)
                 charged, observed = await _platform_settle(
-                    mk, response.status, body, observed_override=0, reason=rejected,
+                    mk, response.status, body, observed_override=reported or 0, reason=rejected,
                     finalized=lambda: setattr(
                         request.context, "finalization", FinalizationState.FINALIZED),
                 )

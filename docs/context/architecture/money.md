@@ -511,7 +511,8 @@ owned by the original task and may close on this poll's terminal evidence. This 
 billed OAuth, or a zero estimate on a paid endpoint.
 A 2xx that is not an accepted submission (not JSON, fails the endpoint's `expect` rule, or carries
 no task id / an off-allow-list poll URL: `application.call.service._submission_rejected`) never
-becomes a row: it settles at zero on the request path and the caller sees the body and `$0`. The
+becomes a row: it settles on the request path at the charge the provider reported, else zero (a
+batch whose first task was refused may still carry accepted, billed tasks the caller owns). The
 worker never lets one row abort a tick (`_process` catches everything, `settle_due` gathers with
 `return_exceptions`), because an unset platform key for one provider must not stall every other
 provider's settlements. Each tick loads the catalog once, in a thread, before any poll starts
