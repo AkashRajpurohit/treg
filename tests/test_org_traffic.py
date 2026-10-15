@@ -293,17 +293,23 @@ async def test_trusted_org_log_and_unresolved_null(
     assert "must-not-log" not in json.dumps(logs(caplog))
 
 
-@pytest.mark.parametrize("failure,status", [(RuntimeError("fault"), 500), (PoolTimeoutError(), 503)])
+@pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
+@pytest.mark.parametrize("failure,status,failure_kind", [
+    (RuntimeError("fault"), 500, "unexpected_exception"),
+    (PoolTimeoutError(), 503, "db_pool"),
+])
 async def test_exception_or_pool_timeout_keeps_status_and_finishes(
-    clients, counter, caller_key_id, monkeypatch, caplog, failure, status,
+    clients, counter, caller_key_id, monkeypatch, caplog, posthog_events, path, failure, status,
+    failure_kind,
 ):
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
     execute = AsyncMock(side_effect=failure)
     monkeypatch.setattr(routes, "execute_call", execute)
     if status == 500:
         with pytest.raises(RuntimeError, match="fault"):
-            await clients.get("/call/example/path")
+            await clients.get(path + "example/path")
     else:
-        assert (await clients.get("/call/example/path")).status_code == status
+        assert (await clients.get(path + "example/path")).status_code == status
     [row] = counter.snapshot()["top"]
     assert row["requests"] == row["completed"] == 1
     assert row["status_503"] == (status == 503)
@@ -311,7 +317,39 @@ async def test_exception_or_pool_timeout_keeps_status_and_finishes(
     assert logged["status"] == status
     assert logged["api_key_id"] == caller_key_id
     assert logged["call_ref"] == execute.await_args.args[0].call_ref
+    [event] = await posthog_events()
+    assert logged["failure_kind"] == event["properties"]["failure_kind"] == failure_kind
     assert not counter.orgs
+
+
+@pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
+async def test_pool_timeout_before_identity_logs_intake_failure_kind(
+    clients, counter, monkeypatch, caplog, posthog_events, path,
+):
+    from treg.domain.identity import access
+
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
+    with monkeypatch.context() as patch:
+        patch.setattr(access, "_membership_by_token", AsyncMock(side_effect=PoolTimeoutError()))
+        response = await clients.get(path + "example/path")
+    assert response.status_code == 503
+    assert response.json()["treg_saturated"] is True
+    assert response.headers["Retry-After"] == "2"
+    [logged] = logs(caplog)
+    [event] = await posthog_events("call_intake_failed")
+    assert logged["status"] == 503
+    assert logged["failure_kind"] == event["properties"]["failure_kind"] == "db_pool"
+    assert logged["call_ref"] == response.headers["X-Treg-Call-Id"]
+    assert logged["org_id"] is None and logged["api_key_id"] is None
+    assert await posthog_events() == []
+    assert counter.snapshot()["top"] == []
+
+    # A later request on the same client must not inherit the previous request's failure.
+    caplog.clear()
+    response = await clients.get(path + "example/path")
+    assert response.status_code == 404
+    [logged] = logs(caplog)
+    assert logged["failure_kind"] is None
 
 
 @pytest.mark.parametrize("ending", ["success", "error", "cancel"])
@@ -542,6 +580,7 @@ async def test_resolved_own_tool_does_not_guess_catalog_identity(
     assert row["tool_name"] == name and row["endpoint_id"] is None
     assert row["method"] == "GET" and row["replay_of"] is None
     assert "must-not-log" not in json.dumps(row) and "private-path" not in json.dumps(row)
+    assert row["failure_kind"] is None
 
 
 @pytest.mark.parametrize("surface", ["/call/", "/catalog/call/", "/table/"])

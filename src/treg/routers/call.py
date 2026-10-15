@@ -222,6 +222,7 @@ def _capture_exceptional_call(
         props["provider"] = urlsplit(target.upstream).hostname or ""
     org_id, email = getattr(request.state, "call_identity", (None, ""))
     team_slug = getattr(request.state, "call_team_slug", "")
+    request.state.call_failure_kind = props["failure_kind"]
     analytics.capture(
         email or "anonymous",
         "tool_called",
