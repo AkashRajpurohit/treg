@@ -148,6 +148,9 @@ class Org(SQLModel, table=True):
     # flag because the moment the team objected is the processing record. Appended last, like the
     # column above, so create_all schemas match the migrated shape.
     archive_opt_out_at: NaiveUTC | None = Field(default=None)
+    # The team's picture: a media key (`team_avatar/<sha256>.png`) in the public media bucket, or
+    # NULL for initials. Set by owners and admins through `application.images`. Appended last.
+    avatar_key: str | None = Field(default=None)
 
 
 class OrgFlowControlVersion(SQLModel, table=True):
@@ -218,6 +221,9 @@ class User(SQLModel, table=True):
     # so we never generate codes for the majority who never look. See referrals.py.
     referral_code: str | None = Field(default=None, index=True, unique=True)
     created_at: NaiveUTC = Field(default_factory=_now)
+    # This person's picture: a media key (`user_avatar/<sha256>.png`) in the public media bucket, or
+    # NULL for initials. Set by the person themselves through `application.images`. Appended last.
+    avatar_key: str | None = Field(default=None)
 
 
 class SignupPromoClaim(SQLModel, table=True):
@@ -2198,3 +2204,104 @@ class OnboardingProfile(SQLModel, table=True):
     house_cost_micro: int = Field(default=0, sa_column=Column(BigInteger, nullable=False, server_default="0"))
     created_at: NaiveUTC = Field(default_factory=_now)
     finished_at: NaiveUTC | None = None
+
+
+# ---- showcase leaderboard (docs/context/architecture/showcase.md) ------------------------------
+# Teams apply their apps to the /showcase leaderboard; staff review them. treg is the only writer of
+# these tables: makers through `application.showcase`, staff through its staff API (which the
+# private admin calls), the weekly worker for `showcaseweek`. The public leaderboard shows only
+# approved entries and, per the maker's consent, bucketed activity - never the team, an exact count
+# or money.
+
+SHOWCASE_STATUSES = "('pending', 'approved', 'rejected', 'hidden')"
+
+
+class ShowcaseApp(SQLModel, table=True):
+    """One app on the leaderboard. The live columns are what the public sees once approved;
+    `pending` holds a proposed revision (a new application or an edit) waiting for review, with the
+    same keys as the live columns. Image keys point into the media buckets: live ones are published,
+    pending ones may still be in staging."""
+
+    __table_args__ = (
+        CheckConstraint(f"status IN {SHOWCASE_STATUSES}", name="ck_showcaseapp_status"),
+        CheckConstraint("version >= 0", name="ck_showcaseapp_version"),
+        Index("ix_showcaseapp_status_id", "status", "id"),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    org_id: int = Field(foreign_key="org.id", index=True)
+    status: str = Field(default="pending")
+    name: str = Field(default="")
+    url: str = Field(default="")
+    tagline: str = Field(default="")
+    description: str = Field(default="")
+    category: str = Field(default="")
+    maker_name: str = Field(default="")
+    x_handle: str = Field(default="")
+    launch_post_url: str = Field(default="")
+    icon_key: str | None = Field(default=None)
+    shot_keys: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    show_calls: bool = Field(default=False)        # call tier, Most active and Rising boards
+    show_streak: bool = Field(default=False)       # active-day streak
+    show_providers: bool = Field(default=False)    # providers used
+    show_categories: bool = Field(default=False)   # capability mix
+    pending: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    reject_reason: str = Field(default="")
+    submitted_by: int | None = Field(default=None, foreign_key="user.id", ondelete="SET NULL")
+    version: int = Field(default=0)
+    created_at: NaiveUTC = Field(default_factory=_now)
+    updated_at: NaiveUTC = Field(default_factory=_now)
+    approved_at: NaiveUTC | None = Field(default=None)
+
+
+class ShowcaseAppEvent(SQLModel, table=True):
+    """Append-only history of an app: applications, edits and review decisions."""
+
+    __table_args__ = (
+        UniqueConstraint("app_id", "version", name="uq_showcaseappevent_version"),
+        CheckConstraint("version > 0", name="ck_showcaseappevent_version"),
+        CheckConstraint("source IN ('web', 'api', 'admin')", name="ck_showcaseappevent_source"),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    app_id: int = Field(foreign_key="showcaseapp.id", ondelete="CASCADE")
+    version: int
+    action: str             # applied | edited | approved | rejected | hidden | unhidden | withdrawn
+    changes: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))  # {field: [before, after]}
+    note: str = Field(default="")
+    actor: str
+    source: str
+    created_at: NaiveUTC = Field(default_factory=_now)
+
+
+class ShowcaseWeek(SQLModel, table=True):
+    """One app's activity in one UTC week (Monday start), from its team's call records. Written only
+    by `application.showcase.refresh_weeks`. Rows add up exactly: the leaderboard sums the last four
+    for its monthly numbers and unions their provider lists for a distinct count."""
+
+    __table_args__ = (
+        CheckConstraint("calls >= 0", name="ck_showcaseweek_calls"),
+        CheckConstraint("active_days BETWEEN 0 AND 127", name="ck_showcaseweek_active_days"),
+    )
+    app_id: int = Field(primary_key=True, foreign_key="showcaseapp.id", ondelete="CASCADE")
+    week_start: str = Field(primary_key=True)  # YYYY-MM-DD, a Monday, UTC
+    calls: int = Field(default=0)
+    active_days: int = Field(default=0)  # bit d set = a call on day d of the week (0 = Monday)
+    providers: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    categories: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))  # {domain: calls}
+    computed_at: NaiveUTC = Field(default_factory=_now)
+
+
+class ShowcaseVote(SQLModel, table=True):
+    """One signed-in person's up (+1) or down (-1) vote on one app. Written only by
+    `application.showcase.vote`; withdrawing a vote deletes the row."""
+
+    __table_args__ = (
+        UniqueConstraint("app_id", "user_id", name="uq_showcasevote_app_user"),
+        CheckConstraint("value IN (-1, 1)", name="ck_showcasevote_value"),
+        Index("ix_showcasevote_app_id", "app_id"),
+    )
+    id: int | None = Field(default=None, primary_key=True)
+    app_id: int = Field(foreign_key="showcaseapp.id", ondelete="CASCADE")
+    user_id: int = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
+    value: int
+    created_at: NaiveUTC = Field(default_factory=_now)
+    updated_at: NaiveUTC = Field(default_factory=_now)

@@ -2957,6 +2957,200 @@
   {
     "kind": "APIRoute",
     "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "showcase_leaderboard",
+    "path": "/showcase/leaderboard"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "showcase_my_votes",
+    "path": "/showcase/votes/me"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "showcase_vote",
+    "path": "/showcase/vote"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "showcase_my_teams",
+    "path": "/showcase/my-teams"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "showcase_team_apps",
+    "path": "/showcase/teams/{org_id}/apps"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "showcase_apply",
+    "path": "/showcase/teams/{org_id}/apps"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "showcase_edit",
+    "path": "/showcase/apps/{app_id}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "showcase_withdraw",
+    "path": "/showcase/apps/{app_id}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "staff_queue",
+    "path": "/admin/showcase/apps"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "staff_app",
+    "path": "/admin/showcase/apps/{app_id}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "staff_approve",
+    "path": "/admin/showcase/apps/{app_id}/approve"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "staff_reject",
+    "path": "/admin/showcase/apps/{app_id}/reject"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "staff_hide",
+    "path": "/admin/showcase/apps/{app_id}/hide"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "staff_edit",
+    "path": "/admin/showcase/apps/{app_id}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "staff_create",
+    "path": "/admin/showcase/teams/{org_id}/apps"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "staff_team",
+    "path": "/admin/showcase/teams/{org_id}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "staff_upload",
+    "path": "/admin/images/{kind}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "staff_staged_image",
+    "path": "/admin/images/staging/{key:path}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "upload_image",
+    "path": "/images/{kind}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "staged_image",
+    "path": "/images/staging/{key:path}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "public_image",
+    "path": "/media-files/{key:path}"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "PUT"
+    ],
+    "name": "set_my_avatar",
+    "path": "/me/avatar"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "PUT"
+    ],
+    "name": "set_team_avatar",
+    "path": "/orgs/{org_id}/avatar"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
       "POST"
     ],
     "name": "run_tool_server",

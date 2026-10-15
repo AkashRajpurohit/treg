@@ -55,6 +55,8 @@ from .routers import api_keys as api_key_routes
 
 from .routers import arena as arena_routes
 from .routers import web_arena as web_arena_routes
+from .routers import showcase as showcase_routes
+from .routers import images as images_routes
 from .routers import auth as auth_routes
 from .routers import billing as billing_routes
 from .routers import call as call_routes
@@ -878,6 +880,8 @@ router.routes.extend(table_routes.router.routes)
 router.routes.extend(activity_routes.app.routes)
 router.routes.extend(arena_routes.router.routes)
 router.routes.extend(web_arena_routes.router.routes)
+router.routes.extend(showcase_routes.router.routes)
+router.routes.extend(images_routes.router.routes)
 
 
 # ---- server-side CLI execution (Tier 0 `treg run`) ---------------------------------------

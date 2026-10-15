@@ -522,6 +522,14 @@ without importing the heavy database stack into the light `treg` CLI.
   lifecycle as the web service, and flushes read analytics before exiting. The same scheduled
   command refreshes Web Arena's saved Battle totals when Web Arena is enabled and its reviewed
   benchmark is published; that full refresh is gated to once every 30 minutes.
+- `treg-worker showcase weeks` stores one /showcase leaderboard row per approved app per UTC week
+  (schedule it weekly, after a week ends; hosted only, so a self-hosted registry need not schedule it).
+  Each run reads only the weeks it has not stored, plus a recount of the newest, from `callrecord` on
+  its (org_id, created_at) index; its first run backfills four weeks.
+- Pictures (avatars, /showcase icons and screenshots) are off until `TREG_MEDIA_STORE_ENDPOINT`, its
+  two keys, `TREG_MEDIA_STAGING_BUCKET` and `TREG_MEDIA_PUBLIC_BUCKET` are set (SECURITY.md, "Picture
+  storage"); pages then show initials. `TREG_MEDIA_BASE_URL` names the public bucket's domain; empty,
+  treg serves the bucket at `/media-files/` itself. Switching it later needs no data change.
 - `treg-worker catalog stats` folds new audit rows into per-endpoint, per-day reliability buckets
   (`--max-rows`, default 500,000, bounds the append pass; schedule it every few minutes), then
   repairs marked endpoint/day buckets. `--max-dirty-buckets` (20), `--max-repair-seconds` (60) and

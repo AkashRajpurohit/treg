@@ -16,6 +16,7 @@ from .. import analytics, crypto, email as email_sender, health, localrun
 from .. import oauth_providers
 from .. import providers as _providers
 from ..application import key_spend
+from ..application import images
 from ..application.onboard import demo as demo_seed
 from ..application import archive_erasure
 from ..application import signup as signup_use_cases
@@ -439,12 +440,15 @@ async def list_orgs(
     x_treg_org: str = Header(default=""),
     db: AsyncSession = Depends(get_session),
 ) -> list[dict]:
-    return await teams.list_user_orgs(
+    orgs = await teams.list_user_orgs(
         user_id=user.id,
         x_treg_token=x_treg_token,
         x_treg_org=x_treg_org,
         db=db,
     )
+    for o in orgs:  # the team's picture as a URL (None = initials); the key stays internal
+        o["avatar_url"] = images.public_url(o.pop("avatar_key", None))
+    return orgs
 
 
 app = APIRouter()
@@ -743,7 +747,8 @@ async def list_members(
                         "is_agent": _is_agent_email(user.email),
                         "name": (_agent_name(caller.org, user.email)
                                  if _is_agent_email(user.email) else None),
-                        "created_by": m.created_by})
+                        "created_by": m.created_by,
+                        "avatar_url": images.public_url(user.avatar_key)})
     return out
 
 
