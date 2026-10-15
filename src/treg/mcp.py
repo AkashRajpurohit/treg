@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import inspect
 import json
 import logging
 import os
@@ -44,7 +46,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from typing import Annotated, Any, TypedDict
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import httpx
 from mcp.server import MCPServer
@@ -166,6 +168,41 @@ class _StaticSurfaceCapabilities:
         capabilities["resources"] = resources
         result["capabilities"] = capabilities
         return result
+
+
+class _UnknownCallArguments:
+    """Refuse an argument a request-building tool does not declare, naming the ones it does.
+
+    The SDK's argument model ignores undeclared keys, so `call(endpoint_id=..., data={...})` (the
+    CLI's flag name) dropped `data` and relayed a POST with an empty body: the provider answered
+    "POST Data Is Empty" and the agent retried blind. For a tool that BUILDS a request, a dropped
+    argument is a wrong request, so it is refused before anything is sent. Both surfaces: call
+    errors are shared behavior; the advertised tools and their schemas do not change.
+    """
+
+    def __init__(self, tools: dict[str, str]) -> None:
+        self._tools = tools  # tool name -> the module function that serves it
+
+    async def __call__(
+        self, ctx: ServerRequestContext[Any, Any], call_next: CallNext
+    ) -> HandlerResult:
+        params = ctx.params or {}
+        name = params.get("name")
+        arguments = params.get("arguments")
+        if ctx.method != "tools/call" or name not in self._tools or not isinstance(arguments, dict):
+            return await call_next(ctx)
+        accepted = [p for p in inspect.signature(globals()[self._tools[name]]).parameters if p != "ctx"]
+        unknown = sorted(set(arguments) - set(accepted))
+        if not unknown:
+            return await call_next(ctx)
+        refusal = {
+            "error": f"{name} does not take {', '.join(repr(u) for u in unknown)}; nothing was sent",
+            "hint": ("arguments are " + ", ".join(accepted) + ". The request body goes in `body` "
+                     "(or `params` for a POST), the query string in `query` (or `params` for a GET)"),
+            "endpoint_id": arguments.get("endpoint_id"),
+        }
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(refusal))],
+                              structured_content=refusal, is_error=True)
 
 
 _HUB_TOOL_NAMES = frozenset({"hub_create", "hub_update", "hub_mine"})
@@ -291,7 +328,9 @@ mcp = MCPServer(
         "Wan) and voice), plus your team's own tools."
     ),
     instructions=f"{_BASE_INSTRUCTIONS} {_REVIEW_INSTRUCTION}",
-    middleware=[_StaticSurfaceCapabilities(), _HubToolsGate(), _OpenAIClientGate()],
+    middleware=[_StaticSurfaceCapabilities(),
+                _UnknownCallArguments({"call": "call", "call_media": "call_media"}),
+                _HubToolsGate(), _OpenAIClientGate()],
 )
 
 
@@ -1215,8 +1254,9 @@ async def _catalog_get_impl(
 @mcp.tool(
     description=(
         "Call something through treg. `params` is the request body for a POST (an object, or an "
-        "ARRAY of task objects for providers like DataForSEO that expect one) and the query string "
-        "for a GET. Either a CATALOG endpoint by its id (from catalog_search), or "
+        "ARRAY when the endpoint's body is one: DataForSEO live routes take a one-element array, "
+        "`[{...task...}]`, and reject any extra element instead of batching it) and the query "
+        "string for a GET. Either a CATALOG endpoint by its id (from catalog_search), or "
         "one of THIS TEAM'S own tools as '<tool-name>/<path>' (from my_tools) — e.g. "
         "'render/v1/services' — or a HUB tool by its id '<team-slug>.<name>' (a maker's tool made of "
         "tools; `params` are its inputs, see catalog_get for them). treg injects the credential "
@@ -1262,6 +1302,29 @@ async def call(endpoint_id: str, params: dict | list | None = None,
         authorization_method=authorization_method, ctx=ctx,
         catalog_only=False, surface=_TEAM_SURFACE, allowed_methods=None,
     )
+
+
+_IDEMPOTENCY_KEY_MAX = 200  # the server keeps this many characters (application/call/idempotency.py)
+
+
+def _header_idempotency_key(key: str) -> str:
+    """The caller's key as an HTTP header value.
+
+    A header value is ASCII, and the client's header block refused anything else, so a key built
+    from an accented keyword failed the whole tool call before any request. An ASCII key travels
+    unchanged, exactly as before. A non-ASCII key is percent-encoded as UTF-8: deterministic, so
+    repeating the same key still finds the stored answer. When the encoding outgrows what the server
+    keeps, a digest of the whole key stands in, so two long keys with a common prefix stay distinct.
+    """
+    if key.isascii():
+        return key[:_IDEMPOTENCY_KEY_MAX]
+    encoded = quote(key, safe=_HEADER_SAFE)
+    if len(encoded) <= _IDEMPOTENCY_KEY_MAX:
+        return encoded
+    return "sha256:" + hashlib.sha256(key.encode()).hexdigest()
+
+
+_HEADER_SAFE = "".join(chr(c) for c in range(0x20, 0x7F) if chr(c) != "%")
 
 
 @org_traffic.mcp_adapter("call")
@@ -1407,7 +1470,7 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
             # and never derived from the request: two identical searches an hour apart are new work,
             # not a retry, and a server-invented key would hand back the stale answer — a 24-hour
             # cache wearing an idempotency badge.
-            client.headers["Idempotency-Key"] = idempotency_key[:200]
+            client.headers["Idempotency-Key"] = _header_idempotency_key(idempotency_key)
         # The SAME route the CLI and the proxy use, so the tool ACL, deny rules, both daily caps,
         # the balance reserve and the settle all happen exactly once, in one place. params= is
         # only passed when there ARE pairs — see the inline-query gotcha above.
@@ -1488,6 +1551,14 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
             out["hint"] = (f"served through the overflow relay ({served_via.removeprefix('overflow:')}) "
                            f"at its real price because treg's {provider} account is out; cost_usd is "
                            f"what the relay billed, not the catalog's direct price")
+    # A 2xx whose body fails the provider's own success rule (a DataForSEO task status other than
+    # 20000): the body is the provider's own words, but it is not an answer, and it may be billed.
+    if upstream_failed := r.headers.get("X-Treg-Upstream-Failed"):
+        out["upstream_failed"] = upstream_failed
+        if not out.get("hint"):
+            out["hint"] = (f"the provider answered 2xx but reported this request as failed "
+                           f"({upstream_failed}); there is no result in the body, and cost_usd is "
+                           f"what the provider billed for the attempt")
     if (200 <= r.status_code < 300 and not out.get("hint") and not out.get("replayed")
             and surface.invites and not _is_openai_client(ctx.headers if ctx else None)):
         # /call/ decides whether to invite (application/call/invite.py) and records that it did;
@@ -1555,7 +1626,7 @@ async def _call_media_impl(
         if inbound_meta:
             extra_headers["X-Treg-Meta"] = str(inbound_meta)
         if idempotency_key:
-            client.headers["Idempotency-Key"] = idempotency_key[:200]
+            client.headers["Idempotency-Key"] = _header_idempotency_key(idempotency_key)
         kw: dict[str, Any] = {"headers": extra_headers} if extra_headers else {}
         if isinstance(body, str):
             kw["content"] = body.encode()
@@ -1754,7 +1825,10 @@ directory_mcp = MCPServer(
         "several providers cover one job, catalog_get ranks them by measured success, speed and "
         "price; you pick."
     ),
-    middleware=[_StaticSurfaceCapabilities()],
+    middleware=[_StaticSurfaceCapabilities(), _UnknownCallArguments({
+        "catalog_call_read": "directory_catalog_call_read",
+        "catalog_call_write": "directory_catalog_call_write",
+    })],
 )
 
 # `MCPServer(...)` calls `logging.basicConfig(level="INFO")` (the library's default), so the HTTP

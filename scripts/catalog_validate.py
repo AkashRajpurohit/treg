@@ -61,7 +61,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from treg.domain.catalog.store import COST_SOURCES as _SOURCES  # noqa: E402
 from treg.domain.catalog.store import COST_UNITS as _UNITS  # noqa: E402
 from treg.domain.catalog.store import CONFIDENCES as _CONFIDENCES  # noqa: E402
-from treg.domain.catalog.store import effective_async_descriptor  # noqa: E402
+from treg.domain.catalog.store import _effective_cost, effective_async_descriptor  # noqa: E402
 from treg.domain.catalog.routing import paths as _paths  # noqa: E402
 
 SCOPES = {"any_account", "own_account"}
@@ -88,6 +88,8 @@ QUERY_ARRAY_ENCODINGS = {"json", "comma", "repeated"}
 ASYNC_PARAM_LOCATIONS = {"pathParams", "queryParams"}
 _IDENT = r"[A-Za-z_][A-Za-z0-9_-]*"
 JSON_PATH = re.compile(rf"(?:{_IDENT}|[0-9]+)(?:\.(?:{_IDENT}|[0-9]+))*")
+# A `resource_ownership.produces` path may also take every list item with `*` (`tasks.*.id`).
+PRODUCES_PATH = re.compile(rf"(?:{_IDENT}|[0-9]+|\*)(?:\.(?:{_IDENT}|[0-9]+|\*))*")
 # A usage term path: dotted keys, each optionally selecting a list item by `[key=value]`. The
 # value excludes "." because the runtime (`settlement.usage_term_path`) splits on dots first.
 _USAGE_SEGMENT = rf"{_IDENT}(?:\[{_IDENT}=[A-Za-z0-9_-]+\])?"
@@ -735,7 +737,7 @@ def check_resource_ownership(rule: object, where: str, input_schema: object,
                 if (not isinstance(item, dict) or set(item) != {"kind", "path"}
                         or not isinstance(item.get("kind"), str) or not item["kind"].strip()
                         or not isinstance(item.get("path"), str)
-                        or not JSON_PATH.fullmatch(item["path"])):
+                        or not PRODUCES_PATH.fullmatch(item["path"])):
                     fail(errors, where, "each resource_ownership.produces item needs exactly kind and JSON path")
 
 
@@ -1336,8 +1338,10 @@ def main(argv: list[str]) -> int:
                         check_enrichlayer_rule(cost, inp, where, errors)
             effective_async = effective_async_descriptor(data.get("async"), ep.get("async"))
             if effective_async is not None:
+                # The price the call settles on: a declared cost, or the provider-reported charge a
+                # verification observed (a DataForSEO extended row carries `observed_cost` only).
                 check_async_descriptor(effective_async, where, str(service), endpoint_index,
-                                       cost, errors)
+                                       _effective_cost(ep), errors)
                 terminal_ex = ep.get("terminal_example_response")
                 if terminal_ex is not None and not (CATALOG / str(terminal_ex)).is_file():
                     fail(errors, where, f"terminal_example_response '{terminal_ex}' does not exist")

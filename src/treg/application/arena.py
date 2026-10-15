@@ -68,7 +68,7 @@ def public_tasks() -> list[dict]:
             candidates, _ = route.candidates_for(contract, cat.for_capability(contract.capability), cat.adapters, identity)
             providers = {}
             for ep, adapter, accepted in candidates:
-                if not rules.supports_discovery(t.capability, {k: probe[k] for k in variant}, accepted) or route.ignored_filters(adapter, contract, identity):
+                if not rules.supports_discovery(t.capability, {k: probe[k] for k in variant}, accepted) or route.ignored_filters(adapter, contract, identity, set(variant)):
                     continue
                 if ep["id"] in rules.EXCLUDED or ".bulk" in ep["id"]:
                     continue

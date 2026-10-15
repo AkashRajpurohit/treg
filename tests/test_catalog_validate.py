@@ -351,20 +351,6 @@ def test_untracked_extended_async_consumers_are_explicitly_byok_only():
         "tikhub.x.youtube-web-v2-get-video-captions-result",
         "dataforseo.x.serp-ai-summary",
         "dataforseo.x.serp-screenshot",
-        "dataforseo.x.on-page-content-parsing",
-        "dataforseo.x.on-page-duplicate-content",
-        "dataforseo.x.on-page-duplicate-tags",
-        "dataforseo.x.on-page-keyword-density",
-        "dataforseo.x.on-page-links",
-        "dataforseo.x.on-page-non-indexable",
-        "dataforseo.x.on-page-pages",
-        "dataforseo.x.on-page-pages-by-resource",
-        "dataforseo.x.on-page-raw-html",
-        "dataforseo.x.on-page-redirect-chains",
-        "dataforseo.x.on-page-resources",
-        "dataforseo.x.on-page-uncrawlable-resources",
-        "dataforseo.x.on-page-waterfall",
-        "dataforseo.x.on-page-summary-id",
     }
     for endpoint_id in ids:
         endpoint = catalog.by_id[endpoint_id]

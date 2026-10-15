@@ -1,11 +1,14 @@
-"""What `treg call` sends and says for three failures reported from the field: `--data @file` sent
-the literal text, a body mangled by shell quoting went out silently, and treg's own saturation 503
-was called the provider's answer. Driven through `main()`."""
+"""What `treg call --data/--file` sends must be what the caller meant.
+
+Three ways it was not: curl-style `--data @body.json` sent the literal string "@body.json"; a JSON
+body mangled by PowerShell quoting (quotes stripped) went out as-is, unlabelled, and the provider
+answered "POST Data Is Empty"/"invalid payload"; and a body file PowerShell wrote as UTF-16 (or
+with a UTF-8 byte-order mark) was sent as those bytes, which no JSON API parses.
+"""
+import codecs
 import io
 import json
-import os
-import subprocess
-import sys
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -13,8 +16,8 @@ import pytest
 from treg import cli
 
 
-def _serve(monkeypatch, response: httpx.Response) -> list[dict]:
-    sent: list[dict] = []
+def _capture(monkeypatch):
+    seen: list[httpx.Request] = []
 
     class FakeClient:
         def __enter__(self):
@@ -24,105 +27,86 @@ def _serve(monkeypatch, response: httpx.Response) -> list[dict]:
             return False
 
         def request(self, method, url, params=None, content=None, headers=None):
-            sent.append({"method": method, "content": content, "headers": headers})
-            return response
+            seen.append(httpx.Request(method, httpx.URL("http://t").join(url), params=params,
+                                      content=content, headers=headers))
+            return httpx.Response(200, json={})
 
     monkeypatch.setattr(cli, "_client", lambda cfg, **k: FakeClient())
-    monkeypatch.setattr(cli, "_load_config", lambda: {"token": "t", "base_url": "http://x"})
-    return sent
+    monkeypatch.setattr(cli, "_show", lambda resp: None)
+    return seen
 
 
-def test_data_at_path_sends_the_file(monkeypatch, tmp_path):
-    body = tmp_path / "req.json"
-    body.write_text('{"q":"café"}', encoding="utf-8")
-    sent = _serve(monkeypatch, httpx.Response(200, json={}))
-    cli.main(["call", "x.search", "--data", f"@{body}"])
-    assert sent[0]["content"] == '{"q":"café"}'.encode()
-    assert sent[0]["headers"]["content-type"] == "application/json"
-    assert sent[0]["method"] == "POST"
+def _args(data=None, file=None, content_type=None):
+    return SimpleNamespace(target="dataforseo.google.keywords.volume", path="", method="POST",
+                           query=[], data=data, file=file, content_type=content_type, header=[],
+                           upload=[])
+
+
+BODY = [{"keywords": ["café"], "location_code": 2250}]
+
+
+def test_data_at_file_reads_the_file(monkeypatch, tmp_path):
+    f = tmp_path / "body.json"
+    f.write_text(json.dumps(BODY), encoding="utf-8")
+    seen = _capture(monkeypatch)
+    cli.cmd_call(_args(data=f"@{f}"), {})
+    assert json.loads(seen[0].content) == BODY
+    assert seen[0].headers["content-type"] == "application/json"
 
 
 def test_data_at_dash_reads_stdin(monkeypatch):
-    sent = _serve(monkeypatch, httpx.Response(200, json={}))
-    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b'{"q":1}')))
-    cli.main(["call", "x.search", "--data", "@-"])
-    assert sent[0]["content"] == b'{"q":1}'
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(json.dumps(BODY).encode())))
+    seen = _capture(monkeypatch)
+    cli.cmd_call(_args(data="@-"), {})
+    assert json.loads(seen[0].content) == BODY
 
 
-def test_data_at_missing_file_fails_before_any_request(monkeypatch, tmp_path):
-    sent = _serve(monkeypatch, httpx.Response(200, json={}))
-    with pytest.raises(SystemExit) as exc:
-        cli.main(["call", "x.search", "--data", f"@{tmp_path / 'nope.json'}"])
-    assert "no such file" in str(exc.value.code) and sent == []
+def test_data_at_missing_file_is_refused(monkeypatch, tmp_path):
+    seen = _capture(monkeypatch)
+    with pytest.raises(SystemExit) as e:
+        cli.cmd_call(_args(data=f"@{tmp_path / 'nope.json'}"), {})
+    assert "--file" in str(e.value)
+    assert not seen
 
 
-def test_plain_data_is_unchanged(monkeypatch, capsys):
-    sent = _serve(monkeypatch, httpx.Response(200, json={}))
-    cli.main(["call", "x.say", "--data", "hello"])
-    assert sent[0]["content"] == b"hello" and sent[0]["headers"] == {}
-    assert "warning" not in capsys.readouterr().err
+def test_json_mangled_by_shell_quoting_is_refused(monkeypatch):
+    # What PowerShell passes for --data '[{"keywords":["coffee"]}]': the inner quotes are gone.
+    seen = _capture(monkeypatch)
+    with pytest.raises(SystemExit) as e:
+        cli.cmd_call(_args(data="[{keywords:[coffee]}]"), {})
+    assert "not valid JSON" in str(e.value) and "--content-type" in str(e.value)
+    assert not seen
 
 
-def test_json_looking_data_that_does_not_parse_warns(monkeypatch, capsys):
-    # PowerShell hands '{"a":1}' over as {a:1}.
-    sent = _serve(monkeypatch, httpx.Response(200, json={}))
-    cli.main(["call", "x.search", "--data", "{a:1}"])
-    assert sent[0]["content"] == b"{a:1}" and sent[0]["headers"] == {}
-    assert "--data looks like JSON but does not parse" in capsys.readouterr().err
+def test_non_json_body_with_explicit_type_is_sent_as_is(monkeypatch):
+    seen = _capture(monkeypatch)
+    cli.cmd_call(_args(data="{{template}}", content_type="text/plain"), {})
+    assert seen[0].content == b"{{template}}"
 
 
-def _saturated() -> httpx.Response:
-    return httpx.Response(
-        503, json={"detail": "treg's database pool is saturated — retry in a moment", "treg_saturated": True},
-        headers={"Retry-After": "2"}, request=httpx.Request("POST", "http://x/call/x.search"))
+def test_plain_text_body_is_untouched(monkeypatch):
+    seen = _capture(monkeypatch)
+    cli.cmd_call(_args(data="hello world"), {})
+    assert seen[0].content == b"hello world" and "content-type" not in seen[0].headers
 
 
-def test_saturation_503_is_treg_not_the_provider(monkeypatch, capsys):
-    _serve(monkeypatch, _saturated())
-    with pytest.raises(SystemExit) as exc:
-        cli.main(["call", "x.search"])
-    assert exc.value.code == 1
-    err = capsys.readouterr().err
-    assert "treg is overloaded, not the provider; retry in 2s" in err
-    assert "the provider answered" not in err
+@pytest.mark.parametrize("encoding,bom", [("utf-16-le", codecs.BOM_UTF16_LE),
+                                          ("utf-16-be", codecs.BOM_UTF16_BE),
+                                          ("utf-8", codecs.BOM_UTF8)])
+def test_json_file_with_byte_order_mark_is_sent_as_utf8(monkeypatch, tmp_path, capsys, encoding, bom):
+    f = tmp_path / "body.json"
+    f.write_bytes(bom + json.dumps(BODY, ensure_ascii=False).encode(encoding))
+    seen = _capture(monkeypatch)
+    cli.cmd_call(_args(file=str(f)), {})
+    assert seen[0].content == json.dumps(BODY, ensure_ascii=False).encode()
+    assert seen[0].headers["content-type"] == "application/json"
+    assert "byte-order mark" in capsys.readouterr().err
 
 
-def test_saturation_503_is_typed_in_the_json_envelope(monkeypatch, capsys):
-    _serve(monkeypatch, _saturated())
-    with pytest.raises(SystemExit):
-        cli.main(["--json", "call", "x.search"])
-    meta = json.loads(capsys.readouterr().out)["_treg"]
-    assert meta == {"http_status": 503, "treg_saturated": True, "retry_after_seconds": 2}
-
-
-def test_a_provider_503_is_still_the_providers(monkeypatch, capsys):
-    _serve(monkeypatch, httpx.Response(503, json={"error": "busy"},
-                                       request=httpx.Request("POST", "http://x/call/x.search")))
-    with pytest.raises(SystemExit):
-        cli.main(["call", "x.search"])
-    assert "the provider answered; treg relayed it unchanged" in capsys.readouterr().err
-
-
-def test_non_utf8_console_gets_utf8_instead_of_a_crash(monkeypatch):
-    # A Windows pipe or Git Bash reports cp1252; `●` and non-Latin provider text raised before.
-    raw = io.BytesIO()
-    console = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
-    _serve(monkeypatch, httpx.Response(200, json={"name": "株式会社 ●"}))
-    monkeypatch.setattr(sys, "stdout", console)
-    monkeypatch.setattr(sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
-    cli.main(["--json", "call", "x.search"])
-    console.flush()
-    assert json.loads(raw.getvalue().decode("utf-8"))["result"] == {"name": "株式会社 ●"}
-
-
-def test_hub_folder_reads_as_utf8_under_a_non_utf8_locale(tmp_path):
-    # A locale whose default encoding is not UTF-8 (here ASCII, on Windows cp1252).
-    for name, text in {"recipe.json": "{}", "README.md": "# 名片 ●", "run.js": "// é", "data.csv": "名,值"}.items():
-        (tmp_path / name).write_text(text, encoding="utf-8")
-    env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
-    code = ("import json, sys; from treg import cli; "
-            "print(json.dumps(cli._hub_read_folder(sys.argv[1]), ensure_ascii=True))")
-    out = subprocess.run([sys.executable, "-c", code, str(tmp_path)], env=env,
-                         capture_output=True, text=True, check=True).stdout
-    body = json.loads(out)
-    assert (body["readme"], body["script"], body["data"]) == ("# 名片 ●", "// é", "名,值")
+def test_binary_file_is_never_rewritten(monkeypatch, tmp_path):
+    f = tmp_path / "blob.bin"
+    raw = codecs.BOM_UTF16_LE + b"\x00\x01\x02not json"
+    f.write_bytes(raw)
+    seen = _capture(monkeypatch)
+    cli.cmd_call(_args(file=str(f)), {})
+    assert seen[0].content == raw

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import codecs
 import contextlib
 import importlib
 import importlib.util
@@ -366,6 +367,9 @@ def _show_charge_line(resp: httpx.Response) -> None:
     if call_id := headers.get("X-Treg-Call-Id"):
         line += f" · call id {call_id}"
     print(line, file=sys.stderr)
+    if upstream_failed := headers.get("X-Treg-Upstream-Failed"):
+        print(f"treg: the provider reported this request as failed ({upstream_failed}); "
+              "the body carries no result", file=sys.stderr)
 
 
 def _show_hint_line(resp: httpx.Response) -> None:
@@ -2568,6 +2572,8 @@ def _call_envelope(response: httpx.Response, content_type: str) -> dict:
         meta["reserved_micro" if headers.get("X-Treg-Async") else "charged_micro"] = int(cost)
     if headers.get("X-Treg-Idempotent-Replay"):
         meta["replay"] = True
+    if upstream_failed := headers.get("X-Treg-Upstream-Failed"):
+        meta["upstream_failed"] = upstream_failed
     if headers.get("X-Treg-Async"):
         meta["async"] = True
     if kind := headers.get("X-Treg-Hint"):
@@ -2598,19 +2604,46 @@ def _show_call_response(response: httpx.Response) -> None:
     _show(response)
 
 
-def _data_body(data: str | None) -> bytes | None:
-    """The `--data` body. `@path` reads the file and `@-` reads stdin, as in curl."""
-    if not data:
+_TEXT_BOMS = ((codecs.BOM_UTF8, "utf-8-sig"), (codecs.BOM_UTF16_LE, "utf-16"),
+              (codecs.BOM_UTF16_BE, "utf-16"))
+
+
+def _without_bom(raw: bytes, source: str) -> bytes:
+    """A JSON body file saved with a byte-order mark, as UTF-8 JSON without it.
+
+    PowerShell's `>` and `Out-File` write UTF-16 (5.1) or a UTF-8 byte-order mark, and no JSON API
+    parses either. Only a body that IS JSON once decoded is rewritten, and the caller is told; any
+    other file, binary included, is sent byte for byte.
+    """
+    for bom, encoding in _TEXT_BOMS:
+        if raw.startswith(bom):
+            try:
+                text = raw.decode(encoding)
+                json.loads(text)
+            except ValueError:
+                return raw
+            print(f"treg: {source} starts with a {encoding.removesuffix('-sig')} byte-order mark; "
+                  "sending it as UTF-8 JSON", file=sys.stderr)
+            return text.encode()
+    return raw
+
+
+def _call_body(args) -> bytes | None:
+    """The request body `--file` or `--data` names; `--data @PATH` and `@-` read it, as curl does."""
+    if args.file:
+        return _without_bom(Path(args.file).read_bytes(), f"--file {args.file}")
+    if not args.data:
         return None
-    if not data.startswith("@"):
-        return data.encode()
-    if data == "@-":
-        return sys.stdin.buffer.read()
-    path = Path(data[1:]).expanduser()
+    if not args.data.startswith("@"):
+        return args.data.encode()
+    source = args.data[1:]
+    if source == "-":
+        return _without_bom(sys.stdin.buffer.read(), "--data @-")
+    path = Path(source).expanduser()
     if not path.is_file():
-        sys.exit(f"treg: --data {data}: no such file {str(path)!r} "
-                 "(--data @path reads a file; put a body that starts with '@' in a file and pass --file)")
-    return path.read_bytes()
+        sys.exit(f"--data {args.data}: no such file. `@PATH` reads the body from a file, as curl "
+                 "does; to send a body that starts with '@', put it in a file and pass --file")
+    return _without_bom(path.read_bytes(), f"--data {args.data}")
 
 
 def cmd_call(args, cfg) -> None:
@@ -2637,7 +2670,7 @@ def cmd_call(args, cfg) -> None:
             upload_files.append((name, (p.name, p.read_bytes())))
         else:
             upload_files.append((name, (None, val.encode())))  # a plain (non-file) form field
-    content = Path(args.file).read_bytes() if args.file else _data_body(args.data)
+    content = _call_body(args)
     upload_ctype = None
     if upload_files:
         # Encode the multipart body EAGERLY (not httpx's streaming files=): _RegistryClient's
@@ -2654,12 +2687,15 @@ def cmd_call(args, cfg) -> None:
         try:
             json.loads(content)
             ctype = "application/json"
-        except ValueError:
-            # PowerShell strips the inner quotes of '{"a":1}', so treg receives `{a:1}`.
-            if not args.file and not _JSON_OVERRIDE and content.lstrip()[:1] in (b"{", b"["):
-                print("treg: warning: --data looks like JSON but does not parse, so it is sent as-is "
-                      "with no content type (a shell may have stripped its quotes; "
-                      "--data @body.json reads it from a file instead)", file=sys.stderr)
+        except ValueError as e:
+            # A body that opens like JSON but does not parse is almost always a shell's doing:
+            # PowerShell strips the quotes inside a quoted argument, so '[{"k":"v"}]' arrives as
+            # [{k:v}]. Sent anyway it is unlabelled garbage the provider answers with an opaque
+            # "empty"/"invalid payload". An explicit --content-type still sends it untouched.
+            if content.lstrip()[:1] in (b"{", b"["):
+                sys.exit(f"the request body is not valid JSON ({e}). If your shell stripped the "
+                         "quotes (PowerShell does), put the body in a file and pass --file PATH or "
+                         "--data @PATH; to send it as written, pass --content-type")
     headers = {"content-type": ctype} if ctype else {}
     if authorization_method := getattr(args, "authorization_method", None):
         headers["X-Treg-Authorization-Method"] = authorization_method
@@ -6706,7 +6742,7 @@ def build_parser() -> argparse.ArgumentParser:
     cl.add_argument("-p", "--query", action="append", default=[], metavar="K=V", help="a query param (repeatable)")
     cl.add_argument("--authorization-method", metavar="METHOD",
                     help="select an authorization method declared by the catalog endpoint")
-    cl.add_argument("--data", help="request body (string; @path reads a file, @- reads stdin)"); cl.add_argument("--file", help="request body from a file")
+    cl.add_argument("--data", help="request body (string); @PATH reads a file, @- stdin"); cl.add_argument("--file", help="request body from a file")
     cl.add_argument("--content-type", dest="content_type", metavar="TYPE",
                     help="Content-Type for the body (default: sniffed — a body that parses as JSON sends application/json)")
     cl.add_argument("--header", action="append", default=[], metavar="'K: V'",

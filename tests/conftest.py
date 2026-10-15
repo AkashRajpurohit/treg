@@ -69,6 +69,7 @@ os.environ["TREG_KV_URL"] = ""
 os.environ["TREG_MONEY_ADMISSION_ENABLED"] = "false"
 os.environ["TREG_MONEY_ADMISSION_ORG_IDS"] = "[]"
 os.environ["TREG_ORG_CONCURRENCY_ENABLED"] = "false"
+os.environ["TREG_ORG_FLOW_CONTROL_ENABLED"] = "false"
 os.environ["TREG_ORG_CONCURRENCY_LIMITS"] = "{}"
 os.environ["TREG_ORG_CONCURRENCY_EXEMPT_ORG_IDS"] = "[]"
 os.environ["TREG_EMAIL_DEV_MODE"] = "true"  # tests need the returned OTP code (prod default is now False)

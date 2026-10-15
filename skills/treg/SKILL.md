@@ -143,7 +143,9 @@ Notes:
   when the price is per row; when the catalog `cost.unit` is `target`/`domain`/`keyword` you pay
   per thing asked about, one unit per target. Failed calls (4xx/5xx relayed from the provider)
   are free; empty results mean whatever the provider means by them — treg relays, it does not
-  normalise.
+  normalise. A provider that reports a failure inside a 2xx answer (a DataForSEO task status
+  other than 20000) is flagged with `X-Treg-Upstream-Failed` (`upstream_failed` over MCP): the
+  body has no result, and the charge is what the provider billed for the attempt.
 - A call may be answered from treg's archive of the exact same question while that answer is
   fresh: verbatim provider bytes, `X-Treg-Cache: hit`, `X-Treg-Fetched-At`, `X-Treg-Age`. Your
   team's first call on a question costs full price either way; from your second call on, a hit
