@@ -341,6 +341,7 @@
   .phase2{opacity:.5} .hint{font-family:var(--mono);font-size:11px;color:var(--amber);border:1px dashed var(--amber);border-radius:6px;padding:2px 7px}
   a{color:var(--accent);text-decoration:none;cursor:pointer}
   .banner{background:color-mix(in srgb,var(--red) 15%,transparent);color:var(--red);border:1px solid var(--red);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:12.5px}
+  .banner.auth-warning{background:color-mix(in srgb,var(--amber) 12%,transparent);color:var(--amber);border-color:color-mix(in srgb,var(--amber) 65%,var(--line))}
   .explain{font-family:var(--sans);font-size:12px;color:var(--muted);margin:2px 0 12px}
   .skill-drop{display:flex;gap:14px;align-items:center;padding:18px;border:1.5px dashed var(--line);border-radius:10px;cursor:pointer;background:var(--panel2)}
   .skill-drop:hover{border-color:var(--accent)} .skill-drop .sd-ic{font-size:24px;line-height:1}
@@ -853,8 +854,15 @@ main.flush,.redesign main.flush{padding:0;max-width:none}
    The landing page's rules (usecase.css): no accent colour, emphasis is ink; sans everywhere, mono
    only for identifiers, commands and counts; Geist Pixel on the h1 only; cards are surfaces lifted
    by shadow, never boxes drawn by border; no rules between rows. */
-.pl{max-width:1180px;margin:0 auto;padding-bottom:40px;transition:padding-right .25s var(--ease)}
-@media(min-width:1700px){ .pl.dopen{padding-right:600px;max-width:1780px} }
+.pl{max-width:1180px;margin:0 auto;padding-bottom:40px;position:relative;right:0;transition:max-width .25s var(--ease),right .25s var(--ease)}
+/* With the tool drawer (.td, 600px) open on a wide screen, the page stays clear of it: it keeps its
+   width and slides left only as far as the drawer would cover it, plus a 32px gap, and narrows to
+   the space beside the drawer when that is not enough. The page is centred in the viewport (no
+   sidebar beside it), and the right offset's 100% is main's width, so this holds on the public
+   catalog and in the dashboard alike. An offset, not a transform: a transform would make .pl the
+   containing block of the fixed drawer inside it. */
+@media(min-width:1700px){ .pl.dopen{max-width:min(1180px,100vw - 664px);
+  right:max(0px,min(100%,1180px,100vw - 664px) / 2 - 50vw + 632px)} }
 .pl-empty{margin:48px 0;text-align:center;color:var(--muted);font-size:14px}
 .pl-link{background:none;border:0;padding:0;font:inherit;color:var(--ink);cursor:pointer;text-decoration:underline;
   text-decoration-color:color-mix(in srgb,var(--ink) 30%,transparent);text-underline-offset:3px}

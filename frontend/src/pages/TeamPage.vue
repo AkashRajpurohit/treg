@@ -1,11 +1,14 @@
 <script>
 import { useDashboard } from '../state/context'
 import InfoTip from '../components/ui/InfoTip.vue'
+import Money from '../components/ui/Money.vue'
 import { NO_KEY } from '../state/constants.js'
+import stripeSlate from '../assets/stripe-wordmark-slate.svg'
+import stripeWhite from '../assets/stripe-wordmark-white.svg'
 // The new agent's check-in poll lives as long as this page (state/agents.js).
 export default {
-  components: { InfoTip },
-  data: () => ({ NO_KEY }),
+  components: { InfoTip, Money },
+  data: () => ({ NO_KEY, stripeSlate, stripeWhite }),
   setup: useDashboard,
   mounted() { this.resumeCredentialIssue(); this.resumeAgentPoll() },
   beforeUnmount() { this.parkCredentialIssue() },
@@ -258,7 +261,7 @@ export default {
                     <td class="key-identity"><input v-if="editKey===k.id" v-model="editKeyName" maxlength="80" class="msel" @keyup.enter="renameApiKey(k)"/><template v-else><div class="key-primary"><span v-if="group.type==='human' && k.assigned_type==='agent'" class="muted" aria-hidden="true">↳</span><b>{{group.type==='human' && k.assigned_type==='agent'?k.assigned_name:k.name}}</b><span class="chip">{{keyKind(k.kind)}}</span></div><div class="key-meta mono">{{maskedKey(k)}}</div></template>
                     </td>
                     <td><span class="badge" :class="k.state==='active'?'ok':'invalid'">{{k.state}}</span></td>
-                    <td class="key-spend"><span v-if="keySpend(k)" :title="money(keySpend(k).spent_micro)">{{moneyGlance(keySpend(k).spent_micro)}}</span><span v-else-if="apiKeySpend && !apiKeySpend.ready" class="muted" title="Spend history is being prepared. It will appear here within a few days.">Preparing…</span><span v-else class="muted">—</span></td>
+                    <td class="key-spend"><Money v-if="keySpend(k)" :micro="keySpend(k).spent_micro" /><span v-else-if="apiKeySpend && !apiKeySpend.ready" class="muted" title="Spend history is being prepared. It will appear here within a few days.">Preparing…</span><span v-else class="muted">—</span></td>
                     <td class="muted">{{k.created_at?when(k.created_at):'Unknown'}}</td><td class="muted">{{k.last_used_at?when(k.last_used_at):'Never'}}</td>
                     <td style="text-align:right;white-space:nowrap"><span v-if="editKey===k.id" class="row-actions"><button class="btn sm primary" @click="renameApiKey(k)">Save</button><button class="btn sm" @click="editKey=null">Cancel</button></span><span v-else class="row-actions">
                       <button class="btn sm" @click="showKeyActivity(k)">Activity</button><button v-if="k.can_rotate" class="btn sm" :disabled="!!credentialIssue" @click="requestKeyAction(k,'rotate')">Rotate</button><button v-if="keyHasMore(k)" class="btn sm ico" aria-haspopup="menu" :aria-expanded="keyMenu&&keyMenu.key.id===k.id" :aria-label="'More actions for '+k.name" @click.stop="toggleKeyMenu(k,$event)">⋮</button>
@@ -268,7 +271,7 @@ export default {
               </template>
               <template v-if="apiKeySpend && apiKeySpend.ready && apiKeySpend.unattributed && apiKeySpend.unattributed.spent_micro && apiKeys.length">
                 <div class="lbl" style="margin-top:16px">{{NO_KEY.title}} <InfoTip :title="NO_KEY.title" :text="NO_KEY.text" /></div>
-                <table class="key-table"><tr><td class="key-identity"><span class="muted">Charges on calls made without an API key</span></td><td class="key-spend" :title="money(apiKeySpend.unattributed.spent_micro)">{{moneyGlance(apiKeySpend.unattributed.spent_micro)}}</td></tr></table>
+                <table class="key-table"><tr><td class="key-identity"><span class="muted">Charges on calls made without an API key</span></td><td class="key-spend"><Money :micro="apiKeySpend.unattributed.spent_micro" /></td></tr></table>
               </template>
               <p v-if="apiKeySpend && !apiKeySpend.ready && apiKeys.length" class="sub">Spend history is being prepared. It will appear here within a few days.</p>
               <p v-if="!keyBusy && !apiKeys.length" class="sub">No keys are available.</p>
@@ -339,14 +342,30 @@ export default {
                     <p v-if="billing.autotopup.disabled_reason==='no_card'" class="sub" style="margin:14px 0 0">
                       Auto top-up is set up and will switch on as soon as a top-up saves your card.
                     </p>
-                    <div v-else-if="billing.autotopup.disabled_reason" class="banner" style="margin:14px 0 0">
-                      Auto top-up switched itself off ({{billing.autotopup.disabled_reason}}). Once the balance runs out, calls will fail until it's funded.
+                    <div v-else-if="billing.autotopup.disabled_reason" class="banner"
+                         :class="{'auth-warning':billing.autotopup.disabled_reason==='authentication_required'}"
+                         style="margin:14px 0 0">
+                      <template v-if="billing.autotopup.disabled_reason==='stripe_unconfirmed'">
+                        Auto top-up paused because we could not confirm a Stripe payment. Calls may stop when the balance runs out. Check billing history and contact support before turning it back on.
+                      </template>
+                      <template v-else-if="billing.autotopup.disabled_reason==='authentication_required'">
+                        Your bank needs you to verify a payment. We cancelled the attempted auto top-up. Make a manual top-up to verify with your bank; auto top-up will turn back on after it succeeds.
+                        <button class="btn primary" style="margin-left:10px" :disabled="billingBusy" @click="openTopup()">Make a manual top-up</button>
+                      </template>
+                      <template v-else>
+                        Auto top-up switched itself off ({{billing.autotopup.disabled_reason}}). Once the balance runs out, calls will fail until it's funded.
+                      </template>
                     </div>
                     <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
                       <label style="display:flex;gap:10px;align-items:center;cursor:pointer">
                         <span class="tswitch"><input type="checkbox" :checked="billing.autotopup.enabled||autoOpen" :disabled="billingBusy" @change="autoToggled"/><span class="knob"></span></span>
                         <span class="lbl" style="margin:0">Auto top-up</span>
-                        <span v-if="billing.card_on_file" class="sub" style="margin-left:auto">Card on file ✓</span>
+                        <span v-if="billing.card_on_file" class="sub saved-card-label">
+                          <svg class="saved-card-check" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m4 10 4 4 8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                          <span>Card saved with</span>
+                          <img class="stripe-wordmark stripe-wordmark-slate" :src="stripeSlate" alt="Stripe">
+                          <img class="stripe-wordmark stripe-wordmark-white" :src="stripeWhite" alt="Stripe">
+                        </span>
                       </label>
                       <p class="sub" style="margin:8px 0 0">
                         <template v-if="billing.autotopup.enabled">On - we add {{money(billing.autotopup.amount_micro)}} whenever the balance drops below {{money(billing.autotopup.threshold_micro)}}, up to {{billing.autotopup.per_hour}} times per hour. This month: {{money(billing.autotopup.month_spend_micro)}}.
@@ -380,22 +399,37 @@ export default {
                     <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
                       <div class="lbl">Payment history</div>
                       <p v-if="bhist.loading" class="sub" style="margin:8px 0 0">Loading…</p>
-                      <p v-else-if="!bhist.items.length" class="sub" style="margin:8px 0 0">No top-ups yet. Once you add funds, every payment shows up here with its invoice.</p>
+                      <p v-else-if="!bhist.items.length" class="sub" style="margin:8px 0 0">No top-ups yet. Once you add funds, every payment shows up here with its documents.</p>
                       <template v-else>
                         <!-- Amounts come from our own ledger, so this list always agrees with the
                              balance above. Only the links come from Stripe — hence the notice below. -->
-                        <table style="width:100%;margin-top:8px;border-collapse:collapse;max-width:560px">
+                        <div style="overflow-x:auto">
+                        <table style="width:100%;min-width:440px;max-width:700px;margin-top:8px;border-collapse:collapse">
+                          <thead><tr class="sub" style="text-align:left">
+                            <th scope="col" style="padding:8px 10px 8px 0;font-weight:500">Date</th>
+                            <th scope="col" style="padding:8px 10px 8px 0;font-weight:500">Amount</th>
+                            <th scope="col" style="padding:8px 10px 8px 0;font-weight:500">Payment</th>
+                            <th scope="col" style="padding:8px 0;text-align:right;font-weight:500">Documents</th>
+                          </tr></thead>
+                          <tbody>
                           <tr v-for="i in bhist.items" :key="i.payment_intent" style="border-top:1px solid var(--line)">
                             <td style="padding:8px 10px 8px 0;white-space:nowrap">{{bhistDate(i.created_at)}}</td>
                             <td style="padding:8px 10px 8px 0;font-family:var(--mono);white-space:nowrap">{{money(i.amount_micro)}}</td>
-                            <td style="padding:8px 10px 8px 0" class="sub">{{i.auto?'auto':''}}<span v-if="i.bonus_micro" style="color:var(--green)">+{{money(i.bonus_micro)}} bonus</span></td>
+                            <td style="padding:8px 10px 8px 0;white-space:nowrap" class="sub">
+                              {{i.auto?'Auto':'Manual'}} · <span style="color:var(--green)">Paid</span>
+                              <span v-if="i.bonus_micro" style="color:var(--green)"> +{{money(i.bonus_micro)}} bonus</span>
+                            </td>
                             <td style="padding:8px 0;text-align:right;white-space:nowrap">
-                              <a v-if="bhistLink(i)" :href="bhistLink(i)" target="_blank" rel="noopener">{{bhistLabel(i)}}</a>
-                              <span v-else class="muted">—</span>
+                              <a v-if="i.invoice_pdf||i.hosted_invoice_url" :href="i.invoice_pdf||i.hosted_invoice_url" target="_blank" rel="noopener">Invoice</a>
+                              <span v-if="(i.invoice_pdf||i.hosted_invoice_url)&&i.receipt_url" class="muted"> · </span>
+                              <a v-if="i.receipt_url" :href="i.receipt_url" target="_blank" rel="noopener">Receipt</a>
+                              <span v-if="!(i.invoice_pdf||i.hosted_invoice_url||i.receipt_url)" class="muted">—</span>
                             </td>
                           </tr>
+                          </tbody>
                         </table>
-                        <p v-if="!bhist.ok" class="sub" style="margin:8px 0 0">Invoice links are temporarily unavailable — the amounts above are correct. Try again shortly, or use <b>Manage billing</b> for the full archive.</p>
+                        </div>
+                        <p v-if="!bhist.ok" class="sub" style="margin:8px 0 0">Document links are temporarily unavailable — the amounts above are correct. Try again shortly, or use <b>Manage billing</b> for the full archive.</p>
                       </template>
                     </div>
                   </template>
@@ -640,3 +674,12 @@ export default {
           </div>
 
 </template>
+
+<style>
+.saved-card-label { display:inline-flex; align-items:center; gap:5px; margin-left:auto; white-space:nowrap; }
+.saved-card-check { width:15px; height:15px; color:var(--green); flex:none; }
+.stripe-wordmark { width:38px; height:auto; display:block; }
+.stripe-wordmark-slate { display:none; }
+[data-theme="light"] .stripe-wordmark-slate { display:block; }
+[data-theme="light"] .stripe-wordmark-white { display:none; }
+</style>

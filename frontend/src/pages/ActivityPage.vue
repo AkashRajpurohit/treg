@@ -6,6 +6,7 @@ import SpendBars from '../components/SpendBars.vue'
 import SelectMenu from '../components/ui/SelectMenu.vue'
 import DateRangePicker from '../components/ui/DateRangePicker.vue'
 import InfoTip from '../components/ui/InfoTip.vue'
+import Money from '../components/ui/Money.vue'
 import { NO_KEY } from '../state/constants.js'
 
 // The feed reads left to right as one sentence: when, who (the key and runtime under it), which call
@@ -29,7 +30,7 @@ const PAGE = 10
 const dayLabel = (iso, opts) => new Date(iso + 'T00:00:00Z').toLocaleDateString(undefined, { timeZone: 'UTC', ...opts })
 
 export default {
-  components: { PageTabs, DataTable, SpendBars, SelectMenu, DateRangePicker, InfoTip },
+  components: { PageTabs, DataTable, SpendBars, SelectMenu, DateRangePicker, InfoTip, Money },
   setup: useDashboard,
   data: () => ({ feedColumns: FEED, memberColumns: BY_MEMBER, toolColumns: BY_TOOL, dayColumns: BY_DAY, tagColumns: BY_TAG, spendColumns: BY_SERIES, GROUPS, STACKS, PAGE, NO_KEY }),
   computed: {
@@ -52,7 +53,7 @@ export default {
     // What the Other slice holds over the whole range: every ranked series without its own color.
     foldedRanking() {
       const shown = new Set((this.usageSpend?.series || []).map(s => s.id))
-      return (this.usageSpend?.ranking || []).filter(r => !shown.has(r.id)).map(r => ({ id: r.id, name: r.name, value: this.money(r.spent_micro) }))
+      return (this.usageSpend?.ranking || []).filter(r => !shown.has(r.id)).map(r => ({ id: r.id, name: r.name, micro: r.spent_micro }))
     },
     spendBuckets() {
       const s = this.usageSpend
@@ -147,7 +148,7 @@ export default {
         <p class="muted">Billed charges on treg's keys, from the ledger. Days are UTC.<template v-if="historyFrom"> History starts on {{historyFrom}}.</template></p>
       </div>
       <div v-if="usageSpend && usageSpend.ready" class="us-totals">
-        <div><b>{{money(usageSpend.spent_micro)}}</b><span>spent</span></div>
+        <div><b><Money :micro="usageSpend.spent_micro" /></b><span>spent</span></div>
         <div><b>{{usageSpend.charges}}</b><span>{{usageSpend.charges === 1 ? 'charge' : 'charges'}}</span></div>
       </div>
     </header>
@@ -172,7 +173,7 @@ export default {
       <p v-else-if="!usageSpend.spent_micro" class="pl-empty">No billed charges in this range.</p>
       <template v-else>
         <SpendBars :buckets="spendBuckets" :series="spendSeries"
-                   :aria-label="`Billed spend by ${usageSpend.group}: ${money(usageSpend.spent_micro)} from ${usageSpend.from} to ${usageSpend.to}`" />
+                   :aria-label="`Billed spend by ${usageSpend.group}: ${moneyGlance(usageSpend.spent_micro)} from ${usageSpend.from} to ${usageSpend.to}`" />
         <!-- Every series, none folded: the chart can color seven, a list can name them all. A key's
              row filters the chart to it; the chart answers "when", this list "who". -->
         <button type="button" class="us-rank-toggle" :aria-expanded="spendRankOpen" aria-controls="us-ranking" @click="spendRankOpen=!spendRankOpen">
@@ -185,7 +186,7 @@ export default {
             <template #head-name>{{usageSpend.stack==='tool' ? 'Tool' : 'API key'}}</template>
             <template #cell-name="{ row: r }"><span class="us-rank-name"><s :style="{ background: rankColor(r) }"></s><span :title="r.name">{{r.name}}</span><InfoTip v-if="r.id==='none'" :title="NO_KEY.title" :text="NO_KEY.text" /></span></template>
             <template #cell-share="{ row: r }"><span class="us-share"><i :style="{ width: share(r) + '%' }"></i></span><span class="muted">{{share(r)}}%</span></template>
-            <template #cell-spend="{ row: r }"><b :title="money(r.spent_micro)">{{moneyGlance(r.spent_micro)}}</b></template>
+            <template #cell-spend="{ row: r }"><b><Money :micro="r.spent_micro" /></b></template>
           </DataTable>
           <div v-if="usageSpend.ranking.length > PAGE" class="us-pager">
             <span class="muted">{{pageLabel(usageSpend.ranking, spendRankPage)}}</span>

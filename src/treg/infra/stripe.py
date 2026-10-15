@@ -13,6 +13,14 @@ CHECKOUT_SESSION_CREATE = "checkout.Session.create"
 PORTAL_SESSION_CREATE = "billing_portal.Session.create"
 CHARGE_LIST = "Charge.list"
 INVOICE_LIST = "Invoice.list"
+INVOICE_CREATE = "Invoice.create"
+INVOICE_RETRIEVE = "Invoice.retrieve"
+INVOICE_FINALIZE = "Invoice.finalize_invoice"
+INVOICE_PAY = "Invoice.pay"
+INVOICE_VOID = "Invoice.void_invoice"
+INVOICE_ITEM_CREATE = "InvoiceItem.create"
+INVOICE_ITEM_LIST = "InvoiceItem.list"
+INVOICE_PAYMENT_LIST = "InvoicePayment.list"
 PAYMENT_INTENT_CREATE = "PaymentIntent.create"
 SETUP_INTENT_RETRIEVE = "SetupIntent.retrieve"
 
@@ -27,6 +35,14 @@ def _operation(name: str) -> Callable:
         PORTAL_SESSION_CREATE: stripe_sdk.billing_portal.Session.create,
         CHARGE_LIST: stripe_sdk.Charge.list,
         INVOICE_LIST: stripe_sdk.Invoice.list,
+        INVOICE_CREATE: stripe_sdk.Invoice.create,
+        INVOICE_RETRIEVE: stripe_sdk.Invoice.retrieve,
+        INVOICE_FINALIZE: stripe_sdk.Invoice.finalize_invoice,
+        INVOICE_PAY: stripe_sdk.Invoice.pay,
+        INVOICE_VOID: stripe_sdk.Invoice.void_invoice,
+        INVOICE_ITEM_CREATE: stripe_sdk.InvoiceItem.create,
+        INVOICE_ITEM_LIST: stripe_sdk.InvoiceItem.list,
+        INVOICE_PAYMENT_LIST: stripe_sdk.InvoicePayment.list,
         PAYMENT_INTENT_CREATE: stripe_sdk.PaymentIntent.create,
         SETUP_INTENT_RETRIEVE: stripe_sdk.SetupIntent.retrieve,
     }

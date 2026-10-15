@@ -13,6 +13,7 @@ import httpx
 from httpx import AsyncClient
 
 from treg import audit, oauth
+from treg.domain.identity import api_keys as managed_keys
 
 
 def _oauth_blob(access: str, expires_at: float) -> str:
@@ -66,6 +67,8 @@ async def test_token_endpoint_io_holds_no_database_connection(
 
     await _register_oauth_tool(clients, "pool-free-refresh", _oauth_blob("OLD", expires_at=0))
     await audit.drain()  # Registration's asynchronous audit write must finish before sampling the pool.
+    # SQLite shares this pool with key metadata writes; finish them without clearing the throttle.
+    await managed_keys.drain_last_used()
     checked_out: list[int] = []
     original_post = app.state.http.post
 

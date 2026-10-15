@@ -150,9 +150,11 @@ endpoints:
         example: 1
         default: 1
       has_email:
-        type: boolean
+        type: string
         required: false
-        example: true
+        enum: ["1", "0"]
+        example: "1"
+        note: "Laravel query-string boolean. Send 1 or 0. The strings true/false are rejected with 422."
     note: Fixed pages of up to 20 employees; no per_page parameter. A title changes billing to per contact with
       email/phone. N/A does not count as contact data.
   test_request:

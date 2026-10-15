@@ -12,7 +12,8 @@ from datetime import date, datetime, timezone
 from typing import Annotated
 
 from pydantic import NaiveDatetime
-from sqlalchemy import BigInteger, Boolean, JSON, CheckConstraint, Column, Index, Integer, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, JSON, CheckConstraint, Column, Index, Integer, String, UniqueConstraint, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 # SQLModel 0.0.45+ rejects naive datetime binds unless fields are annotated with NaiveDatetime.
@@ -147,6 +148,46 @@ class Org(SQLModel, table=True):
     # flag because the moment the team objected is the processing record. Appended last, like the
     # column above, so create_all schemas match the migrated shape.
     archive_opt_out_at: NaiveUTC | None = Field(default=None)
+
+
+class OrgFlowControlVersion(SQLModel, table=True):
+    """Stored Org control snapshots; no call-path reader or publisher is attached yet."""
+
+    __table_args__ = (
+        CheckConstraint("version > 0", name="ck_orgflowcontrolversion_version"),
+        CheckConstraint(
+            "publish_status IN ('unpublished', 'pending', 'published', 'failed')",
+            name="ck_orgflowcontrolversion_publish_status",
+        ),
+        CheckConstraint(
+            "length(trim(created_by)) > 0 AND "
+            "(published_by IS NULL OR length(trim(published_by)) > 0)",
+            name="ck_orgflowcontrolversion_actors",
+        ),
+        CheckConstraint("length(trim(reason)) > 0", name="ck_orgflowcontrolversion_reason"),
+        CheckConstraint(
+            "publish_status != 'published' OR "
+            "(published_by IS NOT NULL AND published_at IS NOT NULL)",
+            name="ck_orgflowcontrolversion_published",
+        ),
+        Index("ix_orgflowcontrolversion_publish_status", "publish_status", "org_id", "version"),
+    )
+    org_id: int = Field(primary_key=True)  # Org existence is validated by the management writer.
+    version: int = Field(primary_key=True)
+    # Required full snapshot. The management writer must validate its schema and append versions;
+    # this storage model does not itself prevent updates to config or allocate version numbers.
+    config: dict = Field(sa_column=Column(
+        JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"),
+        nullable=False,
+    ))
+    publish_status: str = Field(default="unpublished", sa_column=Column(
+        String, nullable=False, server_default="unpublished",
+    ))
+    created_by: str
+    published_by: str | None = Field(default=None)
+    reason: str
+    created_at: NaiveUTC = Field(default_factory=_now)
+    published_at: NaiveUTC | None = Field(default=None)
 
 
 class User(SQLModel, table=True):

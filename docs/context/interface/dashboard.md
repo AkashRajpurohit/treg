@@ -125,8 +125,11 @@ it is received cannot recover a hash-stored key. The UI tells the user to save i
 ## Spend per API key
 
 Team -> API Keys has a "Spent last 30 days" column, from `GET /orgs/{id}/api-keys/spend`, which
-reads only the daily spend rollup; amounts show to the cent (cut, never rounded up) with the exact
-figure on hover, here and in the Usage spend list. Admins also see the team's "No API key" total, with an ⓘ that
+reads only the daily spend rollup; amounts show to the cent (cut, never rounded up), here and everywhere
+on the Usage Spend card (its total, the chart's axis and tooltip, the Other list and the ranking).
+Where an amount can be pointed at, `components/ui/Money.vue` shows its exact micro-USD figure at
+once on hover or keyboard focus (the column, the "No API key" total, the card total, the ranking
+and the Other list); the chart's own tooltip follows the pointer, so it shows the short figure. Admins also see the team's "No API key" total, with an ⓘ that
 says where such charges come from (`NO_KEY` in `state/constants.js`). Until the rollup has caught
 up once, every cell shows "Preparing…" with "Spend history is being prepared. It will appear here within a few days." on hover. The page never labels
 anything as calls: one call can make several charges.
