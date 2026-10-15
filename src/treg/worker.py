@@ -11,6 +11,7 @@
     treg-worker spend rollup [--max-rows 50000]      # fold new ledger settles into per-key daily spend
     treg-worker jev xboost [--posts 60] [--min-likes 150]   # the /jev launch-radar demo: X posts <24h -> jev
     treg-worker admin purge-evidence [--batch-size 5000]  # blank expired error evidence past 14-day retention
+    treg-worker admin purge-ad-clicks                      # delete email-to-click stash rows past 90 days
     treg-worker admin erase-archive --org <id>             # erase what an opted-out team stored in the archive
 
 Not the light `treg` CLI: these need the server extra (DB, platform keys in the env) and make
@@ -416,6 +417,16 @@ async def _admin_purge_evidence(args) -> int:
     return 1 if result.get("error") else 0
 
 
+async def _admin_purge_ad_clicks(args) -> int:
+    """Delete email-to-click stash rows past the 90-day lookup window (application/signup)."""
+    from .application import signup
+    from .infra.db import verify_db
+
+    await verify_db()
+    print(json.dumps(await signup.purge_expired_ad_clicks(), sort_keys=True))
+    return 0
+
+
 async def _admin_erase_archive(args) -> int:
     """Erase what one opted-out team stored in the archive (application/archive_erasure): the
     answer to an erasure request. Refuses a team still in the archive; opt it out first."""
@@ -559,6 +570,8 @@ def main(argv: list[str] | None = None) -> int:
     purge.add_argument("--batch-size", type=_positive_int, default=5000,
                        help="rows to update per transaction (default 5000)")
     purge.set_defaults(fn=_admin_purge_evidence)
+    clicks = adminsub.add_parser("purge-ad-clicks", help="delete email-to-click stash rows past 90 days")
+    clicks.set_defaults(fn=_admin_purge_ad_clicks)
     erase = adminsub.add_parser("erase-archive", help="erase what an opted-out team stored in the archive")
     erase.add_argument("--org", type=_positive_int, required=True, help="the team's org id")
     erase.set_defaults(fn=_admin_erase_archive)
