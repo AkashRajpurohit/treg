@@ -51,14 +51,17 @@ Monthly numbers cannot be updated from a single "last status" plus new days: the
 window must be subtracted, and distinct provider counts do not add. The worker stores one row per
 app per week, which do add: the leaderboard sums the last four, unions their provider lists and
 walks their active-day bits for the streak. A run reads only weeks not stored yet plus the newest;
-refused calls never reached a provider and are not counted. Badges can be a week old; votes are live.
+refused calls never reached a provider and are not counted. A first approval counts the app's four
+weeks at once, so it joins the activity boards without waiting for the run; after that, badges can
+be a week old. Votes are live.
 
 ## What leaves the server
 
 `domain.showcase.public_entry` is the only shape activity leaves in: vote tallies, badges and, per
 consent flag, a call tier (`100+` to `100k+`), Rising with growth rounded to ten percent, streak
 days, a provider count, top categories. Boards rank only apps whose maker consented to the board's
-metric. `GET /showcase/leaderboard` is cached publicly for a minute. Votes need the browser
+metric. `GET /showcase/leaderboard` is checked on every view (`no-cache` with an ETag; an unchanged
+board answers 304), so an approval or a vote shows at once. Votes need the browser
 session, a verified person (no agent, demo or suspended identity), the same origin and a rate limit.
 All showcase routes, like the page, 404 on a self-hosted registry.
 

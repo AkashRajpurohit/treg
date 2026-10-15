@@ -5,10 +5,12 @@ session cookie behind the same-origin guard. Makers act as themselves (session o
 Staff routes live under /admin/ behind `require_superadmin`; the private admin calls them with the
 env admin token and names its signed-in operator in `actor`, which only that token may do.
 """
+import hashlib
+import json
 import re
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,11 +92,18 @@ class VoteIn(BaseModel):
 # ---- public --------------------------------------------------------------------------------------
 
 @router.get("/showcase/leaderboard", include_in_schema=False)
-async def showcase_leaderboard(db: AsyncSession = Depends(get_session)):
+async def showcase_leaderboard(request: Request, db: AsyncSession = Depends(get_session)):
     """Approved apps with their vote tallies, consented activity tiers and badges, and the boards.
     Never a team, an exact count or money (`domain.showcase.public_entry`)."""
     _only_hosted()
-    return JSONResponse(await showcase.leaderboard(db), headers={"Cache-Control": "public, max-age=60"})
+    # Checked on every view (an approval or a vote shows at once); an unchanged board answers 304.
+    body = json.dumps(await showcase.leaderboard(db), separators=(",", ":")).encode()
+    etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
+    headers = {"Cache-Control": "no-cache", "ETag": etag}
+    sent = {t.strip().removeprefix("W/") for t in request.headers.get("if-none-match", "").split(",")}
+    if etag in sent:
+        return Response(status_code=304, headers=headers)
+    return Response(body, media_type="application/json", headers=headers)
 
 
 @router.get("/showcase/votes/me", include_in_schema=False)

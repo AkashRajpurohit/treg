@@ -283,6 +283,7 @@ async def approve(app_id: int, expected_version: int, *, actor: str, source: str
     await _publish_revision(rev)                     # storage I/O with no session open
     async with session_maker() as db:
         app = await _versioned(db, app_id, expected_version)
+        first_approval = app.approved_at is None
         before = live_of(app) if app.approved_at else {}
         old_keys = [app.icon_key, *app.shot_keys] if app.approved_at else []
         _set_live(app, rev)
@@ -293,6 +294,14 @@ async def approve(app_id: int, expected_version: int, *, actor: str, source: str
         await db.commit()
         view = app_view(app)
     await images.retire([k for k in old_keys if k not in ([rev["icon_key"], *rev["shot_keys"]])])
+    if first_approval:
+        # Count its activity now (four weeks back) instead of at the next weekly run, so an app with
+        # real usage lands on the activity boards as soon as it is approved. Best effort: the
+        # weekly run catches up if this fails.
+        try:
+            await refresh_weeks(app_ids=[app_id])
+        except Exception:
+            log.exception("showcase weeks on approval failed app=%s", app_id)
     return view
 
 
@@ -408,17 +417,20 @@ async def _week_row(db: AsyncSession, org_id: int, start: date, domains: dict[st
     return {"calls": calls, "active_days": active, "providers": sorted(providers), "categories": mix}
 
 
-async def refresh_weeks(session_factory: Callable = session_maker, *, today: date | None = None) -> dict:
-    """Store every missing week (up to the window) for every approved app, and recount the newest.
-    Idempotent: re-running a week rewrites its row with the same numbers."""
+async def refresh_weeks(session_factory: Callable = session_maker, *, today: date | None = None,
+                        app_ids: list[int] | None = None) -> dict:
+    """Store every missing week (up to the window) for every approved app - or only `app_ids` - and
+    recount the newest. Idempotent: re-running a week rewrites its row with the same numbers."""
     today = today or utcnow_naive().date()
     newest = rules.last_complete_week(today)
     wanted = [newest - timedelta(days=7 * i) for i in range(rules.WINDOW_WEEKS)]
     domains = _categories_by_endpoint()
     written = 0
     async with session_factory() as db:
-        targets = [(a.id, a.org_id) for a in (await db.execute(
-            select(ShowcaseApp).where(ShowcaseApp.status == "approved"))).scalars().all()]
+        stmt = select(ShowcaseApp).where(ShowcaseApp.status == "approved")
+        if app_ids is not None:
+            stmt = stmt.where(ShowcaseApp.id.in_(app_ids))
+        targets = [(a.id, a.org_id) for a in (await db.execute(stmt)).scalars().all()]
     for app_id, org_id in targets:
         async with session_factory() as db:
             have = set((await db.execute(

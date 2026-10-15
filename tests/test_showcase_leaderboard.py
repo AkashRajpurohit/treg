@@ -148,6 +148,9 @@ async def test_apply_review_approve_and_nothing_public_before(clients, store, st
     (pub,) = board["apps"]
     assert pub["name"] == "Example App" and pub["icon_url"] == f"/media-files/{icon}"
     assert pub["shots"][0]["small_url"].endswith("-640.webp")
+    async with session_maker() as db:   # its activity was counted on approval, not left for the weekly run
+        weeks = (await db.execute(select(ShowcaseWeek).where(ShowcaseWeek.app_id == entry["id"]))).scalars().all()
+    assert len(weeks) == rules.WINDOW_WEEKS
     # Once approved, nothing waits for review any more.
     assert (await clients.get("/admin/showcase/apps?status=review", headers=staff)).json() == []
     detail = (await clients.get(f"/admin/showcase/apps/{entry['id']}", headers=staff)).json()
@@ -261,7 +264,9 @@ async def test_the_public_board_never_leaks_the_team_or_exact_numbers(clients):
     await _calls(org_id, datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9), 1234)
     await showcase.refresh_weeks(today=TODAY)
     r = await clients.get("/showcase/leaderboard")
-    assert r.headers["cache-control"] == "public, max-age=60" and "1234" not in r.text
+    assert r.headers["cache-control"] == "no-cache" and "1234" not in r.text
+    again = await clients.get("/showcase/leaderboard", headers={"If-None-Match": r.headers["etag"]})
+    assert again.status_code == 304 and again.content == b""
     by_name = {a["name"]: a for a in r.json()["apps"]}
     assert by_name["Open"]["calls_tier"] == "1k+" and "calls_tier" not in by_name["Quiet"]
     assert r.json()["boards"]["most_active"] == [open_id]
