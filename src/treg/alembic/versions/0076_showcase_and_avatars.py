@@ -7,7 +7,7 @@ Create Date: 2026-10-15
 Additive: five new tables and two nullable columns. `showcaseapp` holds teams' applications to the
 /showcase leaderboard and their review state; `showcaseappevent` its append-only history;
 `showcaseweek` one row per app per UTC week and `showcasecursor` the last call counted into them,
-both written by `treg-worker showcase weeks`, which reads only new `callrecord` rows on the existing
+both written by `treg-worker showcase activity`, which reads only new `callrecord` rows on the existing
 (org_id, id) index; `showcasevote` one upvote per person per app.
 `org.avatar_key` and `user.avatar_key` name a picture in the media bucket, NULL for initials.
 """

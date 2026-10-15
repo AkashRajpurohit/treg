@@ -376,12 +376,12 @@ async def _catalog_repair_status(args) -> int:
     return 0 if result["complete"] else 1
 
 
-async def _showcase_weeks(args) -> int:
+async def _showcase_activity(args) -> int:
     from .infra.db import verify_db
-    from .application.showcase import refresh_weeks
+    from .application.showcase import refresh_activity
 
     await verify_db()
-    print(json.dumps(await refresh_weeks(), sort_keys=True))
+    print(json.dumps(await refresh_activity(), sort_keys=True))
     return 0
 
 
@@ -560,8 +560,8 @@ def main(argv: list[str] | None = None) -> int:
     repair_status.set_defaults(fn=_catalog_repair_status)
     showcase = sub.add_parser("showcase", help="the /showcase leaderboard's read models")
     showcasesub = showcase.add_subparsers(dest="cmd", required=True)
-    weeks = showcasesub.add_parser("weeks", help="add each approved app's new calls to its weekly activity rows")
-    weeks.set_defaults(fn=_showcase_weeks)
+    activity = showcasesub.add_parser("activity", help="add each approved app's new calls to its weekly activity rows")
+    activity.set_defaults(fn=_showcase_activity)
     spend = sub.add_parser("spend", help="spend read models derived from the ledger")
     spendsub = spend.add_subparsers(dest="cmd", required=True)
     rollup = spendsub.add_parser("rollup", help="fold new ledger settles into per-key, per-tool, per-day spend")

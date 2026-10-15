@@ -2276,7 +2276,7 @@ class ShowcaseAppEvent(SQLModel, table=True):
 
 class ShowcaseWeek(SQLModel, table=True):
     """One app's activity in one UTC week (Monday start), from its team's call records. Written only
-    by `application.showcase.refresh_weeks`, which adds new calls to it as they arrive (the current
+    by `application.showcase.refresh_activity`, which adds new calls to it as they arrive (the current
     week's row grows until the week ends). Rows add up exactly: the leaderboard sums the last four
     complete weeks for its monthly numbers and unions their provider lists for a distinct count."""
 
@@ -2294,7 +2294,7 @@ class ShowcaseWeek(SQLModel, table=True):
 
 
 class ShowcaseCursor(SQLModel, table=True):
-    """How far `application.showcase.refresh_weeks` has counted one approved app's team calls: the
+    """How far `application.showcase.refresh_activity` has counted one approved app's team calls: the
     last `callrecord.id` folded into its week rows. Each run reads only calls after it, over the
     `(org_id, id)` index, so no run re-reads a team's history. Same only writer as `ShowcaseWeek`."""
 

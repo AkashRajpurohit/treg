@@ -250,7 +250,7 @@ async def test_the_fold_counts_only_new_upstream_calls_in_small_batches(clients)
     await _calls(org_id, monday, 3)
     await _calls(org_id, monday + timedelta(days=2), 2, provider="anyapi", endpoint="anyapi.x.search.posts")
     await _calls(org_id, monday + timedelta(days=2), 4, refused_by="policy")
-    first = await showcase.refresh_weeks(now=NOW, batch_rows=2)
+    first = await showcase.refresh_activity(now=NOW, batch_rows=2)
     assert first["caught_up"] and first["calls"] == 9      # refused calls move the cursor but are not activity
     async with session_maker() as db:
         row = await db.get(ShowcaseWeek, (app_id, NEWEST.isoformat()))
@@ -261,21 +261,21 @@ async def test_the_fold_counts_only_new_upstream_calls_in_small_batches(clients)
     # A second run reads only what arrived since; a call younger than the lag waits for the next.
     await _calls(org_id, monday + timedelta(days=3), 1)
     await _calls(org_id, NOW - timedelta(minutes=1), 1)
-    again = await showcase.refresh_weeks(now=NOW)
+    again = await showcase.refresh_activity(now=NOW)
     assert again["calls"] == 1
     async with session_maker() as db:
         assert (await db.get(ShowcaseWeek, (app_id, NEWEST.isoformat()))).calls == 6
-    assert (await showcase.refresh_weeks(now=NOW))["calls"] == 0
-    assert (await showcase.refresh_weeks(now=NOW + timedelta(minutes=10)))["calls"] == 1
+    assert (await showcase.refresh_activity(now=NOW))["calls"] == 0
+    assert (await showcase.refresh_activity(now=NOW + timedelta(minutes=10)))["calls"] == 1
 
 
 async def test_a_capped_run_resumes_where_it_stopped(clients):
     _, org_id = await _tim()
     app_id = await _approved(org_id)
     await _calls(org_id, datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9), 5)
-    first = await showcase.refresh_weeks(now=NOW, max_rows=3, batch_rows=2)
+    first = await showcase.refresh_activity(now=NOW, max_rows=3, batch_rows=2)
     assert (first["calls"], first["caught_up"]) == (3, False)
-    second = await showcase.refresh_weeks(now=NOW, max_rows=3, batch_rows=2)
+    second = await showcase.refresh_activity(now=NOW, max_rows=3, batch_rows=2)
     assert (second["calls"], second["caught_up"]) == (2, True)
     async with session_maker() as db:
         assert (await db.get(ShowcaseWeek, (app_id, NEWEST.isoformat()))).calls == 5
@@ -288,7 +288,7 @@ async def test_weeks_that_leave_the_window_are_dropped(clients):
         old = (rules.window_start(TODAY) - timedelta(days=7)).isoformat()
         db.add(ShowcaseWeek(app_id=app_id, week_start=old, calls=9, active_days=1))
         await db.commit()
-    await showcase.refresh_weeks(now=NOW)
+    await showcase.refresh_activity(now=NOW)
     async with session_maker() as db:
         assert await db.get(ShowcaseWeek, (app_id, old)) is None
 
@@ -298,7 +298,7 @@ async def test_the_public_board_never_leaks_the_team_or_exact_numbers(clients):
     open_id = await _approved(org_id, name="Open")
     await _approved(org_id, name="Quiet", show_calls=False, show_streak=False)
     await _calls(org_id, datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9), 1234)
-    await showcase.refresh_weeks(now=NOW)
+    await showcase.refresh_activity(now=NOW)
     r = await clients.get("/showcase/leaderboard")
     assert r.headers["cache-control"] == "no-cache" and "1234" not in r.text
     again = await clients.get("/showcase/leaderboard", headers={"If-None-Match": r.headers["etag"]})

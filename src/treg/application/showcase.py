@@ -8,7 +8,7 @@ treg is the only writer of every showcase table:
 - staff review through `approve`, `reject`, `set_hidden`, `staff_edit`, `staff_create` (the
   private admin calls them through the staff API). Approval publishes the revision's pictures
   first and only then points the row at them, so a page never names a missing file.
-- `refresh_weeks` (the `treg-worker showcase weeks` cron) adds each approved app's new team calls
+- `refresh_activity` (the `treg-worker showcase activity` cron) adds each approved app's new team calls
   to one `ShowcaseWeek` row per UTC week, reading only calls after its `ShowcaseCursor`, in small
   batches. Approval counts nothing; a new app joins the activity boards at the next run.
 - `leaderboard` and `vote` are the public side; activity leaves only through
@@ -450,7 +450,7 @@ async def _fold_batch(db: AsyncSession, app_id: int, org_id: int, *, since: date
     return read, waiting or len(rows) < limit
 
 
-async def refresh_weeks(session_factory: Callable = session_maker, *, now: datetime | None = None,
+async def refresh_activity(session_factory: Callable = session_maker, *, now: datetime | None = None,
                         max_rows: int = MAX_ROWS, batch_rows: int = BATCH_ROWS) -> dict:
     """One scheduled pass: add every approved app's new team calls to its week rows, then drop
     rows older than the window. Returns `{apps, calls, caught_up, newest_week}`."""
@@ -475,7 +475,7 @@ async def refresh_weeks(session_factory: Callable = session_maker, *, now: datet
         await db.execute(delete(ShowcaseWeek).where(ShowcaseWeek.week_start < since.isoformat()))
         await db.commit()
     newest = rules.last_complete_week(now.date())
-    log.info("showcase weeks: %d apps, %d calls read, caught up %s", len(targets), read, caught_up)
+    log.info("showcase activity: %d apps, %d calls read, caught up %s", len(targets), read, caught_up)
     return {"apps": len(targets), "calls": read, "caught_up": caught_up, "newest_week": newest.isoformat()}
 
 

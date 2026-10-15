@@ -522,7 +522,7 @@ without importing the heavy database stack into the light `treg` CLI.
   lifecycle as the web service, and flushes read analytics before exiting. The same scheduled
   command refreshes Web Arena's saved Battle totals when Web Arena is enabled and its reviewed
   benchmark is published; that full refresh is gated to once every 30 minutes.
-- `treg-worker showcase weeks` adds each approved app's new calls to its /showcase leaderboard rows,
+- `treg-worker showcase activity` adds each approved app's new calls to its /showcase leaderboard rows,
   one per UTC week (schedule it hourly: a newly approved app joins the activity boards at the next
   run; hosted only, so a self-hosted registry need not schedule it). Each run reads only calls after
   each app's cursor, over `callrecord`'s (org_id, id) index in small batches, up to a cap per run; a

@@ -42,8 +42,8 @@ refused.
 |---|---|---|
 | `showcaseapp` | one entry: status, live fields, consent flags, the pending proposal | `application/showcase.py` |
 | `showcaseappevent` | append-only history | `application/showcase.py` |
-| `showcaseweek` | one row per approved app per UTC week | `refresh_weeks` (`treg-worker showcase weeks`) |
-| `showcasecursor` | the last call id counted into an app's weeks | `refresh_weeks` |
+| `showcaseweek` | one row per approved app per UTC week | `refresh_activity` (`treg-worker showcase activity`) |
+| `showcasecursor` | the last call id counted into an app's weeks | `refresh_activity` |
 | `showcasevote` | one upvote per person per app (the row is the vote) | `vote` |
 
 ## Weekly rows, counted incrementally
