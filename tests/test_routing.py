@@ -1994,3 +1994,11 @@ def test_a_country_dataforseo_cannot_be_asked_about_is_reported_not_answered_for
     good, _ = canonical_identity(contract, {"q": "coffee", "country": "th"})
     assert ignored_filters(dfs, contract, good) == ()
 
+
+def test_se_ranking_volume_names_great_britain_by_its_own_source_code():
+    """SE Ranking calls the United Kingdom database `uk`; `gb` answered 404 "Invalid source"."""
+    cat = catalog_store.load()
+    contract = cat.contracts["google.keywords.volume"]
+    ident, _ = canonical_identity(contract, {"keywords": ["tea"], "country": "GB"})
+    q, _ = cat.adapters["seranking.google.keywords.volume"].to_upstream(ident)
+    assert q["source"] == "uk", q

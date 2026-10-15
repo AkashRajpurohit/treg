@@ -2296,7 +2296,7 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   3166-1 numeric code (`catalog/country_numeric.json`, generated from pycountry), and returns
   nothing for a value that names no country. It once knew a short list and sent the United States
   for every other country, which answered a Thai volume question with US volumes, billed, with no
-  signal. Bench re-run, recruiting 30: same icypeas rows as the
+  signal. SE Ranking takes its own database names (`seranking_source`: `gb` is `uk`). Bench re-run, recruiting 30: same icypeas rows as the
   hand-written policy, one automatic fall-through, region briefs rescued by the pass-through.
 - **Routed DISCOVERY is a runtime switch (2026-08-29)**: `TREG_ROUTED_DISCOVERY=off` (default `on`)
   stops search leading with `treg.<capability>` and stops a routed parent riding in when a child
