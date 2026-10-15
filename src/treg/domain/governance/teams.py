@@ -42,6 +42,7 @@ from ...models import (
     OAuthGrant,
     OAuthRefresh,
     Org,
+    OrgFlowControlVersion,
     PendingOAuth,
     Project,
     ProviderResource,
@@ -257,6 +258,7 @@ ORG_SCOPED_MODELS = (
     ApiKeyEvent, ApiKey,
     ApiKeySpendDay,  # the spend rollup: a deleted team's history goes with it
     CapabilityPin,
+    OrgFlowControlVersion,  # configuration history belongs to the deleted team
     TagBudget,
     TagSpend,  # before the money tables it attributes: its rows reference a Hold that is about to go
     AsyncResourceRecord, ProviderResource, AsyncTaskRecord, LedgerEntry, Hold, CreditBlock,

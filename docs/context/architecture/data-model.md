@@ -54,6 +54,8 @@ sources:
   - src/treg/alembic/versions/0066_endpointdaystat_verdicts.py
   - src/treg/alembic/versions/0070_api_key_spend_rollup.py
   - src/treg/alembic/versions/0072_callrecord_call_ref_index.py
+  - src/treg/alembic/versions/0073_org_flow_control_version.py
+  - tests/test_org_flow_control_schema.py
   - src/treg/timeutil.py
   - src/treg/infra/db.py
   - src/treg/infra/money_timing.py
@@ -158,6 +160,23 @@ See [signup eligibility](money.md#signup-credit-eligibility).
 Revision `0071` adds `SignupPromoClaim` (`inbox` primary key, `user_id` with no FK, `created_at`):
 one row per mailbox that received the signup gift, staged with the user-level claim. It is
 backfilled from users already verified and no longer eligible.
+
+## Org flow-control configuration storage
+
+Revision `0073` adds `OrgFlowControlVersion` (`orgflowcontrolversion`), keyed by
+`(org_id, version)`. Each row stores a required full `config` snapshot (JSONB on PostgreSQL,
+JSON on SQLite), creator, reason, and UTC creation time. Publication metadata records
+`unpublished`, `pending`, `published`, or `failed`, with an optional publisher and publication
+time; `published` requires both. The primary key supports per-Org history, and
+`ix_orgflowcontrolversion_publish_status` supports bounded publication-state scans.
+
+This is storage only: there is no configuration API, publisher, or call-path reader yet.
+The schema enforces unique positive versions and valid publication metadata. Allocation of
+increasing versions, JSON schema validation, and immutable snapshots are management-writer
+responsibilities; this migration does not grant that writer access or prohibit arbitrary
+SQL updates. No rows are backfilled and existing request admission is unchanged.
+`cascade_delete_org` removes this history with its Org, backed by an `ON DELETE CASCADE` FK.
+An application rollback leaves the table in place; a schema downgrade deletes its saved history.
 
 ## Registry tables
 
