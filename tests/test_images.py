@@ -149,3 +149,15 @@ async def test_an_oversized_upload_is_cut_off(clients, store):
     big = b"\x89PNG\r\n\x1a\n" + b"0" * (rules.KINDS["user_avatar"].max_bytes + 1)
     assert (await clients.post("/images/user_avatar", content=big)).status_code == 413
     assert store.keys("staging") == []
+
+
+async def test_a_missing_object_reads_as_none_not_an_error(monkeypatch):
+    """obstore raises the builtin FileNotFoundError for a missing key (seen against a real S3
+    server); that is 'no such picture', not a storage failure."""
+    import obstore
+    from treg.infra.media_store import S3MediaStore
+
+    async def missing(store, path, **_):
+        raise FileNotFoundError(path)
+    monkeypatch.setattr(obstore, "get_async", missing)
+    assert await S3MediaStore({"staging": object(), "public": object()}).get("public", "x") is None

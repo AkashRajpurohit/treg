@@ -53,7 +53,7 @@ class S3MediaStore:
         try:
             result = await obstore.get_async(self._clients[bucket], key)
             return bytes(await result.bytes_async())
-        except NotFoundError:
+        except (NotFoundError, FileNotFoundError):   # obstore raises the builtin for a missing key
             return None
         except Exception as exc:
             raise MediaStoreError(f"get failed ({type(exc).__name__})") from None
