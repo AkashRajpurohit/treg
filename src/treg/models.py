@@ -2118,8 +2118,9 @@ class EndpointStatDirty(SQLModel, table=True):
 class EndpointStatCursor(SQLModel, table=True):
     """Where `application.catalog_stats.refresh` has got to in `callrecord`, and whether it has
     caught up. One row (`id = "callrecord"`). `caught_up_at` is NULL until a run drains the backlog,
-    and the catalog publishes no observations until a recent run has caught up. Missing or stale
-    worker evidence never authorizes a request-triggered audit-table aggregate.
+    and the catalog keeps computing observations live until then. A stale worker also restores
+    live fallback; async endpoints with result adapters retain live reads even after catch-up.
+    Background terminal repair does not change that reader selection in this stage.
     """
 
     id: str = Field(primary_key=True)
