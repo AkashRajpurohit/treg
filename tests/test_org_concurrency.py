@@ -1,5 +1,7 @@
-"""Root admission, transport lifetime and explicit outage policy; no live services."""
+"""Published root concurrency, transport lifetime and fail-open behavior; no live services."""
 import asyncio
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import anyio
@@ -12,7 +14,7 @@ from treg.api import app
 from treg.application.call import service
 from treg.application.call.types import ResolutionFailed, UpstreamResponse
 from treg.config import Settings, get_settings
-from treg.infra import kv, money_admission, org_concurrency as guard
+from treg.infra import kv, money_admission, org_concurrency as guard, org_flow_control as flow
 from treg.infra.db import session_maker
 from treg.models import CallRecord
 from treg.routers import call as routes
@@ -28,6 +30,19 @@ class Slots:
         self.acquire_result = None
         self.renew_result = None
         self.release_result = None
+        self.publications = {}
+        self.clock = 100.0
+        self.reads = 0
+
+    def publish(self, org_id, limit, version=1):
+        self.publications[org_id] = json.dumps({"org_id": org_id, "version": version, "config": {
+            "schema_version": 1, "pause_until": None, "rate_limit": None,
+            "concurrency_limit": {"max_in_flight": limit} if limit is not None else None}})
+        self.clock += 3
+
+    async def read_org_flow_control(self, org_id):
+        self.reads += 1
+        return self.publications.get(org_id)
 
     async def acquire_slot(self, key, token, ttl_ms, limit):
         self.acquires += 1
@@ -57,118 +72,103 @@ class Slots:
 @pytest.fixture
 def gate(monkeypatch):
     settings = get_settings()
-    monkeypatch.setattr(settings, "org_concurrency_enabled", True)
-    monkeypatch.setattr(settings, "org_concurrency_limits", {1: 1})
-    monkeypatch.setattr(settings, "org_concurrency_exempt_org_ids", [])
-    monkeypatch.setattr(settings, "org_concurrency_redis_failure", "fail_closed")
-    monkeypatch.setattr(settings, "org_concurrency_lease_s", 0.12)
+    monkeypatch.setattr(settings, "org_flow_control_enabled", True)
+    monkeypatch.setattr(settings, "org_flow_control_refresh_s", 2)
+    monkeypatch.setattr(guard, "_LEASE_S", 0.12)
+    monkeypatch.setattr(guard, "_next_unavailable_log", 0.0)
+    monkeypatch.setattr(guard, "_suppressed_unavailable_logs", 0)
+    monkeypatch.setattr(flow, "_reader", flow.Reader())
     store = Slots()
+    monkeypatch.setattr(flow, "_clock", lambda: store.clock)
     monkeypatch.setattr(kv, "store", lambda: store)
     return settings, store
 
 
 def test_default_disabled_and_explicit_enable_validation():
-    assert not Settings(_env_file=None).org_concurrency_enabled
-    with pytest.raises(ValidationError, match="explicit org_concurrency_redis_failure"):
-        Settings(_env_file=None, org_concurrency_enabled=True, kv_url="redis://localhost")
-    with pytest.raises(ValidationError, match="requires shared Redis"):
-        Settings(_env_file=None, org_concurrency_enabled=True,
-                 org_concurrency_redis_failure="fail_closed", kv_url="")
+    assert not Settings(_env_file=None).org_flow_control_enabled
+    assert not any(name.startswith("org_concurrency_") for name in Settings.model_fields)
+    with pytest.raises(ValidationError, match="requires a valid Redis kv_url"):
+        Settings(_env_file=None, org_flow_control_enabled=True, kv_url="")
     with pytest.raises(ValidationError, match="valid Redis kv_url"):
-        Settings(_env_file=None, org_concurrency_enabled=True,
-                 org_concurrency_redis_failure="fail_closed", kv_url="http://localhost")
+        Settings(_env_file=None, org_flow_control_enabled=True, kv_url="http://localhost")
 
 
-@pytest.mark.parametrize("field,value", [
-    ("limits", {"0": 1}), ("limits", {"-1": 1}), ("limits", {"org": 1}),
-    ("limits", {"01": 1}), ("limits", {True: 1}), ("limits", {"1": 0}),
-    ("limits", {"1": -1}), ("limits", {"1": True}), ("limits", {"1": 1.5}),
-    ("limits", {"1": "2"}), ("limits", []), ("exempt_org_ids", [True]),
-    ("exempt_org_ids", [0]), ("exempt_org_ids", ["1"]), ("lease_s", 2),
-    ("lease_s", 301), ("redis_failure", "automatic"), ("retry_after_s", 0),
-])
-def test_invalid_configuration(field, value):
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None, **{f"org_concurrency_{field}": value})
-
-
-def test_environment_configuration(monkeypatch):
+def test_removed_environment_configuration_cannot_enable_admission(monkeypatch):
     monkeypatch.setenv("TREG_ORG_CONCURRENCY_ENABLED", "true")
     monkeypatch.setenv("TREG_ORG_CONCURRENCY_LIMITS", '{"123":2,"456":4}')
     monkeypatch.setenv("TREG_ORG_CONCURRENCY_EXEMPT_ORG_IDS", '[456]')
-    monkeypatch.setenv("TREG_ORG_CONCURRENCY_REDIS_FAILURE", "fail_open")
-    monkeypatch.setenv("TREG_KV_URL", "redis://localhost/15")
+    monkeypatch.setenv("TREG_ORG_CONCURRENCY_REDIS_FAILURE", "fail_closed")
     settings = Settings(_env_file=None)
-    assert settings.org_concurrency_limits == {123: 2, 456: 4}
-    assert settings.org_concurrency_exempt_org_ids == [456]
+    assert not settings.org_flow_control_enabled
+    assert not any(name.startswith("org_concurrency_") for name in settings.model_dump())
 
 
-@pytest.mark.parametrize("bypass", ["disabled", "unconfigured", "exempt"])
-async def test_bypass_never_contacts_redis(gate, monkeypatch, bypass):
-    settings, _ = gate
-    if bypass == "disabled":
-        settings.org_concurrency_enabled = False
-    elif bypass == "unconfigured":
-        settings.org_concurrency_limits = {}
-    else:
-        settings.org_concurrency_exempt_org_ids = [1]
-    monkeypatch.setattr(kv, "store", lambda: pytest.fail("bypassed request touched Redis"))
-    assert await guard.acquire(1) is None
+async def test_no_published_limit_never_contacts_slot_store(gate, monkeypatch):
+    monkeypatch.setattr(kv, "store", lambda: pytest.fail("bypassed slot admission touched Redis"))
+    assert await guard.acquire(1, limit=None) is None
 
 
 async def test_limit_and_org_isolation(gate):
-    settings, store = gate
-    settings.org_concurrency_limits = {1: 2, 2: 1}
-    slots = [await guard.acquire(1), await guard.acquire(1), await guard.acquire(2)]
+    _, store = gate
+    slots = [await guard.acquire(1, limit=2, version=7),
+             await guard.acquire(1, limit=2, version=7),
+             await guard.acquire(2, limit=1, version=3)]
     try:
         assert store.count == 3
         assert len({slot.token for slot in slots}) == 3
         with pytest.raises(guard.AdmissionRejected) as caught:
-            await guard.acquire(1)
+            await guard.acquire(1, limit=2, version=7)
         assert caught.value.status_code == 429
+        assert caught.value.detail["config_version"] == 7
     finally:
         await asyncio.gather(*(slot.finish() for slot in slots))
     assert store.count == 0
 
 
-@pytest.mark.parametrize("policy", ["fail_open", "fail_closed"])
-async def test_redis_outage_policy_is_not_over_limit(gate, policy, caplog):
-    settings, store = gate
-    settings.org_concurrency_redis_failure = policy
+async def test_redis_outage_allows_instead_of_reporting_over_limit(gate, caplog):
+    _, store = gate
     store.acquire_result = "unavailable"
-    if policy == "fail_open":
-        assert await guard.acquire(1) is None
-    else:
-        with pytest.raises(guard.AdmissionRejected) as caught:
-            await guard.acquire(1)
-        assert caught.value.status_code == 503
-        assert caught.value.detail["error"] == "org_concurrency_unavailable"
-    assert policy in caplog.text
+    assert await guard.acquire(1, limit=1, version=4) is None
+    assert "acquire_unavailable" in caplog.text
+    assert store.count == 0
 
 
-@pytest.mark.parametrize("policy", ["fail_open", "fail_closed"])
-async def test_redis_client_creation_failure_honors_policy(gate, monkeypatch, policy, caplog):
-    settings, _ = gate
-    settings.org_concurrency_redis_failure = policy
+async def test_outage_warnings_are_bounded_and_report_suppressed_admissions(
+    gate, monkeypatch, caplog,
+):
+    _, store = gate
+    store.acquire_result = "unavailable"
+    clock = [100.0]
+    monkeypatch.setattr(guard, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    for _ in range(101):
+        assert await guard.acquire(1, limit=1, version=4) is None
+    messages = [record.getMessage() for record in caplog.records
+                if record.name == guard.log.name and "acquire_unavailable" in record.getMessage()]
+    assert len(messages) == 1
+    assert "action=allow suppressed_since_last_log=0" in messages[0]
+    clock[0] += 5
+    assert await guard.acquire(2, limit=1, version=6) is None
+    messages = [record.getMessage() for record in caplog.records
+                if record.name == guard.log.name and "acquire_unavailable" in record.getMessage()]
+    assert len(messages) == 2
+    assert "org_id=2 config_version=6 action=allow suppressed_since_last_log=100" in messages[-1]
+    assert store.count == 0
 
+
+async def test_redis_client_creation_failure_allows_without_logging_url(gate, monkeypatch, caplog):
     def broken_client():
         raise ValueError("invalid Redis URL option: must-not-log-url")
 
     monkeypatch.setattr(kv, "store", broken_client)
-    if policy == "fail_open":
-        assert await guard.acquire(1) is None
-    else:
-        with pytest.raises(guard.AdmissionRejected) as caught:
-            await guard.acquire(1)
-        assert caught.value.status_code == 503
-    assert policy in caplog.text
+    assert await guard.acquire(1, limit=1, version=4) is None
+    assert "acquire_unavailable" in caplog.text
     assert "must-not-log-url" not in caplog.text
 
 
 @pytest.mark.parametrize("outcome", ["lost", "unavailable"])
 async def test_renewal_loss_keeps_accepted_cleanup_running(gate, caplog, outcome):
     _, store = gate
-    slot = await guard.acquire(1)
+    slot = await guard.acquire(1, limit=1, version=1)
     store.renew_result = outcome
     await asyncio.wait_for(store.renewed.wait(), 1)
     await asyncio.sleep(0)
@@ -191,7 +191,7 @@ async def test_cancellation_during_ambiguous_acquire_releases_its_owner(gate, mo
         return result
 
     monkeypatch.setattr(store, "acquire_slot", delayed)
-    task = asyncio.create_task(guard.acquire(1))
+    task = asyncio.create_task(guard.acquire(1, limit=1, version=1))
     await entered.wait()
     task.cancel()
     await asyncio.sleep(0)
@@ -203,7 +203,7 @@ async def test_cancellation_during_ambiguous_acquire_releases_its_owner(gate, mo
 
 
 @pytest.mark.parametrize("reply", ["unavailable", "late"])
-async def test_unconfirmed_acquisition_does_not_enter_work_and_cleans_token(gate, monkeypatch, reply):
+async def test_unconfirmed_acquisition_allows_after_cleaning_ambiguous_token(gate, monkeypatch, reply):
     _, store = gate
     original = store.acquire_slot
 
@@ -215,15 +215,13 @@ async def test_unconfirmed_acquisition_does_not_enter_work_and_cleans_token(gate
         return "unavailable"
 
     monkeypatch.setattr(store, "acquire_slot", ambiguous)
-    with pytest.raises(guard.AdmissionRejected) as caught:
-        await guard.acquire(1)
-    assert caught.value.status_code == 503
+    assert await guard.acquire(1, limit=1, version=1) is None
     assert store.count == 0
 
 
 async def test_release_failure_is_reported_without_changing_accepted_result(gate, caplog):
     _, store = gate
-    slot = await guard.acquire(1)
+    slot = await guard.acquire(1, limit=1, version=1)
     store.release_result = "unavailable"
     await slot.finish()
     assert "release_unavailable" in caplog.text
@@ -232,7 +230,7 @@ async def test_release_failure_is_reported_without_changing_accepted_result(gate
 
 async def test_close_failure_cannot_mask_original_error_or_leak_slot(gate, caplog):
     _, store = gate
-    slot = await guard.acquire(1)
+    slot = await guard.acquire(1, limit=1, version=1)
     with pytest.raises(ValueError, match="original"):
         try:
             raise ValueError("original")
@@ -244,7 +242,7 @@ async def test_close_failure_cannot_mask_original_error_or_leak_slot(gate, caplo
 
 async def test_long_cleanup_renews_and_survives_anyio_cancellation(gate):
     _, store = gate
-    slot = await guard.acquire(1)
+    slot = await guard.acquire(1, limit=1, version=1)
 
     async def close():
         await asyncio.sleep(0.3)
@@ -258,10 +256,129 @@ async def test_long_cleanup_renews_and_survives_anyio_cancellation(gate):
 
 
 async def _configure_org(clients, gate):
-    settings, store = gate
+    _, store = gate
     org_id = (await clients.get("/orgs")).json()[0]["org_id"]
-    settings.org_concurrency_limits = {org_id: 1}
+    store.publish(org_id, 1)
     return org_id, store
+
+
+async def test_published_updates_null_and_missing_preserve_in_flight_owners(
+    clients, gate, monkeypatch,
+):
+    org, store = await _configure_org(clients, gate)
+    entered, proceed = asyncio.Queue(), asyncio.Event()
+    closed = []
+
+    def execute(*args):
+        close = AsyncMock()
+        closed.append(close)
+
+        async def body():
+            entered.put_nowait(True)
+            yield b"first"
+            await proceed.wait()
+            yield b"last"
+
+        return UpstreamResponse(200, (), body(), close)
+
+    monkeypatch.setattr(routes, "execute_call", AsyncMock(side_effect=execute))
+    tasks = []
+
+    async def start_request():
+        task = asyncio.create_task(clients.get("/call/example/path"))
+        tasks.append(task)
+        await asyncio.wait_for(entered.get(), 2)
+
+    try:
+        await start_request()
+        assert store.count == 1
+        rejected = await clients.get("/call/example/path")
+        assert rejected.status_code == 429
+        assert rejected.json()["detail"]["config_version"] == 1
+
+        store.publish(org, 2, version=2)
+        await start_request()
+        assert store.count == 2
+        store.publish(org, 1, version=3)
+        rejected = await clients.get("/call/example/path")
+        assert rejected.status_code == 429
+        assert rejected.json()["detail"]["config_version"] == 3
+        assert store.count == 2  # Lowering a limit does not evict accepted owners.
+
+        acquires = store.acquires
+        store.publish(org, None, version=4)
+        await start_request()
+        assert store.count == 2 and store.acquires == acquires
+        del store.publications[org]
+        store.clock += 3
+        await start_request()
+        assert store.count == 2 and store.acquires == acquires
+
+        proceed.set()
+        results = await asyncio.gather(*tasks)
+        assert all(result.status_code == 200 and result.content == b"firstlast" for result in results)
+        assert store.count == 0
+        for close in closed:
+            close.assert_awaited_once()
+    finally:
+        proceed.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize("change", ["bad_json", "invalid_limit", "stale", "same_version"])
+async def test_bad_or_conflicting_publication_retains_previous_concurrency(
+    clients, gate, monkeypatch, change,
+):
+    org, store = await _configure_org(clients, gate)
+    store.publish(org, 1, version=2)
+    held = await guard.acquire(org, limit=1, version=2)
+    execute = AsyncMock(side_effect=AssertionError("retained limit was bypassed"))
+    monkeypatch.setattr(routes, "execute_call", execute)
+    try:
+        assert (await clients.get("/call/example/path")).status_code == 429
+        if change == "bad_json":
+            store.publications[org] = "{"
+        elif change == "invalid_limit":
+            store.publish(org, True, version=3)
+        else:
+            store.publish(org, 10, version=1 if change == "stale" else 2)
+        store.clock += 3
+        response = await clients.get("/call/example/path")
+        assert response.status_code == 429
+        assert response.json()["detail"]["config_version"] == 2
+        assert store.count == 1
+        execute.assert_not_awaited()
+    finally:
+        await held.finish()
+    assert store.count == 0
+
+
+@pytest.mark.parametrize("configuration", ["disabled", "missing", "null", "unavailable"])
+async def test_root_without_effective_published_limit_performs_no_slot_io(
+    clients, gate, monkeypatch, configuration,
+):
+    org, store = await _configure_org(clients, gate)
+    if configuration == "disabled":
+        monkeypatch.setattr(gate[0], "org_flow_control_enabled", False)
+        monkeypatch.setattr(kv, "store", lambda: pytest.fail("disabled controls touched Redis"))
+    elif configuration == "missing":
+        del store.publications[org]
+    elif configuration == "null":
+        store.publish(org, None)
+    else:
+        store.publications[org] = kv.FlowControlReadFailure.UNAVAILABLE
+
+    async def body():
+        yield b"allowed"
+
+    monkeypatch.setattr(routes, "execute_call", AsyncMock(return_value=UpstreamResponse(
+        200, (), body(), AsyncMock())))
+    response = await clients.get("/call/example/path")
+    assert response.status_code == 200 and response.content == b"allowed"
+    assert store.acquires == store.count == 0
+    assert store.reads == (0 if configuration == "disabled" else 1)
 
 
 @pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
@@ -270,7 +387,7 @@ async def test_rejection_before_money_provider_or_body_with_existing_audit(
 ):
     org, store = await _configure_org(clients, gate)
     monkeypatch.setattr(get_settings(), "table_enabled", True)
-    held = await guard.acquire(org)
+    held = await guard.acquire(org, limit=1, version=1)
     execute = AsyncMock(side_effect=AssertionError("rejected call executed"))
     reserve = AsyncMock(side_effect=AssertionError("rejected call reserved"))
     monkeypatch.setattr(routes, "execute_call", execute)
@@ -284,6 +401,7 @@ async def test_rejection_before_money_provider_or_body_with_existing_audit(
         assert response.headers["X-Treg-Error"] == "1"
         call_ref = response.headers["X-Treg-Call-Id"]
         assert response.json()["detail"]["error"] == "org_concurrency_limit"
+        assert response.json()["detail"]["config_version"] == 1
         await audit.drain()
         async with session_maker() as db:
             rows = (await db.execute(select(CallRecord).where(CallRecord.status_code == 429))).scalars().all()
@@ -299,7 +417,7 @@ async def test_rejection_before_money_provider_or_body_with_existing_audit(
 async def test_all_api_keys_share_the_org_slot(clients, gate, monkeypatch):
     org, _ = await _configure_org(clients, gate)
     key = (await clients.post(f"/orgs/{org}/api-keys", json={"name": "second"})).json()["secret"]
-    held = await guard.acquire(org)
+    held = await guard.acquire(org, limit=1, version=1)
     try:
         for token in (clients.headers["X-Treg-Token"], key):
             response = await clients.get("/call/example/path", headers={"X-Treg-Token": token})
@@ -323,10 +441,8 @@ async def test_execution_exception_releases(clients, gate, monkeypatch, failure)
     assert store.count == 0
 
 
-@pytest.mark.parametrize("policy,status", [("fail_closed", 503), ("fail_open", 202)])
-async def test_http_redis_policy_and_async_submission_completion(clients, gate, monkeypatch, policy, status):
+async def test_http_redis_outage_allows_async_submission_completion(clients, gate, monkeypatch):
     _, store = await _configure_org(clients, gate)
-    gate[0].org_concurrency_redis_failure = policy
     store.acquire_result = "unavailable"
 
     async def body():
@@ -335,11 +451,8 @@ async def test_http_redis_policy_and_async_submission_completion(clients, gate, 
     execute = AsyncMock(return_value=UpstreamResponse(202, (), body(), AsyncMock()))
     monkeypatch.setattr(routes, "execute_call", execute)
     response = await clients.post("/call/example/submit")
-    assert response.status_code == status
-    assert execute.await_count == (1 if policy == "fail_open" else 0)
-    if policy == "fail_closed":
-        assert response.headers["Retry-After"] == "1"
-        assert response.json()["detail"]["error"] == "org_concurrency_unavailable"
+    assert response.status_code == 202
+    execute.assert_awaited_once()
     assert store.count == 0
 
 
@@ -402,7 +515,7 @@ async def test_send_disconnect_before_first_body_releases(gate):
     from starlette.responses import StreamingResponse
 
     _, store = gate
-    slot = await guard.acquire(1)
+    slot = await guard.acquire(1, limit=1, version=1)
     closed = AsyncMock()
 
     async def body():
@@ -512,12 +625,13 @@ async def test_mcp_surfaces_preserve_retry_information(clients, gate, path, tool
     from test_mcp_directory import paired_mcp_session, _call_tool
 
     org, _ = await _configure_org(clients, gate)
-    held = await guard.acquire(org)
+    held = await guard.acquire(org, limit=1, version=1)
     try:
         async with paired_mcp_session() as client:
             out = await _call_tool(client, tool, args, clients.headers["X-Treg-Token"], path=path)
         assert out["status"] == 429, out
         assert out["retry_after"] == "1"
         assert out["body"]["detail"]["retry_after_s"] == 1
+        assert out["body"]["detail"]["config_version"] == 1
     finally:
         await held.finish()

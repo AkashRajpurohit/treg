@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +20,7 @@ from treg.application.call import settle as call_settle
 from treg.application.call.resolve import MarketplaceCall
 from treg.application.call.types import ReservationFailed
 from treg.application.hub import runner as hub_runner
-from treg.config import get_settings
+from treg.config import Settings, get_settings
 from treg.domain import money as ledger
 from treg.domain.identity.access import Caller
 from treg.infra import kv, money_admission
@@ -30,6 +31,51 @@ from treg.timeutil import utcnow_naive
 
 from test_marketplace_call import EP, platform_on  # noqa: F401 - real call fixture
 from test_money_admission import LeaseStore
+
+
+def test_money_retry_default_is_one_second(monkeypatch):
+    monkeypatch.delenv("TREG_MONEY_ADMISSION_RETRY_AFTER_S", raising=False)
+    monkeypatch.delenv("TREG_ORG_CONCURRENCY_RETRY_AFTER_S", raising=False)
+    assert Settings(_env_file=None).money_admission_retry_after_s == 1
+
+
+@pytest.mark.parametrize("env_name", [
+    "TREG_MONEY_ADMISSION_RETRY_AFTER_S", "TREG_ORG_CONCURRENCY_RETRY_AFTER_S",
+])
+def test_money_retry_reads_new_name_and_legacy_alias(monkeypatch, env_name):
+    monkeypatch.delenv("TREG_MONEY_ADMISSION_RETRY_AFTER_S", raising=False)
+    monkeypatch.delenv("TREG_ORG_CONCURRENCY_RETRY_AFTER_S", raising=False)
+    monkeypatch.setenv(env_name, "7")
+    assert Settings(_env_file=None).money_admission_retry_after_s == 7
+
+
+def test_money_retry_new_env_name_takes_precedence_over_legacy_alias(monkeypatch):
+    monkeypatch.setenv("TREG_MONEY_ADMISSION_RETRY_AFTER_S", "7")
+    monkeypatch.setenv("TREG_ORG_CONCURRENCY_RETRY_AFTER_S", "13")
+    assert Settings(_env_file=None).money_admission_retry_after_s == 7
+
+
+@pytest.mark.parametrize("base", [1, 60])
+def test_money_retry_accepts_direct_setting_at_bounds(monkeypatch, base):
+    monkeypatch.delenv("TREG_MONEY_ADMISSION_RETRY_AFTER_S", raising=False)
+    monkeypatch.delenv("TREG_ORG_CONCURRENCY_RETRY_AFTER_S", raising=False)
+    assert Settings(_env_file=None, money_admission_retry_after_s=base).money_admission_retry_after_s == base
+
+
+@pytest.mark.parametrize("source", [
+    "keyword", "TREG_MONEY_ADMISSION_RETRY_AFTER_S", "TREG_ORG_CONCURRENCY_RETRY_AFTER_S",
+])
+@pytest.mark.parametrize("base,error_type", [(0, "greater_than_equal"), (61, "less_than_equal")])
+def test_money_retry_rejects_values_outside_bounds(monkeypatch, source, base, error_type):
+    monkeypatch.delenv("TREG_MONEY_ADMISSION_RETRY_AFTER_S", raising=False)
+    monkeypatch.delenv("TREG_ORG_CONCURRENCY_RETRY_AFTER_S", raising=False)
+    kwargs = {"money_admission_retry_after_s": base} if source == "keyword" else {}
+    if source != "keyword":
+        monkeypatch.setenv(source, str(base))
+    with pytest.raises(ValidationError) as caught:
+        Settings(_env_file=None, **kwargs)
+    [error] = caught.value.errors(include_input=False)
+    assert error["type"] == error_type
 
 
 @pytest.fixture
@@ -832,7 +878,7 @@ async def test_reserve_timeout_refuses_before_checkout_without_a_hold(money_db, 
         assert seen == [], "a rejected reserve must never check out a DB connection"
         assert caught.value.kind == "money_admission_timeout"
         assert caught.value.status_code == 429 and caught.value.blame == "treg"
-        base = get_settings().org_concurrency_retry_after_s
+        base = get_settings().money_admission_retry_after_s
         assert base <= caught.value.retry_after_s <= 2 * base
     finally:
         _stop_listening(engine, checkout)
@@ -889,7 +935,7 @@ async def test_reserve_timeout_releases_idempotency_key_then_retries_and_replays
     monkeypatch.setattr(call_service, "relay", relay)
     release = AsyncMock(wraps=call_routes.release_idempotent_claim)
     monkeypatch.setattr(call_routes, "release_idempotent_claim", release)
-    monkeypatch.setattr(get_settings(), "org_concurrency_retry_after_s", 7)
+    monkeypatch.setattr(get_settings(), "money_admission_retry_after_s", 7)
     monkeypatch.setattr(call_reserve.random, "randint", lambda lo, hi: 11)
     attempts = []
 
@@ -940,7 +986,7 @@ async def test_reserve_timeout_releases_idempotency_key_then_retries_and_replays
 
 @pytest.mark.parametrize("base", [1, 7, 60])
 @pytest.mark.parametrize("upper", [False, True])
-async def test_reserve_retry_jitter_uses_org_limit_setting(monkeypatch, base, upper):
+async def test_reserve_retry_jitter_uses_money_admission_setting(monkeypatch, base, upper):
     @asynccontextmanager
     async def refuse(*args, **kwargs):
         raise money_admission.ReserveAdmissionTimeout("wait_timeout")
@@ -953,7 +999,7 @@ async def test_reserve_retry_jitter_uses_org_limit_setting(monkeypatch, base, up
         return hi if upper else lo
 
     monkeypatch.setattr(money_admission, "admit", refuse)
-    monkeypatch.setattr(get_settings(), "org_concurrency_retry_after_s", base)
+    monkeypatch.setattr(get_settings(), "money_admission_retry_after_s", base)
     monkeypatch.setattr(call_reserve.random, "randint", choose)
     with pytest.raises(ReservationFailed) as caught:
         async with call_reserve.reserve_admission(7):

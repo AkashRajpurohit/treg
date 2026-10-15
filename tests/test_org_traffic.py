@@ -413,7 +413,7 @@ async def test_guard_log_has_effective_limit_and_aggregate(clients, counter, cal
     from treg.infra import org_concurrency as guard
 
     org, _ = await _configure_org(clients, gate)
-    held = await guard.acquire(org)
+    held = await guard.acquire(org, limit=1, version=1)
     try:
         response = await clients.get("/call/example/path")
         assert response.status_code == 429
@@ -460,7 +460,7 @@ async def test_mcp_logs_and_counts_one_root(
     from treg.infra import org_concurrency as guard
 
     org, _ = await _configure_org(clients, gate)
-    held = await guard.acquire(org)
+    held = await guard.acquire(org, limit=1, version=1)
     try:
         async with paired_mcp_session() as client:
             out = await _call_tool(client, tool, args, clients.headers["X-Treg-Token"], path=path)
@@ -632,5 +632,5 @@ async def test_guard_logging_failure_preserves_rejection(gate, monkeypatch):
     gate[1].acquire_result = "busy"
     monkeypatch.setattr(guard.log, "warning", lambda *a: (_ for _ in ()).throw(RuntimeError()))
     with pytest.raises(guard.AdmissionRejected) as error:
-        await guard.acquire(1)
+        await guard.acquire(1, limit=1, version=1)
     assert error.value.status_code == 429

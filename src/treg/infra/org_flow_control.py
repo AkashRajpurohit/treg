@@ -1,7 +1,7 @@
-"""Published Org pause snapshots, read lazily from the shared Redis store.
+"""Published Org admission snapshots, read lazily from the shared Redis store.
 
-Only root-call pause admission is active here. Rate and concurrency fields are validated but
-not enforced. Redis failures allow new work; malformed publications retain the last valid rule
+Pause and concurrency are active; rate is validated but not enforced. Redis failures allow new
+work; malformed publications retain the last valid rule
 until its original expiry. Accepted work never enters this guard again. The bounded worker cache
 is not durable version history.
 """
@@ -46,6 +46,7 @@ class Snapshot:
     version: int
     pause_until: datetime | None
     canonical: str
+    max_in_flight: int | None = None
 
 
 def _integer(value) -> bool:
@@ -98,7 +99,8 @@ def _parse(raw: str, org_id: int) -> Snapshot:
             or not _integer(concurrency["max_in_flight"])):
         raise ValueError("invalid concurrency limit")
     canonical = json.dumps(config, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    return Snapshot(data["version"], pause, canonical)
+    return Snapshot(data["version"], pause, canonical,
+                    concurrency["max_in_flight"] if concurrency else None)
 
 
 def _emit(event: str, org_id: int, call_ref: str | None, *,
@@ -106,7 +108,7 @@ def _emit(event: str, org_id: int, call_ref: str | None, *,
     try:
         log.log(level, "%s %s", event, json.dumps(
             {"worker_pid": os.getpid(), "org_id": org_id, "call_ref": call_ref,
-             "capability": "pause", **fields},
+             "capability": "pause", "capabilities": ["pause", "concurrency"], **fields},
             separators=(",", ":")))
     except Exception:
         pass  # Observability cannot change an admission decision.
@@ -141,8 +143,9 @@ class Reader:
             now = _utcnow()
             victim = next((key for key, row in self.entries.items()
                            if row.users == 0 and not row.lock.locked() and (
-                               row.snapshot is None or row.snapshot.pause_until is None
-                               or row.snapshot.pause_until <= now)), None)
+                               row.snapshot is None or (row.snapshot.max_in_flight is None and (
+                                   row.snapshot.pause_until is None
+                                   or row.snapshot.pause_until <= now)))), None)
             if victim is None:
                 if _clock() >= self.next_capacity_warning:
                     self.next_capacity_warning = _clock() + _LOG_INTERVAL_S
@@ -186,7 +189,7 @@ class Reader:
         if raw is None:
             if entry.snapshot is not None or not was_available:
                 _emit("org_flow_control_version_observed", org_id, call_ref, config_version=0,
-                      pause_until=None)
+                      pause_until=None, max_in_flight=None)
             entry.snapshot = None
             return
         try:
@@ -204,12 +207,13 @@ class Reader:
         if current is None or snapshot.version > current.version or not was_available:
             _emit("org_flow_control_version_observed", org_id, call_ref,
                   config_version=snapshot.version,
-                  pause_until=snapshot.pause_until.isoformat() if snapshot.pause_until else None)
+                  pause_until=snapshot.pause_until.isoformat() if snapshot.pause_until else None,
+                  max_in_flight=snapshot.max_in_flight)
 
-    async def check(self, org_id: int, call_ref: str | None, refresh_s: float) -> int:
+    async def check(self, org_id: int, call_ref: str | None, refresh_s: float) -> Snapshot | None:
         entry = self._entry(org_id, call_ref)
         if entry is None:
-            return 0
+            return None
         entry.users += 1
         try:
             if entry.lock.locked() or _clock() >= entry.next_refresh:
@@ -218,7 +222,7 @@ class Reader:
                     if _clock() >= entry.next_refresh:
                         await self._refresh(entry, org_id, call_ref, refresh_s)
             if not entry.available:
-                return 0
+                return None
             snapshot = entry.snapshot
             if snapshot is not None and snapshot.pause_until is not None:
                 remaining = (snapshot.pause_until - _utcnow()).total_seconds()
@@ -233,7 +237,7 @@ class Reader:
                     else:
                         entry.suppressed_pause_logs += 1
                     raise PauseRejected(retry_after_s=retry, version=snapshot.version)
-            return snapshot.version if snapshot else 0
+            return snapshot
         finally:
             entry.users -= 1
 
@@ -247,7 +251,7 @@ def reset() -> None:
     _reader = Reader()
 
 
-async def check(org_id: int, call_ref: str | None = None) -> int | None:
+async def check(org_id: int, call_ref: str | None = None) -> Snapshot | None:
     """Called once with trusted Caller identity, before root financial/provider work."""
     settings = get_settings()
     if not settings.org_flow_control_enabled:

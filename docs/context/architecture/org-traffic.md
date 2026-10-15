@@ -111,7 +111,7 @@ Illustrative synthetic examples (normal logger prefixes omitted):
 ```text
 request {"worker_pid":123,"surface":"call","adapter":"call","org_id":42,"api_key_id":7,"call_ref":"0123456789abcdef0123456789abcdef","status":503,"outcome":"completed","failure_kind":"db_pool","method":"GET","tool_name":"example","endpoint_id":null,"replay_of":null,"handler_ms":800.2}
 request {"worker_pid":123,"surface":"mcp","adapter":"call","org_id":null,"api_key_id":null,"call_ref":null,"method":null,"tool_name":null,"endpoint_id":null,"replay_of":null,"status":null,"outcome":"preflight","handler_ms":null}
-org_concurrency rejected org_id=42 limit=8 status=429
+org_concurrency rejected org_id=42 limit=8 config_version=3 status=429
 org_traffic_top {"worker_pid":123,"window_s":60,"overflow_requests":0,"overflow_in_flight":0,"overflow_completed":0,"top":[{"org_id":42,"requests":120,"completed":118,"in_flight_max":8,"status_429":3,"status_503":2,"p95_ms":1024}],"window_end_unix_s":1800000060.0}
 ```
 

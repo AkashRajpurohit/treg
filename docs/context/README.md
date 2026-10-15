@@ -33,8 +33,8 @@ covers (frontmatter `sources:`). Regenerate this index with
 | [Media hosting - reference files a vendor can fetch (`treg host`)](architecture/media.md) | shipped | media.py, media.py, models.py, 0037_media_hosting.py, … |
 | [Money — prepaid balance, the ledger, Stripe, and the reports that check it](architecture/money.md) | shipped | policy.py, tavily.yaml, tinyfish.yaml, test_tinyfish.py, … |
 | [Multi-tenancy — orgs, memberships, invites, per-org scoping](architecture/multi-tenancy.md) | shipped | access.py, 0042_pinned_read_scope.py, test_pinned_read_scope.py, models.py, … |
-| [Optional organization concurrent-request admission](architecture/org-concurrency.md) | shipped | org_concurrency.py, kv.py, config.py, call.py, … |
-| [Published organization pause admission](architecture/org-flow-control.md) | shipped | org_flow_control.py, structured_logging.py, kv.py, config.py, … |
+| [Published organization concurrent-request admission](architecture/org-concurrency.md) | shipped | org_concurrency.py, kv.py, config.py, call.py, … |
+| [Published organization pause and concurrency admission](architecture/org-flow-control.md) | shipped | org_flow_control.py, structured_logging.py, kv.py, config.py, … |
 | [Process-local organization traffic logs](architecture/org-traffic.md) | shipped | org_traffic.py, structured_logging.py, bootstrap.py, call.py, … |
 | [Policy extensions — decision points a private abuse policy can plug into](architecture/policy-extensions.md) | shipped | policy.py, bootstrap.py, signup.py, promotions.py, … |
 | [The proxy — faithful credential-injecting relay + tool resolution](architecture/proxy-model.md) | shipped | relay.py, jsontext.py, ssrf.py, api.py, … |
