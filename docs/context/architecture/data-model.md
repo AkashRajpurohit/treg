@@ -329,11 +329,15 @@ uses this metadata, never the encrypted token's shape.
   `caught_up_at`). The reader requires a recent completed fold and never falls back to a live
   aggregate. `application/catalog_stats.py` is the only writer of both. Revision `0074` adds
   `terminal_reconciled` (false for legacy buckets) and `EndpointStatDirty`: primary key
-  `(endpoint_id, day)`, monotonically incremented `revision`, first invalidation `queued_at` and
-  indexed retry scheduling `(retry_at, endpoint_id, day)`. `infra/catalog_stat_dirty.py` owns all
+  `(endpoint_id, day)`, monotonically incremented `revision`, uncovered-correction age bound
+  `queued_at`, and indexed retry scheduling `(retry_at, endpoint_id, day)`.
+  `infra/catalog_stat_dirty.py` owns all
   marker writes, without committing: audit marks the original day in the same transaction as its
   terminal update; the worker replaces a whole bucket through its fold cursor and acknowledges
-  only an unchanged revision. Existing async/result-adapter buckets are queued from the summary
+  only an unchanged revision. Notifications preserve `queued_at`; a successful full replacement
+  advances a retained newer revision's age bound to the source scan start in the same transaction,
+  without moving a newer timestamp backwards or changing retry backoff. Failed replacements
+  preserve the old age. Existing async/result-adapter buckets are queued from the summary
   table and remain unavailable until corrected. These tables are optional analytics and never
   determine a money transaction. See
   [catalog](catalog.md) § Choosing between providers.

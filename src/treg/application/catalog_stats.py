@@ -232,6 +232,8 @@ async def _repair_bucket(session_factory, endpoint_id: str, day: str, at: dateti
         empty_fails = catalog_store.empty_is_failure(endpoint_id)
         # The endpoint/time pair bounds the existing index. Do not lock source rows: audit owns
         # their corrections and must not wait for this scan. Streaming bounds Python memory.
+        # Bound retained correction age by this source snapshot, not the earlier pass timestamp.
+        scanned_at = utcnow_naive()
         rows = await db.stream(select(
             CallRecord.status_code, CallRecord.created_at, CallRecord.duration_ms,
             CallRecord.hit, CallRecord.cost_observed_micro, CallRecord.refused_by, CallRecord.verdict,
@@ -253,7 +255,7 @@ async def _repair_bucket(session_factory, endpoint_id: str, day: str, at: dateti
         await _store_tally(db, endpoint_id, day, tally, at, terminal_reconciled=True)
         # UPDATE + mark is one audit transaction. A marker changed while the source scan ran is
         # retained; an upsert waiting on this DELETE recreates it after our commit.
-        await catalog_stat_dirty.acknowledge(db, endpoint_id, day, revision)
+        await catalog_stat_dirty.acknowledge(db, endpoint_id, day, revision, scanned_at=scanned_at)
         await db.commit()
     return True
 

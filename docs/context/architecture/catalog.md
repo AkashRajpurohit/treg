@@ -1746,7 +1746,13 @@ After its append pass, the same worker replaces marked day buckets from source r
 `id <= cursor_id`. The cursor lock serializes replacement with append folding, preventing double
 counts. A replacement recomputes the entire `Tally`, including success classification, last success,
 hit/verdict counts and the bounded latency reservoir. It conditionally acknowledges only the marker
-revision it read; a correction arriving during the scan remains queued. `catalog_stat_dirty` owns
+revision it read; a correction arriving during the scan remains queued. After a successful full
+replacement, a retained newer revision's `queued_at` advances to the source scan's start, unless
+already newer. This is a conservative lower bound on the age of still-uncovered corrections,
+not the repair's completion time or the pass's earlier start. The replacement and age advance
+commit together without changing the revision or retry schedule. Continuous terminal writes
+therefore cannot make a regularly repaired bucket look abandoned; failures and rollbacks never
+renew its age. `catalog_stat_dirty` owns
 all marker writes; the worker owns transaction boundaries. Repairs read only one endpoint/day
 through the existing `(endpoint_id, created_at)` index and stream bounded batches without source-row
 locks. Each batch is unpacked locally, avoiding an async result transition per row, and yields to
@@ -1764,6 +1770,10 @@ applicable day rows are reconciled and no correction is older than `STALE_AFTER_
 endpoints retain their cache entries only for their original TTL; other complete endpoints in the
 same refresh can still be published. Async endpoints without adapters use ordinary folds. Async
 hit rates always use terminal evidence, never an inference from whether credits were charged.
+The current UTC day has the same overdue check: a genuinely stalled repair must not remain
+publishable indefinitely. One untrustworthy applicable day suppresses that endpoint's whole
+observation; silently dropping the day would shorten its evidence window and bias rates and
+provider comparisons.
 
 **Explicit requeue closes an earlier writer overlap.** After retiring writers that could change
 terminal evidence without marking its original day, `catalog_stats.requeue_async_stats` previews

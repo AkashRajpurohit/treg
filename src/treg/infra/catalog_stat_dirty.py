@@ -59,11 +59,22 @@ async def seed_legacy(db: AsyncSession, mutable_ids: Collection[str], since_day:
     await db.execute(stmt.on_conflict_do_nothing(index_elements=["endpoint_id", "day"]))
 
 
-async def acknowledge(db: AsyncSession, endpoint_id: str, day: str, revision: int) -> None:
-    """Clear only the correction revision whose bucket the worker successfully replaced."""
+async def acknowledge(db: AsyncSession, endpoint_id: str, day: str, revision: int, *,
+                      scanned_at: datetime) -> None:
+    """Clear covered work, retaining newer corrections with the successful scan's age bound.
+
+    A revision changed during the scan is still dirty, but the replacement covered all source
+    evidence visible at scan start. Count its remaining wait from that conservative lower bound,
+    never from completion, and never move a newly created marker's time backwards. The caller
+    commits this only with a successful full replacement; failures retain their original age.
+    """
     await db.execute(delete(EndpointStatDirty).where(
         EndpointStatDirty.endpoint_id == endpoint_id, EndpointStatDirty.day == day,
         EndpointStatDirty.revision == revision))
+    await db.execute(update(EndpointStatDirty).where(
+        EndpointStatDirty.endpoint_id == endpoint_id, EndpointStatDirty.day == day,
+        EndpointStatDirty.revision > revision,
+        EndpointStatDirty.queued_at < scanned_at).values(queued_at=scanned_at))
 
 
 async def defer(db: AsyncSession, endpoint_id: str, day: str, retry_at: datetime) -> None:

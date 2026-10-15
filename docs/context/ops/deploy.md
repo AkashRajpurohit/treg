@@ -542,6 +542,26 @@ without importing the heavy database stack into the light `treg` CLI.
   corrections. That status combines unreconciled buckets and already-reconciled buckets with a
   marker. Initial repair coverage, writer versions and worker health must be verified before
   switching a reader; fresh same-day markers do not by themselves mean the initial repair failed.
+  For the summary-only reader cutover, deploy the worker with successful-repair age advancement
+  first and verify a successful repair pass, then deploy the Web reader. This change requires no
+  migration or scheduled-command change. A retained marker can be normal on an active bucket:
+  successful full repair advances its age bound to the source scan start, while failed or rolled
+  back repairs leave it aging. Check `caught_up`, `repair_failed`, cursor age and marker age;
+  `repair_pending > 0` alone does not indicate failure.
+
+  The reader logs `endpoint stats fold unavailable` when it cannot publish trustworthy evidence.
+  Consider a sustained-warning alert, scoped to the Web service, such as the following Loki
+  condition with a ten-minute pending period (replace the selector with your service label):
+
+  ```logql
+  sum(rate({service_name="<web-service>"} |= "endpoint stats fold unavailable" [5m])) > 0
+  ```
+
+  Correlate this with repair failures and worker lag; it is an optional-statistics warning, not
+  a failed provider call. This is alerting guidance, not a provisioned alert rule. There is no
+  reader feature flag or live-query fallback. Rollback requires redeploying the previous known
+  working Web build, which may restore expensive live aggregates; keep the audit writers and
+  statistics worker running. No schema downgrade is required.
 - `treg-worker spend rollup` folds new ledger settle entries into per-key, per-tool, per-day spend
   (`--max-rows`, default 50,000, bounds one pass; schedule it every few minutes, after the web
   service runs a build with revision 0070). It reads the primary database in small batches, and
