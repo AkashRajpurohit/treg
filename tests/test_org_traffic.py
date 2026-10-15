@@ -428,6 +428,65 @@ async def test_guard_log_has_effective_limit_and_aggregate(clients, counter, cal
         await held.finish()
 
 
+async def test_rate_refusal_logs_one_trusted_root_and_counts_429(
+    clients, counter, caller_key_id, gate, caplog,
+):
+    from treg.infra import kv, org_flow_control as flow
+
+    org, store = await _configure_org(clients, gate, limit=None, rate={"rps": 0.25, "burst": 1})
+    store.admit_result = kv.OrgAdmissionResult("rate_limited", retry_after_s=4)
+    flow.log.addHandler(caplog.handler)
+    try:
+        response = await clients.get("/call/example/path?secret=must-not-log", headers={
+            "X-Treg-Org-Id": "999999", "X-Treg-Call-Id": "forged-call",
+        })
+        assert response.status_code == 429 and response.headers["Retry-After"] == "4"
+        [logged] = logs(caplog)
+        assert logged["org_id"] == org and logged["api_key_id"] == caller_key_id
+        assert logged["call_ref"] == response.headers["X-Treg-Call-Id"] != "forged-call"
+        assert logged["tool_name"] is None and logged["endpoint_id"] is None
+        [summary] = counter.snapshot()["top"]
+        assert summary["requests"] == summary["completed"] == summary["status_429"] == 1
+        [event] = [json.loads(record.getMessage().split(" ", 1)[1]) for record in caplog.records
+                   if record.name == flow.log.name
+                   and record.getMessage().startswith("org_flow_control_rate_limited ")]
+        assert event["org_id"] == org and event["config_version"] == 1
+        assert event["rps"] == 0.25 and event["burst"] == 1
+        assert event["retry_after_s"] == 4 and event["status"] == 429
+        assert "must-not-log" not in json.dumps(event)
+    finally:
+        flow.log.removeHandler(caplog.handler)
+
+
+async def test_rate_warning_volume_is_bounded_and_suppression_is_reported(gate, monkeypatch, caplog):
+    from treg.infra import kv, org_concurrency as guard, org_flow_control as flow
+
+    _, store = gate
+    store.admit_result = kv.OrgAdmissionResult("rate_limited", retry_after_s=2)
+    clock = [100.0]
+    monkeypatch.setattr(guard, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    flow.log.addHandler(caplog.handler)
+    try:
+        for _ in range(101):
+            with pytest.raises(guard.AdmissionRejected):
+                await guard.acquire(1, limit=None, version=7, rate_limit=flow.RateLimit(0.5, 2))
+        events = [record for record in caplog.records if record.name == flow.log.name
+                  and record.getMessage().startswith("org_flow_control_rate_limited ")]
+        assert len(events) == 1
+        assert json.loads(events[0].getMessage().split(" ", 1)[1])["suppressed_since_last_log"] == 0
+        clock[0] += 5
+        with pytest.raises(guard.AdmissionRejected):
+            await guard.acquire(2, limit=3, version=8, rate_limit=flow.RateLimit(1, 3))
+        events = [record for record in caplog.records if record.name == flow.log.name
+                  and record.getMessage().startswith("org_flow_control_rate_limited ")]
+        assert len(events) == 2
+        latest = json.loads(events[-1].getMessage().split(" ", 1)[1])
+        assert latest["org_id"] == 2 and latest["config_version"] == 8
+        assert latest["suppressed_since_last_log"] == 100
+    finally:
+        flow.log.removeHandler(caplog.handler)
+
+
 async def test_routed_children_count_one_root(clients, counter, enrichment_on, monkeypatch, caplog):
     from treg.application.call import service
     from test_routing import _relay_by_provider, ROUTED
@@ -634,3 +693,14 @@ async def test_guard_logging_failure_preserves_rejection(gate, monkeypatch):
     with pytest.raises(guard.AdmissionRejected) as error:
         await guard.acquire(1, limit=1, version=1)
     assert error.value.status_code == 429
+
+
+async def test_rate_logging_failure_preserves_rejection(gate, monkeypatch):
+    from treg.infra import kv, org_concurrency as guard, org_flow_control as flow
+
+    gate[1].admit_result = kv.OrgAdmissionResult("rate_limited", retry_after_s=3)
+    monkeypatch.setattr(flow.log, "log", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError()))
+    with pytest.raises(guard.AdmissionRejected) as error:
+        await guard.acquire(1, limit=None, version=7, rate_limit=flow.RateLimit(0.5, 1))
+    assert error.value.status_code == 429 and error.value.detail["error"] == "org_rate_limit"
+    assert error.value.retry_after_s == 3 and error.value.detail["config_version"] == 7

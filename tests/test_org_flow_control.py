@@ -1,4 +1,4 @@
-"""Org pause is a root admission check, never a gate on accepted cleanup."""
+"""Published Org admission precedes new root work, never accepted-request cleanup."""
 
 import asyncio
 from unittest.mock import AsyncMock
@@ -145,22 +145,37 @@ async def test_pause_applies_to_every_api_key_for_the_org(clients, monkeypatch):
         "endpoint_id": "fishaudio.tts.s2-1-pro", "body": {"text": "test"},
     }),
 ])
-async def test_mcp_roots_preserve_pause_retry_and_call_identity(
-    clients, monkeypatch, path, tool, args,
+@pytest.mark.parametrize("refusal", ["pause", "rate"])
+async def test_mcp_roots_preserve_admission_retry_and_call_identity(
+    clients, monkeypatch, path, tool, args, refusal,
 ):
     from test_mcp_directory import _call_tool, paired_mcp_session
 
     org_id = (await clients.get("/orgs")).json()[0]["org_id"]
-    check = AsyncMock(side_effect=_pause())
+    snapshot = org_flow_control.Snapshot(
+        version=7, pause_until=None, canonical="{}",
+        rate_limit=org_flow_control.RateLimit(rps=0.5, burst=2))
+    check = AsyncMock(side_effect=_pause()) if refusal == "pause" else AsyncMock(return_value=snapshot)
+    acquire = AsyncMock(side_effect=org_concurrency.AdmissionRejected(
+        retry_after_s=3, version=7, rate_limited=True))
     monkeypatch.setattr(org_flow_control, "check", check)
+    monkeypatch.setattr(org_concurrency, "acquire", acquire)
     async with paired_mcp_session() as client:
         out = await _call_tool(
             client, tool, args, clients.headers["X-Treg-Token"], path=path)
     assert out["status"] == 429, out
-    assert out["retry_after"] == "30"
-    assert out["body"]["detail"]["error"] == "org_traffic_paused"
-    assert out["body"]["detail"]["retry_after_s"] == 30
+    retry = 30 if refusal == "pause" else 3
+    assert out["retry_after"] == str(retry)
+    assert out["body"]["detail"]["error"] == (
+        "org_traffic_paused" if refusal == "pause" else "org_rate_limit")
+    assert out["body"]["detail"]["retry_after_s"] == retry
+    assert out["body"]["detail"]["config_version"] == 7
     check.assert_awaited_once_with(org_id, out["call_id"])
+    if refusal == "pause":
+        acquire.assert_not_awaited()
+    else:
+        acquire.assert_awaited_once_with(
+            org_id, limit=None, version=7, rate_limit=snapshot.rate_limit)
 
 
 async def test_new_pause_does_not_interrupt_an_accepted_stream(clients, monkeypatch):
@@ -249,8 +264,14 @@ async def test_pause_does_not_block_accepted_financial_cleanup(
     None,
     org_flow_control.Snapshot(version=3, pause_until=None, canonical="{}"),
     org_flow_control.Snapshot(version=4, pause_until=None, canonical="{}", max_in_flight=7),
+    org_flow_control.Snapshot(
+        version=5, pause_until=None, canonical="{}",
+        rate_limit=org_flow_control.RateLimit(rps=0.5, burst=2)),
+    org_flow_control.Snapshot(
+        version=6, pause_until=None, canonical="{}", max_in_flight=3,
+        rate_limit=org_flow_control.RateLimit(rps=2, burst=5)),
 ])
-async def test_root_forwards_single_published_snapshot_to_concurrency(
+async def test_root_forwards_single_published_snapshot_to_admission(
     clients, monkeypatch, path, snapshot,
 ):
     org_id = (await clients.get("/orgs")).json()[0]["org_id"]
@@ -269,4 +290,53 @@ async def test_root_forwards_single_published_snapshot_to_concurrency(
     check.assert_awaited_once_with(org_id, context.call_ref)
     acquire.assert_awaited_once_with(
         org_id, limit=snapshot.max_in_flight if snapshot else None,
-        version=snapshot.version if snapshot else 0)
+        version=snapshot.version if snapshot else 0,
+        rate_limit=snapshot.rate_limit if snapshot else None)
+
+
+@pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
+@pytest.mark.parametrize("limit", [None, 3])
+async def test_rate_refusal_preserves_http_headers_audit_and_precedes_body_and_money(
+    clients, monkeypatch, path, limit,
+):
+    org_id = (await clients.get("/orgs")).json()[0]["org_id"]
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
+    snapshot = org_flow_control.Snapshot(
+        version=7, pause_until=None, canonical="{}", max_in_flight=limit,
+        rate_limit=org_flow_control.RateLimit(rps=0.5, burst=2))
+    check = AsyncMock(return_value=snapshot)
+    acquire = AsyncMock(side_effect=org_concurrency.AdmissionRejected(
+        retry_after_s=3, version=7, rate_limited=True))
+    execute = AsyncMock(side_effect=AssertionError("rate refusal executed a call"))
+    reserve = AsyncMock(side_effect=AssertionError("rate refusal reserved money"))
+    monkeypatch.setattr(org_flow_control, "check", check)
+    monkeypatch.setattr(org_concurrency, "acquire", acquire)
+    monkeypatch.setattr(routes, "execute_call", execute)
+    monkeypatch.setattr(service.ledger, "reserve", reserve)
+    monkeypatch.setattr(money_admission, "admit", lambda *a, **k: pytest.fail("money admission"))
+    monkeypatch.setattr(routes._HttpRequestBody, "read", AsyncMock(
+        side_effect=AssertionError("rate refusal read the body")))
+    response = await clients.post(path + "example.operation", content=b"ignored", headers={
+        "X-Treg-Call-Id": "caller-invented-id", "X-Treg-Org-Id": "999999",
+    })
+    assert response.status_code == 429, response.text
+    assert response.headers["Retry-After"] == "3"
+    assert response.headers["X-Treg-Error"] == "1"
+    call_ref = response.headers["X-Treg-Call-Id"]
+    assert call_ref and call_ref != "caller-invented-id"
+    detail = response.json()["detail"]
+    assert detail["error"] == "org_rate_limit"
+    assert detail["retry_after_s"] == 3
+    assert detail["config_version"] == 7
+    check.assert_awaited_once_with(org_id, call_ref)
+    acquire.assert_awaited_once_with(
+        org_id, limit=limit, version=7, rate_limit=snapshot.rate_limit)
+    execute.assert_not_awaited()
+    reserve.assert_not_awaited()
+    await audit.drain()
+    async with session_maker() as db:
+        rows = (await db.execute(select(CallRecord).where(
+            CallRecord.status_code == 429))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].org_id == org_id
+    assert rows[0].call_ref == call_ref

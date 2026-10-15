@@ -42,16 +42,18 @@ a separate change.
 and an audit refusal. `mcp._call_impl` and
 `mcp._call_media_impl` preserve the header as `retry_after` in their structured result; the
 refusal body also includes integer `retry_after_s`. Retry-After is guidance, not a promise of an
-available slot. There is no waiting queue or requests-per-minute quota.
+available slot. There is no waiting queue. A configured [Org rate bucket](org-flow-control.md)
+is checked atomically with this slot limit; the refusal consumes neither a token nor a slot.
 
 Contention emits `org_concurrency rejected org_id=<trusted Caller.org_id> limit=<effective limit>
 status=429 config_version=<effective version>`. Logging failure does not change the refusal. Process-local
 [Org traffic logs](org-traffic.md) include this request in their arrival/completion counters.
 
 The default-disabled [published flow-control reader](org-flow-control.md) returns one effective
-snapshot for pause and concurrency admission. An active pause rejects before the concurrency
-gate. A null concurrency field means no concurrency limit; there is no environment-configured
-fallback. The published rate field is validated but does not yet affect admission.
+snapshot for pause, rate and concurrency admission. An active pause rejects before the
+rate/concurrency gate. A null concurrency field means no concurrency limit; there is no environment-configured
+fallback. A non-null `rate_limit` is enforced even when concurrency is null; rate exhaustion
+returns HTTP 429 `org_rate_limit` with token-refill retry guidance.
 
 ## Configuration, migration and rollback
 
@@ -79,15 +81,15 @@ old retry name remains as a compatibility alias for money admission's retry floo
 of old concurrency environment values. Before an authorized rollout, an operator must
 review and separately approve, save and publish an equivalent full snapshot for each intended
 Org, then enable the shared flow-control flag. Saving alone does not activate a snapshot.
-Review already published non-null concurrency values before deployment: workers with flow
-control enabled now enforce those values in addition to pauses. A null field leaves concurrency
-unlimited even when legacy environment values are still present.
+Review already published non-null rate and concurrency values before deployment: workers with
+flow control enabled enforce both limits in addition to pauses. A null concurrency field leaves
+concurrency unlimited even when legacy environment values are still present.
 
 The implementation change itself neither publishes snapshots nor changes running deployment
 configuration; those rollout actions require separate authorization.
 
 To remove one Org's concurrency limit, publish a higher full configuration version with
-`concurrency_limit:null`. To disable both published pause and concurrency admission, set
+`concurrency_limit:null`. To disable all published pause, rate and concurrency admission, set
 `TREG_ORG_FLOW_CONTROL_ENABLED=false` and apply the normal deployment process. Already admitted
 requests finish their renewal/cleanup lifecycle. No key deletion or DB migration is needed.
 Lazy per-worker refresh and rolling enablement or disabling are not atomic across processes;
@@ -96,19 +98,25 @@ until occupancy falls below it; it does not evict accepted work.
 
 ## Ownership and lifetime
 
-`kv.RedisStore.acquire_slot` uses one atomic Lua operation and a sorted set per org, shared across
-API keys and workers. Each request owns a random token with a Redis-time expiry; the script
+`kv.RedisStore.acquire_slot` uses one atomic Lua operation when no rate is configured; the combined
+rate/slot operation is used otherwise. Both use the same sorted set per Org, shared across API
+keys and workers. Each request owns a random token with a Redis-time expiry; the script
 removes expired members, checks cardinality and inserts a new owner only below the published
 limit. The existing `treg:org-concurrency:v1:<org_id>` namespace is reused across configuration
 versions; a rule update never resets or replaces occupied slots. The key expires at its latest
 owner's deadline, so a shorter new lease cannot expire another owner's slot. This namespace is
 separate from money's admission leases.
+When rate is configured, the script checks both limits before inserting the owner and debiting
+one rate token. Publishing a new rate or concurrency version never replaces live owners.
 
 `Slot._renew` runs every third of a lease. `renew_slot` extends only a still-live token and never
 recreates one after expiry; `release_slot` removes only its own token. Ambiguous acquisition and
 cancellation join the bounded Redis attempt and attempt owner-safe cleanup. A lost release reply
 may leave occupancy until its lease expires, temporarily denying otherwise admissible requests.
-Each Redis operation has a one-second outer deadline and reuses the existing `kv.store()` client.
+Slot-only acquisition, renewal and release have one-second outer deadlines; combined rate/slot
+admission has a 200 ms deadline. Both paths reuse the existing `kv.store()` client.
+Rate tokens consumed by a successful admission are not refunded during this cleanup, including
+failure, cancellation or an ambiguous acquisition reply.
 
 The slot remains held through application execution, `/table/` conversion, stream transmission,
 upstream close and synchronous financial cleanup. `_LeasedStreamingResponse` also releases on

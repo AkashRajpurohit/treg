@@ -187,6 +187,30 @@ path or an exhausted reading from the sweep lets one call a minute through as a 
 its 2xx, so the `message` says a retry in a minute may succeed; otherwise it lasts until `resets_at`. Not the pool-saturation 503
 (`treg_saturated`), which is a different exit. See `architecture/proxy-model.md` § Platform capacity.
 
+## Published organization admission refusals
+
+When the default-disabled [published Org flow-control gate](../architecture/org-flow-control.md)
+is enabled, authenticated root calls through `/call/`, `/catalog/call/`, `/table/` and their MCP
+adapters can be refused before body consumption, money admission or provider work:
+
+| HTTP 429 `detail.error` | Meaning | `Retry-After` |
+| --- | --- | --- |
+| `org_traffic_paused` | The published `pause_until` is still in the future. | Whole seconds rounded up to expiry. |
+| `org_rate_limit` | The published `rate_limit:{rps,burst}` bucket lacks one token. | Whole seconds rounded up to the next token, at least 1 and capped at 2147483647. |
+| `org_concurrency_limit` | The published `concurrency_limit.max_in_flight` slots are occupied. | 1 second. |
+
+The detail includes `config_version` and integer `retry_after_s`; normal `X-Treg-Error`,
+`X-Treg-Call-Id` and refusal-audit behavior is retained. MCP call/media results preserve retry
+guidance. Requests do not wait in a queue. Rate and concurrency are checked atomically; a
+refusal consumes neither token nor slot. A rate token already consumed on admission is not
+refunded after failure or cancellation. Retry guidance does not reserve future capacity.
+
+Each null published field disables that limit, with no static fallback. The gate shares capacity
+across the Org's API keys and workers, including own-key calls without changing billing. Direct
+hub runs, provider-resource requests and application/background work outside the shared root
+surface are excluded. Authentication still precedes the gate. Redis unavailability allows new
+work; accepted requests and financial cleanup continue unchanged.
+
 ## `503 provider_paused` - this deployment paused the provider
 
 `TREG_PAUSED_PROVIDERS` (comma-separated service ids) pauses a provider on one deployment. Every

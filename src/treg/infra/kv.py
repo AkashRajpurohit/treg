@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal, Protocol
@@ -53,6 +55,12 @@ _LEASE_BUCKETS = (10, 50, 100, 200)
 AcquireResult = Literal["acquired", "busy", "unavailable"]
 RenewResult = Literal["renewed", "lost", "unavailable", "deadline_expired"]
 ReleaseResult = Literal["released", "lost", "not_owned", "unavailable"]
+
+
+@dataclass(frozen=True)
+class OrgAdmissionResult:
+    outcome: Literal["acquired", "busy", "rate_limited", "unavailable"]
+    retry_after_s: int = 0
 
 
 class FlowControlReadFailure(Enum):
@@ -96,6 +104,114 @@ if not redis.call('ZSCORE', KEYS[1], ARGV[1]) then return 0 end
 """ + _SLOT_EXTEND
 _RELEASE_SLOT = "return redis.call('ZREM', KEYS[1], ARGV[1])"
 
+# One persistent bucket identity across published versions. Rate and optional slot admission
+# happen together: refusals may refill/update bucket metadata, but spend neither resource.
+_ADMIT_ORG = """
+local MAX_SAFE = 9007199254740991
+local MAX_INT = 2147483647
+local function finite(n)
+    return n and n == n and n > -math.huge and n < math.huge
+end
+local function integer(n, low, high)
+    return finite(n) and n >= low and n <= high and n == math.floor(n)
+end
+local function decimal(n)
+    -- Redis Lua's implicit conversion rounds a value just below one up to one.
+    return string.format('%.17g', n)
+end
+local ttl_ms = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local rps = tonumber(ARGV[4])
+local burst = tonumber(ARGV[5])
+if not integer(ttl_ms, 1, MAX_SAFE) or not integer(limit, 0, MAX_INT)
+    or not finite(rps) or rps <= 0 or rps > MAX_SAFE
+    or not integer(burst, 1, MAX_INT) then
+    return {3, 0}
+end
+local slot_kind = 'none'
+if limit > 0 then
+    slot_kind = redis.call('TYPE', KEYS[1]).ok
+    if slot_kind ~= 'none' and slot_kind ~= 'zset' then return {3, 0} end
+end
+local rate_kind = redis.call('TYPE', KEYS[2]).ok
+if rate_kind ~= 'none' and rate_kind ~= 'hash' then return {3, 0} end
+local t = redis.call('TIME')
+local now_us = tonumber(t[1]) * 1000000 + tonumber(t[2])
+local now_ms = math.floor(now_us / 1000)
+if not integer(now_us, 0, MAX_SAFE) or (limit > 0 and now_ms + ttl_ms > MAX_SAFE) then
+    return {3, 0}
+end
+local tokens = burst
+local last_us = now_us
+if rate_kind == 'hash' then
+    if redis.call('HLEN', KEYS[2]) ~= 4 then return {3, 0} end
+    local state = redis.call('HMGET', KEYS[2], 'tokens', 'last_us', 'rps', 'burst')
+    tokens = tonumber(state[1])
+    last_us = tonumber(state[2])
+    local prior_rps = tonumber(state[3])
+    local prior_burst = tonumber(state[4])
+    if not finite(tokens) or not integer(last_us, 0, MAX_SAFE)
+        or not finite(prior_rps) or prior_rps <= 0 or prior_rps > MAX_SAFE
+        or not integer(prior_burst, 1, MAX_INT) or tokens < 0 or tokens > prior_burst then
+        return {3, 0}
+    end
+    -- Fill under the previous policy before recording the incoming policy. Retaining a
+    -- future watermark prevents double refill if the Redis clock has moved backwards.
+    local elapsed_s = math.max(0, now_us - last_us) / 1000000
+    tokens = math.min(prior_burst, tokens + elapsed_s * prior_rps)
+    tokens = math.min(burst, tokens)
+    last_us = math.max(last_us, now_us)
+end
+-- Validate even the slot scores before any mutation. Redis excludes NaN scores, so the
+-- two extrema establish that every existing deadline is finite and in the safe range.
+if slot_kind == 'zset' then
+    local first = redis.call('ZRANGE', KEYS[1], 0, 0, 'WITHSCORES')
+    local last = redis.call('ZRANGE', KEYS[1], -1, -1, 'WITHSCORES')
+    if (#first > 0 and not integer(tonumber(first[2]), 0, MAX_SAFE))
+        or (#last > 0 and not integer(tonumber(last[2]), 0, MAX_SAFE)) then
+        return {3, 0}
+    end
+end
+local outcome = 0
+local retry_after = 0
+if limit > 0 and redis.call('ZCOUNT', KEYS[1], '(' .. decimal(now_ms), '+inf') >= limit then
+    outcome = 1
+    retry_after = 1
+elseif tokens < 1 then
+    outcome = 2
+    local wait_s = (last_us - now_us) / 1000000 + (1 - tokens) / rps
+    retry_after = MAX_INT
+    if finite(wait_s) and wait_s < MAX_INT then
+        retry_after = math.max(1, math.ceil(wait_s))
+    end
+else
+    tokens = tokens - 1
+end
+-- A bucket may disappear only when it would be full. Include the retained future
+-- watermark; a clock rollback must not shorten expiry and hand out a fresh burst.
+local fill_ms = (last_us - now_us) / 1000 + ((burst - tokens) / rps) * 1000
+local expiry_ms = nil
+if finite(fill_ms) and fill_ms <= MAX_SAFE then
+    expiry_ms = math.max(1, math.ceil(fill_ms))
+end
+redis.call('HSET', KEYS[2], 'tokens', decimal(tokens), 'last_us', decimal(last_us),
+    'rps', decimal(rps), 'burst', decimal(burst))
+if expiry_ms then
+    redis.call('PEXPIRE', KEYS[2], string.format('%.0f', expiry_ms))
+else
+    -- Extremely small positive rates can exceed safe integer TTLs. Persistent debt
+    -- is conservative; capping the TTL would grant another burst before full refill.
+    redis.call('PERSIST', KEYS[2])
+end
+if outcome == 0 and limit > 0 then
+    redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now_ms)
+    redis.call('ZADD', KEYS[1], now_ms + ttl_ms, ARGV[1])
+    local last = redis.call('ZRANGE', KEYS[1], -1, -1, 'WITHSCORES')
+    redis.call('PEXPIREAT', KEYS[1], math.ceil(tonumber(last[2])))
+end
+return {outcome, retry_after}
+"""
+
 
 class Store(Protocol):
     async def take(self, key: str, limit: int, ttl_s: int) -> bool:
@@ -116,6 +232,10 @@ class Store(Protocol):
     async def release_lease(self, key: str, token: str) -> ReleaseResult: ...
 
     async def acquire_slot(self, key: str, token: str, ttl_ms: int, limit: int) -> AcquireResult: ...
+
+    async def admit_org(self, org_id: int, token: str, ttl_ms: int, limit: int | None, *,
+                        rps: float, burst: int) -> OrgAdmissionResult:
+        """Spend one rate token and optional slot together; neither is spent on refusal."""
 
     async def renew_slot(self, key: str, token: str, ttl_ms: int) -> RenewResult: ...
 
@@ -169,6 +289,10 @@ class LocalStore:
 
     async def acquire_slot(self, key: str, token: str, ttl_ms: int, limit: int) -> AcquireResult:
         return "unavailable"
+
+    async def admit_org(self, org_id: int, token: str, ttl_ms: int, limit: int | None, *,
+                        rps: float, burst: int) -> OrgAdmissionResult:
+        return OrgAdmissionResult("unavailable")
 
     async def renew_slot(self, key: str, token: str, ttl_ms: int) -> RenewResult:
         return "unavailable"
@@ -228,6 +352,34 @@ class RedisStore:
     async def acquire_slot(self, key: str, token: str, ttl_ms: int, limit: int) -> AcquireResult:
         result = await self._slot_eval(_ACQUIRE_SLOT, key, token, ttl_ms, limit)
         return "unavailable" if result is None else "acquired" if result else "busy"
+
+    async def admit_org(self, org_id: int, token: str, ttl_ms: int, limit: int | None, *,
+                        rps: float, burst: int) -> OrgAdmissionResult:
+        if (type(org_id) is not int or not 0 < org_id <= 2147483647
+                or not isinstance(token, str) or not token
+                or type(ttl_ms) is not int or not 0 < ttl_ms <= 9007199254740991
+                or (limit is not None and (type(limit) is not int or not 0 < limit <= 2147483647))
+                or type(rps) not in (int, float) or not 0 < rps <= 9007199254740991
+                or not math.isfinite(rps)
+                or type(burst) is not int or not 0 < burst <= 2147483647):
+            return OrgAdmissionResult("unavailable")
+        try:
+            # No retry: a lost reply may already have spent the rate token. Owner-token
+            # slot cleanup belongs to the caller and never refunds rate consumption.
+            async with asyncio.timeout(_OPTIONAL_TIMEOUT_S):
+                result = await self._client.eval(
+                    _ADMIT_ORG, 2, f"treg:org-concurrency:v1:{org_id}",
+                    f"treg:org-rate:v1:{org_id}", token, ttl_ms,
+                    limit if limit is not None else 0, format(rps, ".17g"), burst)
+            if (not isinstance(result, (list, tuple)) or len(result) != 2
+                    or type(result[0]) is not int or result[0] not in (0, 1, 2, 3)
+                    or type(result[1]) is not int or not 0 <= result[1] <= 2147483647):
+                return OrgAdmissionResult("unavailable")
+            outcomes = ("acquired", "busy", "rate_limited", "unavailable")
+            return OrgAdmissionResult(outcomes[result[0]], result[1])
+        except Exception:
+            # Cancellation propagates; logs never receive Redis URLs or exception data.
+            return OrgAdmissionResult("unavailable")
 
     async def renew_slot(self, key: str, token: str, ttl_ms: int) -> RenewResult:
         result = await self._slot_eval(_RENEW_SLOT, key, token, ttl_ms)

@@ -1,4 +1,4 @@
-"""Published root concurrency, transport lifetime and fail-open behavior; no live services."""
+"""Published root admission, transport lifetime and fail-open behavior; no live services."""
 import asyncio
 import json
 from types import SimpleNamespace
@@ -26,6 +26,10 @@ class Slots:
     def __init__(self):
         self.owners = {}
         self.acquires = 0
+        self.admissions = []
+        self.admit_result = None
+        self.charges = 0
+        self.releases = 0
         self.renewed = asyncio.Event()
         self.acquire_result = None
         self.renew_result = None
@@ -34,9 +38,9 @@ class Slots:
         self.clock = 100.0
         self.reads = 0
 
-    def publish(self, org_id, limit, version=1):
+    def publish(self, org_id, limit, version=1, *, rate=None):
         self.publications[org_id] = json.dumps({"org_id": org_id, "version": version, "config": {
-            "schema_version": 1, "pause_until": None, "rate_limit": None,
+            "schema_version": 1, "pause_until": None, "rate_limit": rate,
             "concurrency_limit": {"max_in_flight": limit} if limit is not None else None}})
         self.clock += 3
 
@@ -54,11 +58,24 @@ class Slots:
         owners[token] = True
         return "acquired"
 
+    async def admit_org(self, org_id, token, ttl_ms, limit, *, rps, burst):
+        self.admissions.append((org_id, token, ttl_ms, limit, rps, burst))
+        if self.admit_result is not None:
+            return self.admit_result
+        owners = self.owners.setdefault(f"treg:org-concurrency:v1:{org_id}", {})
+        if limit is not None and len(owners) >= limit:
+            return kv.OrgAdmissionResult("busy")
+        self.charges += 1
+        if limit is not None:
+            owners[token] = True
+        return kv.OrgAdmissionResult("acquired")
+
     async def renew_slot(self, key, token, ttl_ms):
         self.renewed.set()
         return self.renew_result or ("renewed" if token in self.owners.get(key, {}) else "lost")
 
     async def release_slot(self, key, token):
+        self.releases += 1
         if self.release_result:
             return self.release_result
         self.owners.get(key, {}).pop(token, None)
@@ -77,6 +94,8 @@ def gate(monkeypatch):
     monkeypatch.setattr(guard, "_LEASE_S", 0.12)
     monkeypatch.setattr(guard, "_next_unavailable_log", 0.0)
     monkeypatch.setattr(guard, "_suppressed_unavailable_logs", 0)
+    monkeypatch.setattr(guard, "_next_rate_log", 0.0)
+    monkeypatch.setattr(guard, "_suppressed_rate_logs", 0)
     monkeypatch.setattr(flow, "_reader", flow.Reader())
     store = Slots()
     monkeypatch.setattr(flow, "_clock", lambda: store.clock)
@@ -106,6 +125,96 @@ def test_removed_environment_configuration_cannot_enable_admission(monkeypatch):
 async def test_no_published_limit_never_contacts_slot_store(gate, monkeypatch):
     monkeypatch.setattr(kv, "store", lambda: pytest.fail("bypassed slot admission touched Redis"))
     assert await guard.acquire(1, limit=None) is None
+
+
+@pytest.mark.parametrize("limit", [None, 2])
+async def test_rate_uses_one_combined_admission_and_only_concurrency_owns_a_slot(
+    gate, monkeypatch, limit,
+):
+    _, store = gate
+    monkeypatch.setattr(store, "acquire_slot", AsyncMock(side_effect=AssertionError("split admission")))
+    slot = await guard.acquire(12, limit=limit, version=7, rate_limit=flow.RateLimit(2.5, 3))
+    [(org, token, ttl, effective_limit, rps, burst)] = store.admissions
+    assert (org, effective_limit, rps, burst) == (12, limit, 2.5, 3)
+    assert token and ttl > 0
+    assert store.charges == 1
+    if limit is None:
+        assert slot is None and store.count == store.releases == 0
+        assert not store.renewed.is_set()
+    else:
+        assert slot is not None and slot.token == token and store.count == 1
+        try:
+            await asyncio.wait_for(store.renewed.wait(), 1)
+        finally:
+            await slot.finish()
+        assert store.count == 0 and store.releases == 1
+
+
+@pytest.mark.parametrize("limit", [None, 2])
+async def test_rate_rejection_keeps_store_retry_guidance_and_published_version(gate, limit):
+    _, store = gate
+    store.admit_result = kv.OrgAdmissionResult("rate_limited", retry_after_s=4)
+    with pytest.raises(guard.AdmissionRejected) as caught:
+        await guard.acquire(12, limit=limit, version=7, rate_limit=flow.RateLimit(0.25, 1))
+    assert caught.value.status_code == 429 and caught.value.retry_after_s == 4
+    assert caught.value.detail == {
+        "error": "org_rate_limit", "message": "organization request rate limit reached",
+        "retry_after_s": 4, "config_version": 7,
+    }
+    assert store.count == store.charges == 0
+
+
+async def test_mixed_busy_keeps_concurrency_rejection_and_does_not_use_split_guard(gate, monkeypatch):
+    _, store = gate
+    store.admit_result = kv.OrgAdmissionResult("busy")
+    monkeypatch.setattr(store, "acquire_slot", AsyncMock(side_effect=AssertionError("split admission")))
+    with pytest.raises(guard.AdmissionRejected) as caught:
+        await guard.acquire(12, limit=2, version=7, rate_limit=flow.RateLimit(1, 2))
+    assert caught.value.detail["error"] == "org_concurrency_limit"
+    assert caught.value.retry_after_s == 1 and caught.value.detail["config_version"] == 7
+    assert store.count == store.charges == 0
+
+
+@pytest.mark.parametrize("limit", [None, 2])
+@pytest.mark.parametrize("reply", ["unavailable", "cancelled"])
+async def test_ambiguous_combined_admission_cleans_unique_owner_without_refunding_rate(
+    gate, monkeypatch, limit, reply,
+):
+    _, store = gate
+    existing = await guard.acquire(12, limit=2)
+    entered, proceed = asyncio.Event(), asyncio.Event()
+    original = store.admit_org
+
+    async def ambiguous(*args, **kwargs):
+        await original(*args, **kwargs)
+        entered.set()
+        await proceed.wait()
+        return kv.OrgAdmissionResult("unavailable")
+
+    monkeypatch.setattr(store, "admit_org", ambiguous)
+    task = asyncio.create_task(guard.acquire(
+        12, limit=limit, version=7, rate_limit=flow.RateLimit(1, 2)))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        if reply == "cancelled":
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+        proceed.set()
+        if reply == "cancelled":
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            assert await task is None
+        assert store.count == 1  # Existing requests retain their different owner token.
+        assert existing.token in store.owners[existing.key]
+        assert store.charges == 1  # An accepted/ambiguous rate charge is never refunded.
+    finally:
+        proceed.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await existing.finish()
+    assert store.count == 0
 
 
 async def test_limit_and_org_isolation(gate):
@@ -255,10 +364,10 @@ async def test_long_cleanup_renews_and_survives_anyio_cancellation(gate):
     assert store.count == 0
 
 
-async def _configure_org(clients, gate):
+async def _configure_org(clients, gate, *, limit=1, rate=None):
     _, store = gate
     org_id = (await clients.get("/orgs")).json()[0]["org_id"]
-    store.publish(org_id, 1)
+    store.publish(org_id, limit, rate=rate)
     return org_id, store
 
 
@@ -382,12 +491,16 @@ async def test_root_without_effective_published_limit_performs_no_slot_io(
 
 
 @pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
+@pytest.mark.parametrize("policy", ["concurrency", "mixed", "rate"])
 async def test_rejection_before_money_provider_or_body_with_existing_audit(
-    clients, gate, monkeypatch, path,
+    clients, gate, monkeypatch, path, policy,
 ):
-    org, store = await _configure_org(clients, gate)
+    rate = {"rps": 0.25, "burst": 1} if policy != "concurrency" else None
+    org, store = await _configure_org(clients, gate, limit=None if policy == "rate" else 1, rate=rate)
     monkeypatch.setattr(get_settings(), "table_enabled", True)
-    held = await guard.acquire(org, limit=1, version=1)
+    held = await guard.acquire(org, limit=1, version=1) if policy == "concurrency" else None
+    if policy != "concurrency":
+        store.admit_result = kv.OrgAdmissionResult("rate_limited", retry_after_s=4)
     execute = AsyncMock(side_effect=AssertionError("rejected call executed"))
     reserve = AsyncMock(side_effect=AssertionError("rejected call reserved"))
     monkeypatch.setattr(routes, "execute_call", execute)
@@ -397,10 +510,11 @@ async def test_rejection_before_money_provider_or_body_with_existing_audit(
     try:
         response = await clients.post(path + "example.operation", content=b"ignored")
         assert response.status_code == 429, response.text
-        assert response.headers["Retry-After"] == "1"
+        assert response.headers["Retry-After"] == ("1" if policy == "concurrency" else "4")
         assert response.headers["X-Treg-Error"] == "1"
         call_ref = response.headers["X-Treg-Call-Id"]
-        assert response.json()["detail"]["error"] == "org_concurrency_limit"
+        assert response.json()["detail"]["error"] == (
+            "org_concurrency_limit" if policy == "concurrency" else "org_rate_limit")
         assert response.json()["detail"]["config_version"] == 1
         await audit.drain()
         async with session_maker() as db:
@@ -410,8 +524,36 @@ async def test_rejection_before_money_provider_or_body_with_existing_audit(
         execute.assert_not_awaited()
         reserve.assert_not_awaited()
     finally:
-        await held.finish()
+        if held is not None:
+            await held.finish()
     assert store.count == 0
+
+
+@pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
+async def test_unauthenticated_root_does_not_read_or_charge_published_rate(
+    clients, gate, monkeypatch, path,
+):
+    _, store = await _configure_org(clients, gate, limit=None, rate={"rps": 1, "burst": 2})
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
+    monkeypatch.setattr(get_settings(), "claude_connector_enabled", True)
+    response = await clients.post(path + "example.operation", headers={"X-Treg-Token": "invalid"})
+    assert response.status_code == 401
+    assert store.reads == store.charges == 0 and not store.admissions
+
+
+async def test_active_pause_rejects_before_rate_or_concurrency_admission(clients, gate, monkeypatch):
+    org, store = await _configure_org(clients, gate, rate={"rps": 1, "burst": 2})
+    publication = json.loads(store.publications[org])
+    publication["config"]["pause_until"] = "9999-01-01T00:00:00Z"
+    store.publications[org] = json.dumps(publication)
+    execute = AsyncMock(side_effect=AssertionError("paused request executed"))
+    monkeypatch.setattr(routes, "execute_call", execute)
+    response = await clients.get("/call/example/path")
+    assert response.status_code == 429
+    assert response.json()["detail"]["error"] == "org_traffic_paused"
+    assert store.reads == 1 and store.acquires == store.count == store.charges == 0
+    assert not store.admissions
+    execute.assert_not_awaited()
 
 
 async def test_all_api_keys_share_the_org_slot(clients, gate, monkeypatch):
@@ -429,8 +571,11 @@ async def test_all_api_keys_share_the_org_slot(clients, gate, monkeypatch):
 @pytest.mark.parametrize("failure", [
     ResolutionFailed("target_not_found", status_code=404, detail="missing"), RuntimeError("test fault"),
 ])
-async def test_execution_exception_releases(clients, gate, monkeypatch, failure):
-    _, store = await _configure_org(clients, gate)
+@pytest.mark.parametrize("policy", ["concurrency", "mixed", "rate"])
+async def test_execution_exception_releases(clients, gate, monkeypatch, failure, policy):
+    _, store = await _configure_org(
+        clients, gate, limit=None if policy == "rate" else 1,
+        rate={"rps": 1, "burst": 2} if policy != "concurrency" else None)
     monkeypatch.setattr(routes, "execute_call", AsyncMock(side_effect=failure))
     if isinstance(failure, ResolutionFailed):
         response = await clients.get("/call/example/path")
@@ -439,6 +584,7 @@ async def test_execution_exception_releases(clients, gate, monkeypatch, failure)
         with pytest.raises(RuntimeError, match="test fault"):
             await clients.get("/call/example/path")
     assert store.count == 0
+    assert store.charges == (0 if policy == "concurrency" else 1)
 
 
 async def test_http_redis_outage_allows_async_submission_completion(clients, gate, monkeypatch):
@@ -470,8 +616,11 @@ async def test_accepted_async_submission_releases_after_response(clients, gate, 
 
 
 @pytest.mark.parametrize("ending", ["success", "stream_error", "cancel"])
-async def test_stream_owns_slot_through_completion(clients, gate, monkeypatch, ending):
-    org, store = await _configure_org(clients, gate)
+@pytest.mark.parametrize("policy", ["concurrency", "mixed", "rate"])
+async def test_stream_owns_slot_through_completion(clients, gate, monkeypatch, ending, policy):
+    _, store = await _configure_org(
+        clients, gate, limit=None if policy == "rate" else 1,
+        rate={"rps": 1, "burst": 2} if policy != "concurrency" else None)
     started, proceed = asyncio.Event(), asyncio.Event()
     closed = AsyncMock()
 
@@ -489,7 +638,10 @@ async def test_stream_owns_slot_through_completion(clients, gate, monkeypatch, e
     try:
         await asyncio.wait_for(started.wait(), 2)
         await asyncio.sleep(0.3)  # Outlive multiple leases before the stream ends.
-        assert store.renewed.is_set() and store.count == 1
+        assert store.renewed.is_set() == (policy != "rate")
+        assert store.count == (0 if policy == "rate" else 1)
+        if policy == "rate":
+            store.admit_result = kv.OrgAdmissionResult("rate_limited", retry_after_s=1)
         response = await clients.get("/call/example/path")
         assert response.status_code == 429
         if ending == "cancel":
@@ -505,6 +657,9 @@ async def test_stream_owns_slot_through_completion(clients, gate, monkeypatch, e
                 assert (await task).content == b"firstlast"
         closed.assert_awaited_once()
         assert store.count == 0
+        assert store.charges == (0 if policy == "concurrency" else 1)
+        if policy == "rate":
+            assert store.releases == 0  # Rate-only completion has no lease lifecycle.
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -550,21 +705,30 @@ async def test_table_finish_failure_closes_once_and_releases(clients, gate, monk
     assert store.count == 0
 
 
-async def test_routing_children_take_no_extra_root_slots(clients, enrichment_on, gate, monkeypatch):
+@pytest.mark.parametrize("policy", ["concurrency", "mixed", "rate"])
+async def test_routing_children_take_no_extra_root_slots(
+    clients, enrichment_on, gate, monkeypatch, policy,
+):
     from test_routing import _relay_by_provider, ROUTED
 
-    _, store = await _configure_org(clients, gate)
+    _, store = await _configure_org(
+        clients, gate, limit=None if policy == "rate" else 1,
+        rate={"rps": 1, "burst": 2} if policy != "concurrency" else None)
     seen = []
     monkeypatch.setattr(service, "relay", _relay_by_provider(
         {"tomba": [(200, {"data": {"email": "person@example.com", "score": 99,
                                   "verification": {"status": "valid"}}})]}, seen))
     response = await clients.post(f"/call/{ROUTED}", json={"full_name": "Test Person", "domain": "example.com"})
     assert response.status_code == 200, response.text
-    assert seen and store.acquires == 1
+    assert seen and store.acquires == (1 if policy == "concurrency" else 0)
+    assert len(store.admissions) == store.charges == (0 if policy == "concurrency" else 1)
     assert store.count == 0
 
 
-async def test_funded_cancellation_keeps_cleanup_inside_slot(clients, platform_on, gate, monkeypatch):
+@pytest.mark.parametrize("policy", ["concurrency", "mixed", "rate"])
+async def test_funded_cancellation_keeps_cleanup_inside_slot(
+    clients, platform_on, gate, monkeypatch, policy,
+):
     import httpx
     from treg.infra import org_traffic
     from test_call_cancellation import (
@@ -575,7 +739,9 @@ async def test_funded_cancellation_keeps_cleanup_inside_slot(clients, platform_o
     counter = org_traffic.Counters()
     monkeypatch.setattr(org_traffic, "counters", counter)
     org, balance = await _funded_org(clients)
-    _, store = await _configure_org(clients, gate)
+    _, store = await _configure_org(
+        clients, gate, limit=None if policy == "rate" else 1,
+        rate={"rps": 1, "burst": 2} if policy != "concurrency" else None)
     stream = _BlockingProviderStream()
     entered, proceed = asyncio.Event(), asyncio.Event()
     original_cleanup = service._finish_cancelled_call
@@ -583,7 +749,7 @@ async def test_funded_cancellation_keeps_cleanup_inside_slot(clients, platform_o
     async def cleanup(*args, **kwargs):
         entered.set()
         await proceed.wait()
-        assert store.count == 1
+        assert store.count == (0 if policy == "rate" else 1)
         await original_cleanup(*args, **kwargs)
 
     monkeypatch.setattr(service, "_finish_cancelled_call", cleanup)
@@ -598,7 +764,8 @@ async def test_funded_cancellation_keeps_cleanup_inside_slot(clients, platform_o
             assert counter.snapshot()["top"][0]["in_flight_max"] == 1
             assert counter.orgs[org].live == 1
             await asyncio.sleep(0.3)
-            assert store.count == 1 and store.renewed.is_set()
+            assert store.count == (0 if policy == "rate" else 1)
+            assert store.renewed.is_set() == (policy != "rate")
             proceed.set()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -606,6 +773,7 @@ async def test_funded_cancellation_keeps_cleanup_inside_slot(clients, platform_o
             assert len(await _release_entries(org, hold.id)) == 1
             assert (await clients.get(f"/orgs/{org}/balance")).json()["balance_micro"] == balance
             assert store.count == 0
+            assert store.charges == (0 if policy == "concurrency" else 1)
             [traffic_row] = counter.snapshot()["top"]
             assert traffic_row["requests"] == 0 and traffic_row["completed"] == 1
             assert traffic_row["in_flight_max"] == 1 and not counter.orgs
@@ -621,17 +789,43 @@ async def test_funded_cancellation_keeps_cleanup_inside_slot(clients, platform_o
     ("/mcp/v2/", "catalog_call_write", {"endpoint_id": "dataforseo.web.page.audit"}),
     ("/mcp/", "call_media", {"endpoint_id": "fishaudio.tts.s2-1-pro", "body": {"text": "test"}}),
 ])
-async def test_mcp_surfaces_preserve_retry_information(clients, gate, path, tool, args):
+@pytest.mark.parametrize("policy", ["concurrency", "mixed", "rate"])
+async def test_mcp_surfaces_preserve_retry_information(
+    clients, gate, monkeypatch, path, tool, args, policy,
+):
     from test_mcp_directory import paired_mcp_session, _call_tool
 
-    org, _ = await _configure_org(clients, gate)
-    held = await guard.acquire(org, limit=1, version=1)
+    org, store = await _configure_org(
+        clients, gate, limit=None if policy == "rate" else 1,
+        rate={"rps": 0.25, "burst": 1} if policy != "concurrency" else None)
+    held = await guard.acquire(org, limit=1, version=1) if policy == "concurrency" else None
+    if policy != "concurrency":
+        store.admit_result = kv.OrgAdmissionResult("rate_limited", retry_after_s=4)
+    execute = AsyncMock(side_effect=AssertionError("rejected MCP request executed"))
+    monkeypatch.setattr(routes, "execute_call", execute)
+    monkeypatch.setattr(money_admission, "admit", lambda *a, **k: pytest.fail("money admission"))
     try:
         async with paired_mcp_session() as client:
             out = await _call_tool(client, tool, args, clients.headers["X-Treg-Token"], path=path)
         assert out["status"] == 429, out
-        assert out["retry_after"] == "1"
-        assert out["body"]["detail"]["retry_after_s"] == 1
+        retry = 1 if policy == "concurrency" else 4
+        assert out["retry_after"] == str(retry)
+        assert out["body"]["detail"]["retry_after_s"] == retry
         assert out["body"]["detail"]["config_version"] == 1
+        assert out["body"]["detail"]["error"] == (
+            "org_concurrency_limit" if policy == "concurrency" else "org_rate_limit")
+        execute.assert_not_awaited()
     finally:
-        await held.finish()
+        if held is not None:
+            await held.finish()
+
+
+@pytest.mark.parametrize("path", ["/mcp/", "/mcp/v2/"])
+async def test_unauthenticated_mcp_does_not_read_or_charge_published_rate(clients, gate, path):
+    _, store = await _configure_org(clients, gate, limit=None, rate={"rps": 1, "burst": 2})
+    response = await clients.post(path, headers={"X-Treg-Token": "invalid"}, json={
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "call", "arguments": {"endpoint_id": "example.operation"}},
+    })
+    assert response.status_code == 401
+    assert store.reads == store.charges == 0 and not store.admissions

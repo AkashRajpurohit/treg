@@ -66,7 +66,7 @@ hub children invoke the application directly and never increment these root coun
 ## Window and lifetime
 
 `run_call_surface` calls `identify(..., enter=True)` immediately on entry after caller resolution,
-before context creation and Org concurrency admission. `requests` counts these arrivals, including
+before context creation and Org pause/rate/concurrency admission. `requests` counts these arrivals, including
 guard rejections. Authentication/adapter preflight time is excluded. The in-flight gauge and
 latency end when the root ASGI invocation returns or raises, after body transmission, upstream
 close, and awaited financial cleanup. The middleware adds no awaits, buffering, response wrapping
@@ -112,12 +112,14 @@ Illustrative synthetic examples (normal logger prefixes omitted):
 request {"worker_pid":123,"surface":"call","adapter":"call","org_id":42,"api_key_id":7,"call_ref":"0123456789abcdef0123456789abcdef","status":503,"outcome":"completed","failure_kind":"db_pool","method":"GET","tool_name":"example","endpoint_id":null,"replay_of":null,"handler_ms":800.2}
 request {"worker_pid":123,"surface":"mcp","adapter":"call","org_id":null,"api_key_id":null,"call_ref":null,"method":null,"tool_name":null,"endpoint_id":null,"replay_of":null,"status":null,"outcome":"preflight","handler_ms":null}
 org_concurrency rejected org_id=42 limit=8 config_version=3 status=429
+org_flow_control_rate_limited {"worker_pid":123,"org_id":42,"call_ref":null,"capability":"pause","capabilities":["pause","rate","concurrency"],"status":429,"config_version":3,"rps":2,"burst":4,"retry_after_s":1,"suppressed_since_last_log":0}
 org_traffic_top {"worker_pid":123,"window_s":60,"overflow_requests":0,"overflow_in_flight":0,"overflow_completed":0,"top":[{"org_id":42,"requests":120,"completed":118,"in_flight_max":8,"status_429":3,"status_503":2,"p95_ms":1024}],"window_end_unix_s":1800000060.0}
 ```
 
 Look at one or two recent `org_traffic_top` intervals across all service instances/workers to find
-the orgs driving arrivals, peaks or 503s, then filter `request` / `org_concurrency rejected` by
-`org_id`. Use the log platform's instance/process identity together with `worker_pid`; PIDs alone
+the orgs driving arrivals, peaks or 503s, then filter `request`, `org_concurrency rejected` or
+`org_flow_control_rate_limited` by `org_id`. Use the log platform's instance/process identity
+together with `worker_pid`; PIDs alone
 are not unique across containers. Align windows by timestamp (worker windows are not synchronized).
 Sum requests, completions and status counts for the same org over the selected windows. Top-10
 truncation means these cross-worker sums are lower bounds and can miss an org below every worker's
@@ -126,3 +128,9 @@ simultaneous global concurrency, since the peaks need not coincide. **Do not add
 a global percentile needs the underlying durations (available as `handler_ms` in request logs) or
 merged histograms, which this summary does not export. These are call-handler measures, not DB
 connection occupancy, provider fanout or end-to-end authentication latency.
+
+The rate-limit event is aggregated at most once per worker every five seconds, spanning Orgs
+and versions; its suppression count is not an Org-specific refusal count. Request logs and
+`status_429` totals still include each terminal refusal. See
+[published admission](org-flow-control.md#evidence-and-recovery-boundaries) for reader and pause
+event sampling.
