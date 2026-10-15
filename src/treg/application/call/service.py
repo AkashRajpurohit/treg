@@ -1792,18 +1792,23 @@ def _finished_on_submission(mk, body: bytes) -> bool:
     return asynctasks_rules.finished_on_submission(mk.async_descriptor, document)
 
 
+def _submits(mk) -> bool:
+    """A row whose answer may be a job or task id rather than an answer: it creates something the
+    caller owns (`resource_ownership.produces`: a job, a snapshot, a crawl) or it is async."""
+    return bool((mk.resource_ownership or {}).get("produces") or mk.async_descriptor)
+
+
 def _unfinished_submission(mk, body: bytes) -> bool:
-    """An async submission answered with a task id, not an answer ("still working"). The archive
-    keeps nothing a later identical question could replay: a replayed id would hand the asking
-    team ownership of a task another team submitted on treg's shared account."""
-    return bool(mk.async_descriptor) and not _finished_on_submission(mk, body)
+    """A submitting row's answer that is not a finished answer: the archive keeps nothing a later
+    identical question could replay, or it would be sold another team's job or task id instead of
+    one of its own. A `terminal_on_submission` row's finished answer is an answer, so it may stay."""
+    return _submits(mk) and not _finished_on_submission(mk, body)
 
 
 def _only_submits(mk) -> bool:
-    """An async row whose answer is always a task id: never served from the archive. A row that
-    may answer at once (`terminal_on_submission`) archives only finished answers, so it may."""
-    return (bool(mk.async_descriptor)
-            and (mk.async_descriptor or {}).get("terminal_on_submission") is not True)
+    """A submitting row never served from the archive: every call must reach the provider. A row
+    that may answer at once (`terminal_on_submission`) archives only finished answers, so it may."""
+    return _submits(mk) and (mk.async_descriptor or {}).get("terminal_on_submission") is not True
 
 
 def _submission_rejected(mk, body: bytes) -> str:

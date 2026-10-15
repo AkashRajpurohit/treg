@@ -187,14 +187,18 @@ async def test_an_on_page_crawl_is_readable_only_by_the_team_that_paid_for_it(
     assert denied.status_code == 403
 
 
+@pytest.mark.parametrize("endpoint, body", [
+    (POST, [{"keyword": "hedonism wines", "location_name": "London,England,United Kingdom"}]),
+    ("dataforseo.x.on-page-task-post", [{"target": "example.com", "max_crawl_pages": 10}]),
+])
 async def test_a_task_submission_is_never_answered_from_the_archive(
-    clients: AsyncClient, monkeypatch, dfs_platform,
+    clients: AsyncClient, monkeypatch, dfs_platform, endpoint, body,
 ):
-    """A replayed submission would hand the asking team a task id submitted on treg's shared
-    account, and with it ownership of that task: every submission reaches the provider."""
+    """A submission creates something the asking team owns: a replay would sell it another
+    team's task id. Every submission reaches the provider, async descriptor or not."""
     settings = get_settings()
     monkeypatch.setattr(settings, "archive_mode", "serve")
-    monkeypatch.setattr(settings, "archive_serve_endpoints", POST)
+    monkeypatch.setattr(settings, "archive_serve_endpoints", endpoint)
     monkeypatch.setattr(settings, "archive_serve_percent", 100)
     posted = []
 
@@ -203,9 +207,8 @@ async def test_a_task_submission_is_never_answered_from_the_archive(
         return _response(200, _envelope([_task(posted[-1], 20100, 0.00375)]))
 
     monkeypatch.setattr(call_service, "relay", fake_relay)
-    body = [{"keyword": "hedonism wines", "location_name": "London,England,United Kingdom"}]
     for _ in range(2):
-        submitted = await clients.post(f"/call/{POST}", json=body)
+        submitted = await clients.post(f"/call/{endpoint}", json=body)
         await archive.drain()
         assert submitted.status_code == 200 and submitted.headers.get("x-treg-cache") != "hit"
     assert posted == [TASK_A, TASK_B]

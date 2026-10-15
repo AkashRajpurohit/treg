@@ -1689,7 +1689,8 @@ def test_a_terminal_on_submission_row_archives_only_finished_answers():
     from types import SimpleNamespace
 
     instant = SimpleNamespace(async_descriptor={"id_from": "id", "terminal_on_submission": True,
-                                                "status": {"path": "status", "success": ["done"]}})
+                                                "status": {"path": "status", "success": ["done"]}},
+                              resource_ownership=None)
     assert not call_service._only_submits(instant)
     assert call_service._unfinished_submission(instant, b'{"status": "queued"}')
     assert not call_service._unfinished_submission(instant, b'{"status": "done"}')

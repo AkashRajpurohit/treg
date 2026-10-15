@@ -535,11 +535,11 @@ later for the timers; it complements `/admin/reconcile/repeats`, which prices wh
 Hooked in `call_tool` immediately after `_buffer_response` — the one line where "metered platform
 call, body already in memory" is a fact, which IS eligibility gate 3. Metered 2xx only, and never a 2xx the capacity
 signature table reads as our own account running dry (Icypeas' 200 "insufficient credits"), nor a
-"still working" submission on an async row (`_unfinished_submission`): that is a task id, not an
-answer to replay, and a replayed id would hand the asking team ownership of a task another team
-submitted on treg's shared account. For the same reason the serve path never looks up a row whose
-answer is always a task id (`_only_submits`: an `async` descriptor without
-`terminal_on_submission`); a `terminal_on_submission` row stores and serves finished answers only.
+submission (`_unfinished_submission`): on a row that creates an owned resource
+(`resource_ownership.produces`) or is async, any answer but a finished one. That is a job or task
+id, not an answer to replay: a replay would sell the asking team another team's id instead of a
+resource of its own. For the same reason the serve path never looks up such a row (`_only_submits`)
+unless it is `terminal_on_submission`, which stores and serves finished answers only.
 The serve path already emits `X-Treg-Cache: hit`. The call context also carries `cached` from
 `served_hit`, so review invitations can exclude archive hits independently of response headers. `archive.record()` is fire-and-forget with
 audit's discipline: bounded pending set (512), failures swallowed but logged at **ERROR** (a lost
