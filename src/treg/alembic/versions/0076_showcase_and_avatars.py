@@ -7,7 +7,7 @@ Create Date: 2026-10-15
 Additive: four new tables and two nullable columns. `showcaseapp` holds teams' applications to the
 /showcase leaderboard and their review state; `showcaseappevent` its append-only history;
 `showcaseweek` one row per app per UTC week, written by `treg-worker showcase weeks`, which reads
-`callrecord` on its existing (org_id, created_at) index; `showcasevote` one vote per person per app.
+`callrecord` on its existing (org_id, created_at) index; `showcasevote` one upvote per person per app.
 `org.avatar_key` and `user.avatar_key` name a picture in the media bucket, NULL for initials.
 """
 from collections.abc import Sequence
@@ -87,11 +87,8 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("app_id", sa.Integer(), sa.ForeignKey("showcaseapp.id", ondelete="CASCADE"), nullable=False),
         sa.Column("user_id", sa.Integer(), sa.ForeignKey("user.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("value", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("app_id", "user_id", name="uq_showcasevote_app_user"),
-        sa.CheckConstraint("value IN (-1, 1)", name="ck_showcasevote_value"),
     )
     op.create_index("ix_showcasevote_app_id", "showcasevote", ["app_id"])
     op.create_index("ix_showcasevote_user_id", "showcasevote", ["user_id"])

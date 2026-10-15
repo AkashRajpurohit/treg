@@ -22,7 +22,7 @@ import logging
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import ratestore
@@ -452,13 +452,11 @@ async def refresh_weeks(session_factory: Callable = session_maker, *, today: dat
 
 # ---- the public board and votes -----------------------------------------------------------------
 
-async def _tallies(db: AsyncSession) -> dict[int, rules.Votes]:
-    rows = (await db.execute(
-        select(ShowcaseVote.app_id,
-               func.sum(case((ShowcaseVote.value > 0, 1), else_=0)),
-               func.sum(case((ShowcaseVote.value < 0, 1), else_=0)))
-        .group_by(ShowcaseVote.app_id))).all()
-    return {app_id: rules.Votes(up=int(up or 0), down=int(down or 0)) for app_id, up, down in rows}
+async def _upvotes(db: AsyncSession, app_id: int | None = None) -> dict[int, int]:
+    query = select(ShowcaseVote.app_id, func.count()).group_by(ShowcaseVote.app_id)
+    if app_id is not None:
+        query = query.where(ShowcaseVote.app_id == app_id)
+    return {app: int(n) for app, n in (await db.execute(query)).all()}
 
 
 def _public_app(app: ShowcaseApp) -> dict:
@@ -479,7 +477,7 @@ async def leaderboard(db: AsyncSession) -> dict:
                              .order_by(ShowcaseApp.id))).scalars().all()
     ids = [a.id for a in apps]
     weeks = (await db.execute(select(ShowcaseWeek).where(ShowcaseWeek.app_id.in_(ids)))).scalars().all() if ids else []
-    tallies = await _tallies(db)
+    upvotes = await _upvotes(db)
     stored = [date.fromisoformat(w.week_start) for w in weeks]
     ref = max(stored) if stored else rules.last_complete_week(utcnow_naive().date())
     by_app: dict[int, list[rules.Week]] = {}
@@ -487,12 +485,12 @@ async def leaderboard(db: AsyncSession) -> dict:
         by_app.setdefault(w.app_id, []).append(rules.Week(
             week_start=date.fromisoformat(w.week_start), calls=w.calls, active_days=w.active_days,
             providers=frozenset(w.providers or []), categories=dict(w.categories or {})))
-    folded: dict[int, tuple[rules.Activity, rules.Consent, rules.Votes]] = {}
+    folded: dict[int, tuple[rules.Activity, rules.Consent, int]] = {}
     entries = []
     for a in apps:
         consent = rules.Consent(calls=a.show_calls, streak=a.show_streak,
                                 providers=a.show_providers, categories=a.show_categories)
-        folded[a.id] = (rules.activity(by_app.get(a.id, []), ref), consent, tallies.get(a.id, rules.Votes()))
+        folded[a.id] = (rules.activity(by_app.get(a.id, []), ref), consent, upvotes.get(a.id, 0))
         entries.append({**_public_app(a), **rules.public_entry(*folded[a.id])})
     return {"week": ref.isoformat(), "apps": entries, "boards": rules.boards(folded)}
 
@@ -503,16 +501,14 @@ def may_vote(user: User) -> bool:
         and not is_machine_email(user.email)
 
 
-async def my_votes(db: AsyncSession, user: User) -> dict[str, int]:
-    rows = (await db.execute(
-        select(ShowcaseVote.app_id, ShowcaseVote.value).where(ShowcaseVote.user_id == user.id))).all()
-    return {str(app_id): value for app_id, value in rows}
+async def my_upvotes(db: AsyncSession, user: User) -> list[int]:
+    return list((await db.execute(
+        select(ShowcaseVote.app_id).where(ShowcaseVote.user_id == user.id)
+        .order_by(ShowcaseVote.app_id))).scalars().all())
 
 
-async def vote(db: AsyncSession, user: User, app_id: int, value: int, client_ip: str) -> dict:
-    """Set (+1 / -1) or withdraw (0) this person's vote on an approved app. Commits."""
-    if value not in (-1, 0, 1):
-        raise ShowcaseError("bad_value")
+async def vote(db: AsyncSession, user: User, app_id: int, up: bool, client_ip: str) -> dict:
+    """Upvote an approved app, or take this person's upvote back. Commits."""
     if not may_vote(user):
         raise ShowcaseError("not_allowed")
     app = await db.get(ShowcaseApp, app_id)
@@ -524,13 +520,10 @@ async def vote(db: AsyncSession, user: User, app_id: int, value: int, client_ip:
             VOTE_WINDOW_S):
         await db.commit()
         raise ShowcaseError("rate_limited")
-    if value == 0:
-        await db.execute(delete(ShowcaseVote).where(ShowcaseVote.app_id == app_id, ShowcaseVote.user_id == user.id))
+    if up:
+        ins = _insert(db)(ShowcaseVote).values(app_id=app_id, user_id=user.id, created_at=utcnow_naive())
+        await db.execute(ins.on_conflict_do_nothing(index_elements=[ShowcaseVote.app_id, ShowcaseVote.user_id]))
     else:
-        now = utcnow_naive()
-        ins = _insert(db)(ShowcaseVote).values(app_id=app_id, user_id=user.id, value=value, created_at=now, updated_at=now)
-        await db.execute(ins.on_conflict_do_update(
-            index_elements=[ShowcaseVote.app_id, ShowcaseVote.user_id], set_={"value": value, "updated_at": now}))
+        await db.execute(delete(ShowcaseVote).where(ShowcaseVote.app_id == app_id, ShowcaseVote.user_id == user.id))
     await db.commit()
-    tally = (await _tallies(db)).get(app_id, rules.Votes())
-    return {"id": app_id, "value": value, "votes": {"up": tally.up, "down": tally.down, "score": tally.score}}
+    return {"id": app_id, "up": up, "upvotes": (await _upvotes(db, app_id)).get(app_id, 0)}

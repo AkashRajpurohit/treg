@@ -1,11 +1,11 @@
 """The /showcase leaderboard: teams apply, staff review, the public board shows only what was
-approved and consented, and people vote.
+approved and consented, and people upvote.
 
 What these pin: an owner or admin applies for their team, at most five entries per team; nothing is
 public before approval, and approval publishes the pictures before the row points at them; an edit
 to a live entry leaves the live version until it is approved; a rejected application can be fixed
 and resubmitted; the public JSON never carries a team, an exact call count or money; the weekly fold
-counts exactly a team's upstream calls; one vote per person per app; none of it on a self-hosted
+counts exactly a team's upstream calls; one upvote per person per app; none of it on a self-hosted
 registry.
 """
 from __future__ import annotations
@@ -104,9 +104,8 @@ def test_an_application_is_checked_field_by_field():
 def test_public_entry_shows_only_consented_buckets():
     act = rules.Activity(calls=123_456, active_days=20, providers=12, categories=["search"],
                          streak_days=9, growth_pct=73, rising=True)
-    assert rules.public_entry(act, rules.Consent(), rules.Votes(up=3, down=1)) == \
-        {"votes": {"up": 3, "down": 1, "score": 2}, "badges": []}
-    full = rules.public_entry(act, rules.Consent(True, True, True, True), rules.Votes())
+    assert rules.public_entry(act, rules.Consent(), 3) == {"upvotes": 3, "badges": []}
+    full = rules.public_entry(act, rules.Consent(True, True, True, True), 0)
     assert full["calls_tier"] == "100k+" and full["growth_pct"] == 70 and "123456" not in json.dumps(full)
 
 
@@ -274,23 +273,28 @@ async def test_the_public_board_never_leaks_the_team_or_exact_numbers(clients):
         assert not {"org_id", "team", "calls", "pending", "submitted_by"} & set(a)
 
 
-async def test_votes_are_one_per_person_per_app(clients):
+async def test_an_upvote_is_one_per_person_per_app_and_can_be_taken_back(clients):
     user, org_id = await _tim()
     app_id = await _approved(org_id)
     clients.headers.pop("X-Treg-Token", None)
-    assert (await clients.post("/showcase/vote", json={"id": app_id, "value": 1})).status_code == 401
+    assert (await clients.post("/showcase/vote", json={"id": app_id, "up": True})).status_code == 401
     _cookie(clients, user)
-    assert (await clients.post("/showcase/vote", json={"id": app_id, "value": 1})).json()["votes"] == \
-        {"up": 1, "down": 0, "score": 1}
-    assert (await clients.post("/showcase/vote", json={"id": app_id, "value": -1})).json()["votes"] == \
-        {"up": 0, "down": 1, "score": -1}
-    assert (await clients.get("/showcase/votes/me")).json()["votes"] == {str(app_id): -1}
-    assert (await clients.post("/showcase/vote", json={"id": 999999, "value": 1})).status_code == 404
-    assert (await clients.post("/showcase/vote", json={"id": app_id, "value": 1},
+    for _ in range(2):  # a second upvote changes nothing
+        assert (await clients.post("/showcase/vote", json={"id": app_id, "up": True})).json() == \
+            {"id": app_id, "up": True, "upvotes": 1}
+    assert (await clients.get("/showcase/votes/me")).json()["upvoted"] == [app_id]
+    assert (await clients.post("/showcase/vote", json={"id": app_id, "up": False})).json()["upvotes"] == 0
+    assert (await clients.get("/showcase/votes/me")).json()["upvoted"] == []
+    assert (await clients.post("/showcase/vote", json={"id": app_id, "value": -1})).status_code == 422
+    assert (await clients.post("/showcase/vote", json={"id": 999999, "up": True})).status_code == 404
+    assert (await clients.post("/showcase/vote", json={"id": app_id, "up": True},
                                headers={"Origin": "https://evil.example"})).status_code == 403
+    async with session_maker() as db:
+        db.add(ShowcaseVote(app_id=app_id, user_id=user.id))
+        await db.commit()
     with pytest.raises(IntegrityError):
         async with session_maker() as db:
-            db.add(ShowcaseVote(app_id=app_id, user_id=user.id + 1000, value=5))
+            db.add(ShowcaseVote(app_id=app_id, user_id=user.id))
             await db.commit()
 
 
@@ -323,7 +327,7 @@ async def test_the_leaderboard_does_not_exist_on_a_self_hosted_registry(monkeypa
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://registry") as c:
             for method, path in (("GET", "/showcase/leaderboard"), ("GET", "/showcase/votes/me"),
                                  ("POST", "/showcase/vote")):
-                r = await c.request(method, path, json={"id": 1, "value": 1} if method == "POST" else None)
+                r = await c.request(method, path, json={"id": 1, "up": True} if method == "POST" else None)
                 assert r.status_code == 404, path
     finally:
         get_settings.cache_clear()

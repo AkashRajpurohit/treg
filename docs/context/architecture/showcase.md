@@ -23,7 +23,7 @@ related:
 
 `/showcase` has two parts. "The apps" is an editorial gallery written in the page itself (see
 [seo](../interface/seo.md)). The leaderboard below it is database-driven: teams apply, staff
-review, people vote, and approved apps show activity badges their makers agreed to.
+review, people upvote, and approved apps show activity badges their makers agreed to.
 
 ## Applying and review
 
@@ -43,7 +43,7 @@ refused.
 | `showcaseapp` | one entry: status, live fields, consent flags, the pending proposal | `application/showcase.py` |
 | `showcaseappevent` | append-only history | `application/showcase.py` |
 | `showcaseweek` | one row per approved app per UTC week | `refresh_weeks` (`treg-worker showcase weeks`) |
-| `showcasevote` | one +1 or -1 per person per app | `vote` |
+| `showcasevote` | one upvote per person per app (the row is the vote) | `vote` |
 
 ## Weekly rows instead of a rolling scan
 
@@ -53,16 +53,16 @@ app per week, which do add: the leaderboard sums the last four, unions their pro
 walks their active-day bits for the streak. A run reads only weeks not stored yet plus the newest;
 refused calls never reached a provider and are not counted. A first approval counts the app's four
 weeks at once, so it joins the activity boards without waiting for the run; after that, badges can
-be a week old. Votes are live.
+be a week old. Upvotes are live.
 
 ## What leaves the server
 
-`domain.showcase.public_entry` is the only shape activity leaves in: vote tallies, badges and, per
+`domain.showcase.public_entry` is the only shape activity leaves in: the upvote count, badges and, per
 consent flag, a call tier (`100+` to `100k+`), Rising with growth rounded to ten percent, streak
 days, a provider count, top categories. Boards rank only apps whose maker consented to the board's
 metric. `GET /showcase/leaderboard` is checked on every view (`no-cache` with an ETag; an unchanged
-board answers 304), so an approval or a vote shows at once. Votes need the browser
-session, a verified person (no agent, demo or suspended identity), the same origin and a rate limit.
+board answers 304), so an approval or an upvote shows at once. There is no downvote; a second click takes an
+upvote back. Upvotes need the browser session, a verified person (no agent, demo or suspended identity), the same origin and a rate limit.
 All showcase routes, like the page, 404 on a self-hosted registry.
 
 ## Pictures

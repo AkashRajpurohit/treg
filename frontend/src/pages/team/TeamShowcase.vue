@@ -239,7 +239,7 @@ export default {
 
             <section class="sc-section" aria-labelledby="sc-consent-title">
               <h3 id="sc-consent-title" class="lbl">What the showcase may show</h3>
-              <p class="sub sc-hint" style="margin:0 0 8px">Votes always show. Each item below is off until you turn it on. Only rounded figures are shown, never exact counts, spend or your team's name.</p>
+              <p class="sub sc-hint" style="margin:0 0 8px">Upvotes always show. Each item below is off until you turn it on. Only rounded figures are shown, never exact counts, spend or your team's name.</p>
               <div class="sc-consent">
                 <label v-for="[k,title,text] in CONSENTS" :key="k" class="sc-check">
                   <input v-model="scForm.draft[k]" type="checkbox">

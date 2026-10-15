@@ -2293,17 +2293,14 @@ class ShowcaseWeek(SQLModel, table=True):
 
 
 class ShowcaseVote(SQLModel, table=True):
-    """One signed-in person's up (+1) or down (-1) vote on one app. Written only by
-    `application.showcase.vote`; withdrawing a vote deletes the row."""
+    """One signed-in person's upvote on one app: the row is the vote. Written only by
+    `application.showcase.vote`; taking the upvote back deletes the row."""
 
     __table_args__ = (
         UniqueConstraint("app_id", "user_id", name="uq_showcasevote_app_user"),
-        CheckConstraint("value IN (-1, 1)", name="ck_showcasevote_value"),
         Index("ix_showcasevote_app_id", "app_id"),
     )
     id: int | None = Field(default=None, primary_key=True)
     app_id: int = Field(foreign_key="showcaseapp.id", ondelete="CASCADE")
     user_id: int = Field(foreign_key="user.id", ondelete="CASCADE", index=True)
-    value: int
     created_at: NaiveUTC = Field(default_factory=_now)
-    updated_at: NaiveUTC = Field(default_factory=_now)

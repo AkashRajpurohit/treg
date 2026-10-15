@@ -27,9 +27,9 @@ from .web import _hosted
 
 router = APIRouter()
 
-_STATUS = {"bad_value": 400, "invalid": 422, "not_allowed": 403, "forbidden": 403, "not_found": 404,
+_STATUS = {"invalid": 422, "not_allowed": 403, "forbidden": 403, "not_found": 404,
            "rate_limited": 429, "limit": 409, "conflict": 409}
-_DEFAULT_DETAIL = {"bad_value": "value must be 1, -1 or 0", "not_allowed": "verify your email to vote",
+_DEFAULT_DETAIL = {"not_allowed": "verify your email to vote",
                    "not_found": "no such app", "rate_limited": "too many requests - try again later"}
 _ACTOR = re.compile(r"[^@\s]{1,64}@[^@\s]{1,120}")
 
@@ -86,7 +86,7 @@ class EditIn(BaseModel):
 class VoteIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: int
-    value: int
+    up: bool
 
 
 # ---- public --------------------------------------------------------------------------------------
@@ -112,14 +112,14 @@ async def showcase_my_votes(treg_session: str = Cookie(default=""), db: AsyncSes
     _only_hosted()
     user = await _user_from_session(treg_session, db) if treg_session else None
     if user is None:
-        return _private({"signed_in": False, "can_vote": False, "votes": {}})
-    return _private({"signed_in": True, "can_vote": showcase.may_vote(user), "votes": await showcase.my_votes(db, user)})
+        return _private({"signed_in": False, "can_vote": False, "upvoted": []})
+    return _private({"signed_in": True, "can_vote": showcase.may_vote(user), "upvoted": await showcase.my_upvotes(db, user)})
 
 
 @router.post("/showcase/vote", include_in_schema=False)
 async def showcase_vote(body: VoteIn, request: Request, treg_session: str = Cookie(default=""),
                         db: AsyncSession = Depends(get_session)):
-    """Set (1 / -1) or withdraw (0) the signed-in visitor's vote on one app."""
+    """Upvote one app (`up: true`) or take the signed-in visitor's upvote back (`up: false`)."""
     _only_hosted()
     if not _same_origin(request):
         raise HTTPException(403, "cross-origin vote rejected")
@@ -127,7 +127,7 @@ async def showcase_vote(body: VoteIn, request: Request, treg_session: str = Cook
     if user is None:
         raise HTTPException(401, "sign in to vote")
     try:
-        return _private(await showcase.vote(db, user, body.id, body.value, _client_ip(request)))
+        return _private(await showcase.vote(db, user, body.id, body.up, _client_ip(request)))
     except showcase.ShowcaseError as exc:
         raise _fail(exc) from None
 

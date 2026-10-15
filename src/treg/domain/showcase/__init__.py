@@ -49,16 +49,6 @@ class Consent:
     categories: bool = False
 
 
-@dataclass(frozen=True)
-class Votes:
-    up: int = 0
-    down: int = 0
-
-    @property
-    def score(self) -> int:
-        return self.up - self.down
-
-
 @dataclass
 class Activity:
     """What the rows say, exactly. Internal: `public_entry` decides what leaves the server."""
@@ -150,10 +140,9 @@ def _rounded_growth(pct: int) -> int:
     return int(round(pct / 10.0) * 10)
 
 
-def public_entry(act: Activity, consent: Consent, votes: Votes) -> dict:
+def public_entry(act: Activity, consent: Consent, upvotes: int) -> dict:
     """The only shape an app's activity leaves the server in."""
-    entry: dict = {"votes": {"up": votes.up, "down": votes.down, "score": votes.score},
-                   "badges": badges(act, consent)}
+    entry: dict = {"upvotes": upvotes, "badges": badges(act, consent)}
     if consent.calls:
         entry["calls_tier"] = call_tier(act.calls)
         entry["rising"] = act.rising
@@ -168,10 +157,10 @@ def public_entry(act: Activity, consent: Consent, votes: Votes) -> dict:
     return entry
 
 
-def boards(apps: dict[int, tuple[Activity, Consent, Votes]]) -> dict[str, list[int]]:
+def boards(apps: dict[int, tuple[Activity, Consent, int]]) -> dict[str, list[int]]:
     """Each board is an ordered list of app ids. An app joins a board only if its maker consented to
     the metric the board ranks on; ties fall back to the id (older first) so the order is stable."""
-    loved = sorted(apps, key=lambda s: (-apps[s][2].score, -apps[s][2].up, s))
+    loved = sorted(apps, key=lambda s: (-apps[s][2], s))
     active = sorted((s for s in apps if apps[s][1].calls and call_tier(apps[s][0].calls)),
                     key=lambda s: (-apps[s][0].calls, s))
     rising = sorted((s for s in apps if apps[s][1].calls and apps[s][0].rising),

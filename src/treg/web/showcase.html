@@ -252,15 +252,17 @@
   .badges:empty { display: none; }
   .badge { display: inline-flex; align-items: center; gap: 5px; font: 500 12px var(--text); color: #43413E; background: var(--card); border: 1px solid var(--line); padding: 3px 9px; border-radius: 999px; }
   .badge i { font-style: normal; }
-  .vote { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
-  .vote button { width: 30px; height: 28px; border: 0; border-radius: 9px; background: none; color: #7C7A76; cursor: pointer; display: grid; place-items: center; transition: background .15s, color .15s, transform .2s var(--ease); }
-  .vote button:hover { background: var(--card); color: var(--ink); }
-  .vote button:active { transform: scale(.88); }
-  .vote button svg { width: 14px; height: 14px; }
-  .vote .score { min-width: 26px; text-align: center; font: 600 14px var(--text); font-variant-numeric: tabular-nums; }
-  .vote.up .score, .vote button.up[aria-pressed="true"] { color: var(--green); }
-  .vote button.up[aria-pressed="true"] { background: var(--green-soft); }
-  .vote button.down[aria-pressed="true"] { background: rgba(192,54,47,.1); color: #C0362F; }
+  .vote {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    width: 58px; height: 58px; border: 1px solid var(--line2, #D9D6D0); border-radius: 12px; background: #fff;
+    color: var(--ink); cursor: pointer; font: inherit; transition: border-color .15s, background .15s, color .15s, transform .2s var(--ease);
+  }
+  .vote:hover { border-color: var(--green); color: var(--green); }
+  .vote:active { transform: scale(.94); }
+  .vote svg { width: 15px; height: 15px; }
+  .vote .score { font: 600 15px var(--text); font-variant-numeric: tabular-nums; line-height: 1; }
+  .vote[aria-pressed="true"] { background: var(--green); border-color: var(--green); color: #fff; }
+  .vote[aria-pressed="true"]:hover { background: #0E6E45; border-color: #0E6E45; color: #fff; }
   .vote .score.bump { animation: bump .35s var(--ease); }
   @keyframes bump { 40% { transform: translateY(-3px) scale(1.15); } }
   @media (max-width: 640px) {
@@ -517,7 +519,7 @@
   </div>
   <ol class="ranks" id="ranks"><li class="empty">Loading the leaderboard…</li></ol>
   <button type="button" class="pill more" id="moreRanks" hidden>Show 10 more</button>
-  <p class="board-note">Built something with treg? Apply, and it shows here once we approve it. Votes count live; activity updates weekly and shows only what each maker agreed to share.</p>
+  <p class="board-note">Built something with treg? Apply, and it shows here once we approve it. Upvotes count live; activity updates weekly and shows only what each maker agreed to share.</p>
 </section>
 
 <section class="posts wrap" id="posts">
@@ -858,14 +860,13 @@ function host(u) { return u.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
   }
 })();
 
-/* ---- the leaderboard: approved entries from /showcase/leaderboard (cached a minute, bucketed,
-   consented values only), the visitor's votes from /showcase/votes/me. A vote updates in place and
-   settles on the server's tally. Text from makers is always escaped. ---- */
+/* ---- the leaderboard: approved entries from /showcase/leaderboard (checked each view, bucketed,
+   consented values only), the visitor's upvotes from /showcase/votes/me. An upvote updates in place and
+   settles on the server's count; a second click takes it back. Text from makers is always escaped. ---- */
 var BOARD = (function () {
   var list = document.getElementById('ranks'), tabs = document.getElementById('boardTabs'), mark = document.getElementById('boardMark');
   var more = document.getElementById('moreRanks'), toast = document.getElementById('toast'), toastTimer;
   var UP = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 3.5 14 11H2z"/></svg>';
-  var DOWN = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 12.5 2 5h12z"/></svg>';
   var BOARDS = [['most_loved', 'Most loved'], ['most_active', 'Most active'], ['rising', 'Rising'], ['longest_streak', 'Longest streak']];
   var ICONS = { streak: '🔥', rising: '🚀', providers: '🧩', calls: '📈' };
   var PAGE = 10, shown = PAGE, board = 'most_loved', data = null, byId = {}, mine = {};
@@ -879,14 +880,13 @@ var BOARD = (function () {
                       : '<span class="letter" aria-hidden="true">' + esc((a.name || '?').charAt(0).toUpperCase()) + '</span>';
   }
   function voteHtml(a) {
-    var v = mine[a.id] || 0;
-    return '<div class="vote' + (v === 1 ? ' up' : '') + '" data-id="' + a.id + '">' +
-      '<button type="button" class="up" aria-label="Upvote ' + esc(a.name) + '" aria-pressed="' + (v === 1) + '">' + UP + '</button>' +
-      '<b class="score" aria-live="polite">' + a.votes.score + '</b>' +
-      '<button type="button" class="down" aria-label="Downvote ' + esc(a.name) + '" aria-pressed="' + (v === -1) + '">' + DOWN + '</button></div>';
+    var on = !!mine[a.id];
+    return '<button type="button" class="vote" data-id="' + a.id + '" aria-pressed="' + on + '" aria-label="Upvote ' + esc(a.name) + '"' +
+      ' title="' + (on ? 'You upvoted this. Click to take your upvote back.' : 'Upvote') + '">' + UP +
+      '<b class="score" aria-live="polite">' + a.upvotes + '</b></button>';
   }
   function metric(a) {
-    if (board === 'most_loved') return '<small>' + a.votes.up + ' up, ' + a.votes.down + ' down</small>';
+    if (board === 'most_loved') return '';
     if (board === 'most_active') return esc(a.calls_tier || '') + ' <small>calls a month</small>';
     if (board === 'rising') return '+' + (a.growth_pct || 0) + '% <small>this week</small>';
     return a.streak_days + (a.streak_days === 1 ? ' day' : ' days') + ' <small>in a row</small>';
@@ -917,28 +917,26 @@ var BOARD = (function () {
     var on = tabs.querySelector('[aria-selected="true"]');
     if (on) { mark.style.width = on.offsetWidth + 'px'; mark.style.transform = 'translateX(' + on.offsetLeft + 'px)'; }
   }
-  function cast(id, want) {
+  function cast(id) {
     if (!me.signed_in) { track('showcase_vote_signin', { app: id }); window.tregSigninHere('#leaderboard'); return; }
-    if (!me.can_vote) { say('Verify your email to vote.'); return; }
-    var a = byId[id], before = mine[id] || 0, value = before === want ? 0 : want, was = { up: a.votes.up, down: a.votes.down };
-    if (before === 1) a.votes.up--; else if (before === -1) a.votes.down--;
-    if (value === 1) a.votes.up++; else if (value === -1) a.votes.down++;
-    a.votes.score = a.votes.up - a.votes.down; mine[id] = value; paint();
-    track('showcase_vote', { app: id, value: value });
-    fetch('/showcase/vote', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, value: value }) })
-      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) throw new Error(d.detail || 'vote failed'); return d; }); })
-      .then(function (d) { a.votes = d.votes; paint(); })
-      .catch(function (e) { a.votes = { up: was.up, down: was.down, score: was.up - was.down }; mine[id] = before; paint(); say(e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.'); });
+    if (!me.can_vote) { say('Verify your email to upvote.'); return; }
+    var a = byId[id], before = !!mine[id], up = !before, was = a.upvotes;
+    a.upvotes += up ? 1 : -1; mine[id] = up; paint();
+    track('showcase_vote', { app: id, up: up });
+    fetch('/showcase/vote', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, up: up }) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) throw new Error(d.detail || 'upvote failed'); return d; }); })
+      .then(function (d) { a.upvotes = d.upvotes; paint(); if (!up) say('Your upvote is removed.'); })
+      .catch(function (e) { a.upvotes = was; mine[id] = before; paint(); say(e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.'); });
   }
   list.addEventListener('click', function (e) {
-    var b = e.target.closest('.vote button');
-    if (b) cast(+b.closest('.vote').dataset.id, b.classList.contains('up') ? 1 : -1);
+    var b = e.target.closest('.vote');
+    if (b) cast(+b.dataset.id);
   });
   var ready = Promise.all([
     fetch('/showcase/leaderboard').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }),
     fetch('/showcase/votes/me', { credentials: 'same-origin' }).then(function (r) { return r.ok ? r.json() : me; }).catch(function () { return me; })
   ]).then(function (res) {
-    data = res[0]; me = res[1]; mine = me.votes || {};
+    data = res[0]; me = res[1]; mine = {}; (me.upvoted || []).forEach(function (id) { mine[id] = true; });
     data.apps.forEach(function (a) { byId[a.id] = a; });
     if (data.apps.length) {
       tabs.hidden = false;
@@ -1015,7 +1013,7 @@ var BOARD = (function () {
         '<div class="pics" id="ap-icon"></div><div class="pics" id="ap-shots"></div>' +
         '<input type="file" id="ap-icon-file" accept="image/png,image/jpeg,image/webp" hidden><input type="file" id="ap-shot-file" accept="image/png,image/jpeg,image/webp" hidden></fieldset>'
         : '<p class="note">Picture uploads are not enabled yet; your entry shows its first letter until they are.</p>') +
-      '<fieldset><legend>What may we show on the leaderboard?</legend><p class="note">Votes always show. Activity comes from your team\'s calls, as tiers and badges only: never exact numbers, never money.</p>' +
+      '<fieldset><legend>What may we show on the leaderboard?</legend><p class="note">Upvotes always show. Activity comes from your team\'s calls, as tiers and badges only: never exact numbers, never money.</p>' +
       SHOW.map(function (s) { return '<label class="chk"><input type="checkbox" id="ap-' + s[0] + '"><span>' + s[1] + ' <small>- ' + s[2] + '</small></span></label>'; }).join('') +
       '</fieldset><div class="err" id="ap-err"></div>' +
       '<div class="actions"><button type="button" class="pill" id="ap-cancel">Cancel</button><button type="button" class="pill dark" id="ap-submit"' + (full ? ' disabled' : '') + '>Submit for review</button></div>';
