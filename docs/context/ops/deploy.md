@@ -506,6 +506,27 @@ without importing the heavy database stack into the light `treg` CLI.
   validate corrected summaries and confirm no old writer remains before changing reader source
   selection or fallback behavior. If old writers run after reconciliation, their unmarked changes
   require another historical correction before that switch.
+- `treg-worker catalog requeue-async-stats` previews the existing mutable async day buckets in the
+  current UTC observation window. After all earlier writers have stopped, run it once with
+  `--apply` to reset their reconciliation flags and enqueue full repairs atomically. Save the JSON
+  output as the applied target manifest; apply selects targets afresh rather than applying an
+  earlier preview. Keep the existing scheduled `catalog stats` command unchanged. The enqueue
+  reads the small summary table; the normal worker later reads each marked
+  source day within its existing budgets. There is no schema migration or automatic requeue.
+
+  ```bash
+  treg-worker catalog requeue-async-stats
+  treg-worker catalog requeue-async-stats --apply > catalog-async-repair.json
+  treg-worker catalog repair-status --manifest catalog-async-repair.json
+  ```
+
+  Use the unedited manifest against the same database. `repair-status` is read-only and returns
+  exit code 0 when all still-in-window targets are reconciled and have no dirty marker, 1 while
+  any target is pending or missing, and 2 for an invalid manifest. Expired targets are listed as
+  `aged_out` rather than claimed as repaired. A default preview cannot be used as completion
+  evidence. Appending new calls cannot satisfy a reset flag; only a full repair restores it.
+  Repeating `--apply` starts another requeue, so do not add it to a recurring schedule. Leave the
+  current reader in place until target coverage, writer versions and worker health are verified.
 - `treg-worker spend rollup` folds new ledger settle entries into per-key, per-tool, per-day spend
   (`--max-rows`, default 50,000, bounds one pass; schedule it every few minutes, after the web
   service runs a build with revision 0070). It reads the primary database in small batches, and
