@@ -326,6 +326,9 @@ async def test_team_and_directory_catalog_search_results_and_prices_match(client
 
 
 async def test_team_and_directory_endpoint_details_and_balance_match(clients):
+    from treg.application import catalog_stats
+    from treg.infra.db import session_maker
+    assert (await catalog_stats.refresh(session_maker))["caught_up"]
     token = clients.headers["X-Treg-Token"]
     endpoint_args = {"endpoint_id": "tikhub.tiktok.video.comments"}
     async with paired_mcp_session() as client:

@@ -35,6 +35,8 @@ sources:
   - src/treg/alembic/versions/0035_default_key_generation.py
   - src/treg/alembic/versions/0036_activity_key_indexes.py
   - src/treg/alembic/versions/0038_endpoint_day_stats.py
+  - src/treg/alembic/versions/0074_endpoint_stat_dirty.py
+  - src/treg/infra/catalog_stat_dirty.py
   - src/treg/maintenance.py
   - src/treg/web/sitetrack.js
   - src/treg/models.py
@@ -323,8 +325,16 @@ uses this metadata, never the encrypted token's shape.
   bounded latency sample, plus `verdicts`, calls per verdict word, added nullable by `0066`;
   primary key `(endpoint_id, day)`, indexed by `day` for the window prune)
   and the single-row `EndpointStatCursor` (`cursor_id`, the `created_at` watermark and
-  `caught_up_at`, which is what lets the reader fall back to the live aggregate until the worker
-  has caught up). `application/catalog_stats.py` is the only writer of both; see
+  `caught_up_at`). The reader requires a recent completed fold and never falls back to a live
+  aggregate. `application/catalog_stats.py` is the only writer of both. Revision `0074` adds
+  `terminal_reconciled` (false for legacy buckets) and `EndpointStatDirty`: primary key
+  `(endpoint_id, day)`, monotonically incremented `revision`, first invalidation `queued_at` and
+  indexed retry scheduling `(retry_at, endpoint_id, day)`. `infra/catalog_stat_dirty.py` owns all
+  marker writes, without committing: audit marks the original day in the same transaction as its
+  terminal update; the worker replaces a whole bucket through its fold cursor and acknowledges
+  only an unchanged revision. Existing async/result-adapter buckets are queued from the summary
+  table and remain unavailable until corrected. These tables are optional analytics and never
+  determine a money transaction. See
   [catalog](catalog.md) § Choosing between providers.
 
   **`LedgerEntry` is the other one, and it was the larger.** It is append-only and never pruned

@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 import json
+from datetime import timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -19,6 +20,7 @@ from treg.application.call import overflow as call_overflow
 from treg.application.call import resolve as call_resolve
 from treg.application.call import route as call_route
 from treg.application.call import service as call_service
+from treg.application import catalog_stats
 from treg.application.call.types import ResolutionFailed, UpstreamResponse
 from treg.config import get_settings
 from treg.infra.db import session_maker
@@ -28,6 +30,7 @@ from treg.domain.catalog.routing.contracts import canonical_identity
 from treg.domain.catalog.routing.plan import Candidate, cost_at, rank
 from treg.infra.catalog_observations import CachedEndpointObservationReader
 from treg.models import CallRecord, Hold, LedgerEntry, OverflowRoute
+from treg.timeutil import utcnow_naive
 
 from test_marketplace_call import _balance, firecrawl_platform_on, platform_on  # noqa: F401
 
@@ -408,6 +411,7 @@ async def test_routed_plan_keeps_per_success_hit_fallback_from_the_cache(
             ))
         await db.commit()
     monkeypatch.setattr(stats, "MIN_HIT_SAMPLES", 3)
+    assert (await catalog_stats.refresh(session_maker, now=utcnow_naive() + timedelta(minutes=2)))["caught_up"]
     reader = A.app.state.endpoint_observation_reader
     assert await reader.get_many([endpoint_id]) == {}
     await reader.wait_for_idle()
@@ -952,6 +956,7 @@ async def test_hit_verdict_is_recorded_and_becomes_a_hit_rate(clients: AsyncClie
     # refreshes in the background, so warm it the way test_endpoint_stats does
     from treg import api as A
     monkeypatch.setattr(call_route, "_endpoint_observation_reader", A.app.state.endpoint_observation_reader)
+    assert (await catalog_stats.refresh(session_maker, now=utcnow_naive() + timedelta(minutes=2)))["caught_up"]
     await clients.get(f"/catalog/endpoints/{ROUTED}")
     await A.app.state.endpoint_observation_reader.wait_for_idle()
     r = await clients.get(f"/catalog/endpoints/{ROUTED}")

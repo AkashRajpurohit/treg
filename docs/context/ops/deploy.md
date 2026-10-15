@@ -480,9 +480,19 @@ without importing the heavy database stack into the light `treg` CLI.
   command refreshes Web Arena's saved Battle totals when Web Arena is enabled and its reviewed
   benchmark is published; that full refresh is gated to once every 30 minutes.
 - `treg-worker catalog stats` folds new audit rows into per-endpoint, per-day reliability buckets
-  (`--max-rows`, default 500,000, bounds one pass; schedule it every few minutes). The catalog keeps
-  computing observations live until this command has caught up once, so it can be scheduled after
-  the application deploys, and a self-hosted registry that never schedules it loses nothing.
+  (`--max-rows`, default 500,000, bounds the append pass; schedule it every few minutes), then
+  repairs marked endpoint/day buckets. `--max-dirty-buckets` (20), `--max-repair-seconds` (60) and
+  `--bucket-timeout-seconds` (10) bound repair attempts; zero buckets or zero repair seconds pauses
+  repairs. The elapsed-time budget excludes append folding and queue maintenance. Each failed
+  bucket rolls back and retries after a delay; JSON results include `repaired`, `repair_failed` and
+  `repair_pending`. A persistently failing bucket must be investigated rather than retried with
+  unlimited time. Web cache refreshes read only summaries: missing, incomplete or stale worker
+  evidence gives unmeasured reliability, with existing cache entries expiring normally.
+  Apply additive revision `0074` before the new writers. Drain old application/audit writers before
+  letting the updated worker seed and reconcile legacy async buckets, so old writers cannot make
+  unmarked terminal changes after a bucket has been trusted. The worker automatically queues these
+  buckets from `endpointdaystat` and repairs them across bounded runs. Async observations remain
+  unavailable until their applicable buckets are reconciled; no live aggregate fills this gap.
 - `treg-worker spend rollup` folds new ledger settle entries into per-key, per-tool, per-day spend
   (`--max-rows`, default 50,000, bounds one pass; schedule it every few minutes, after the web
   service runs a build with revision 0070). It reads the primary database in small batches, and

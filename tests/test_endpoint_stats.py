@@ -13,10 +13,11 @@ import pytest
 from httpx import AsyncClient
 
 from treg.domain.catalog import stats as endpoint_stats
+from treg.application import catalog_stats
 from treg.api import app
 from treg.infra.db import session_maker
 from treg.infra.catalog_observations import CachedEndpointObservationReader
-from treg.models import CallRecord
+from treg.models import CallRecord, Org
 
 EP = "tikhub.tiktok.user.profile"
 
@@ -122,6 +123,9 @@ async def test_an_uncalled_endpoint_says_so_rather_than_vanishing(clients: Async
 
 
 async def test_aggregates_pool_across_orgs_but_carry_nothing_identifying(clients: AsyncClient):
+    async with session_maker() as db:
+        db.add(Org(id=2, name="Other synthetic team", slug="other-synthetic-team"))
+        await db.commit()
     for _ in range(3):
         await _record(EP, 200, org_id=1)
     for _ in range(3):
@@ -137,6 +141,7 @@ async def test_the_catalog_page_carries_the_numbers_for_every_alternative(client
     make a second round-trip to compare reliability."""
     for _ in range(6):
         await _record(EP, 200)
+    await catalog_stats.refresh(session_maker, now=_now() + timedelta(minutes=2))
     r = await clients.get(f"/catalog/endpoints/{EP}")
     assert r.status_code == 200, r.text
     assert r.json()["endpoint"]["observed"] is None, \
@@ -314,6 +319,7 @@ async def test_HTTP_search_orders_equal_matches_on_observed_evidence(clients: As
         await _record(stale, 405)
     for status in (200, 200, 200, 200, 503):
         await _record(poor, status)
+    await catalog_stats.refresh(session_maker, now=_now() + timedelta(minutes=2))
 
     cold = await clients.get("/catalog/search", params={"q": "ad library", "limit": 100})
     assert cold.status_code == 200
@@ -330,6 +336,7 @@ async def test_a_platform_shelf_carries_each_endpoints_calls(clients: AsyncClien
     used = cold["domains"][0]["rows"][0]["endpoints"][-1]["id"]
     for _ in range(3):
         await _record(used, 200)
+    await catalog_stats.refresh(session_maker, now=_now() + timedelta(minutes=2))
     await app.state.endpoint_observation_reader.reset()
     await clients.get("/catalog/platforms/tiktok")
     await app.state.endpoint_observation_reader.wait_for_idle()

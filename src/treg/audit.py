@@ -23,6 +23,7 @@ from collections import deque
 
 from sqlalchemy import select, update
 
+from .infra.catalog_stat_dirty import mark_dirty
 from .infra.db import background_session_maker
 from .models import AsyncTaskRecord, CallRecord, RunRecord, SearchLog, SearchMiss
 
@@ -211,6 +212,7 @@ async def _write_batch(rows: list[tuple[type, dict]]) -> bool:
                     select(AsyncTaskRecord).where(AsyncTaskRecord.call_id.in_(async_ids))
                     .with_for_update())).scalars()}
             records = []
+            dirty: set[tuple[str, str]] = set()
             for model, fields in rows:
                 if model is _AsyncHitUpdate:
                     # Earlier inserts in this batch must be visible to the UPDATE.
@@ -218,11 +220,14 @@ async def _write_batch(rows: list[tuple[type, dict]]) -> bool:
                         session.add_all(records)
                         records = []
                         await session.flush()
-                    await session.execute(update(CallRecord).where(
+                    corrected = await session.execute(update(CallRecord).where(
                         CallRecord.call_ref == fields["call_id"],
                         CallRecord.endpoint_id == fields["endpoint_id"],
                         CallRecord.org_id == fields["org_id"],
-                    ).values(hit=fields["hit"], verdict=fields["verdict"]))
+                    ).values(hit=fields["hit"], verdict=fields["verdict"])
+                      .returning(CallRecord.endpoint_id, CallRecord.created_at))
+                    dirty.update((endpoint_id, created_at.strftime("%Y-%m-%d"))
+                                 for endpoint_id, created_at in corrected.all())
                     continue
                 values = {k: v for k, v in fields.items() if k != "_async_submission"}
                 if fields.get("_async_submission") and (task := tasks.get(fields["call_ref"])) is not None:
@@ -230,6 +235,7 @@ async def _write_batch(rows: list[tuple[type, dict]]) -> bool:
                     values["verdict"] = task.verdict
                 records.append(model(**values))
             session.add_all(records)
+            await mark_dirty(session, dirty)
             await session.commit()
         return True
     except Exception:  # noqa: BLE001 — audit must never surface into a call's result

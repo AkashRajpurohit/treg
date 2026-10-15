@@ -159,6 +159,12 @@ jobs:
           tests/test_call_cancellation.py
           tests/test_call_pool_discipline.py
           tests/test_catalog_stats_refresh.py
+          tests/test_catalog_stats_corrections.py
+          tests/test_catalog_stats_concurrency.py
+          tests/test_catalog_stat_dirty_audit.py
+          tests/test_catalog_observation_folds.py
+          tests/test_catalog_observation_cache.py
+          tests/test_endpoint_stats.py
           tests/test_key_spend_rollup.py
           tests/test_api_key_spend.py
           tests/test_api_keys.py

@@ -3,8 +3,7 @@
 What these pin: that the buckets say exactly what the live aggregate says for the same rows (the
 judgement calls live once, in `stats.publish`, and the fold mirrors the SQL predicates); that the
 cursor never consumes a row still inside the commit lag; that the first run starts inside the
-window and later runs resume; that the reader stays on the live aggregate until the worker has
-caught up, so a deployment without the cron changes nothing.
+window and later runs resume; that unavailable folds never trigger request-time audit scans.
 """
 
 from __future__ import annotations
@@ -14,14 +13,16 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy import select
 
 from treg.application import catalog_stats
 from treg.domain.catalog import stats
 from treg.infra import catalog_observations
 from treg.infra.catalog_observations import (
-    CachedEndpointObservationReader, PostgresEndpointObservationReader,
+    CachedEndpointObservationReader, EndpointObservationUnavailable, PostgresEndpointObservationReader,
 )
+from treg.infra.catalog_stat_dirty import mark_dirty
 from treg.infra.db import session_maker
 from treg.models import CallRecord, EndpointDayStat, EndpointStatCursor
 
@@ -152,7 +153,7 @@ async def test_async_without_adapter_publishes_complete_folded_evidence(clients,
 
 
 async def test_async_hits_are_read_after_the_fold_cursor_passes_submission(clients, monkeypatch):
-    """A mixed read folds immutable tasks but still sees terminal corrections on adapter tasks.
+    """A mixed read sees terminal corrections after their original day bucket is reconciled.
 
     Losing verification later cannot erase already-recorded terminal evidence.
     """
@@ -165,16 +166,10 @@ async def test_async_hits_are_read_after_the_fold_cursor_passes_submission(clien
     row_ids = [await _record(endpoint, 200, 100, ago=timedelta(hours=1), cost=0)
                for _ in range(20)]
     assert (await catalog_stats.refresh(session_maker, now=_now()))["caught_up"]
-    live_calls = []
-    original_observed = stats.observed
+    async def no_live_aggregate(*args, **kwargs):
+        raise AssertionError("terminal async evidence must be read from reconciled day buckets")
 
-    async def only_mutable_live(db, endpoint_ids, **kwargs):
-        live_calls.append(list(endpoint_ids))
-        assert list(endpoint_ids) == [endpoint]
-        assert kwargs["per_success"] == set()
-        return await original_observed(db, endpoint_ids, **kwargs)
-
-    monkeypatch.setattr(stats, "observed", only_mutable_live)
+    monkeypatch.setattr(stats, "observed", no_live_aggregate)
     reader = PostgresEndpointObservationReader(session_maker)
     pending = await reader.get_many([folded_endpoint, endpoint])
     assert pending[endpoint]["hit_samples"] == 0
@@ -186,14 +181,15 @@ async def test_async_hits_are_read_after_the_fold_cursor_passes_submission(clien
         for n, row in enumerate(rows):
             row.hit = n < 12
             db.add(row)
+        await mark_dirty(db, {(row.endpoint_id, row.created_at.strftime("%Y-%m-%d")) for row in rows})
         await db.commit()
     catalog = catalog_store.load()
     monkeypatch.setitem(catalog.adapters, endpoint,
                         replace(catalog.adapters[endpoint], verified=False, miss=""))
+    assert (await catalog_stats.refresh(session_maker, now=_now()))["caught_up"]
     final = await reader.get_many([folded_endpoint, endpoint])
     assert final[endpoint]["hit_samples"] == 20 and final[endpoint]["hit_rate"] == 0.6
     assert final[folded_endpoint] == pending[folded_endpoint]
-    assert live_calls == [[endpoint], [endpoint]]
 
 
 async def test_cold_async_cache_completes_from_existing_day_buckets(clients, monkeypatch):
@@ -231,24 +227,30 @@ async def test_async_per_success_uses_terminal_hits_including_failed_attempts(cl
             row.hit = True if n < 12 else False if n < 20 else None
             db.add(row)
         await db.commit()
+    assert (await catalog_stats.refresh(session_maker, now=_now()))["caught_up"]
     observation = (await PostgresEndpointObservationReader(session_maker).get_many([endpoint]))[endpoint]
     assert observation["hit_samples"] == 20
     assert observation["hit_rate"] == 0.6
 
 
-async def test_the_reader_stays_live_until_the_worker_has_caught_up(clients):
-    """No cron, no change: a deployment that never schedules the worker keeps the live aggregate."""
+async def test_the_reader_stays_unavailable_until_the_worker_has_caught_up(clients, monkeypatch):
+    """No worker means unknown observations, never an audit scan or incomplete statistics."""
     for _ in range(6):
         await _record(EP, 200, 100, ago=timedelta(hours=1))
     reader = PostgresEndpointObservationReader(session_maker)
-    assert (await reader.get_many([EP]))[EP]["samples"] == 6     # nothing folded yet: live
+    async def no_live_aggregate(*args, **kwargs):
+        raise AssertionError("a missing or backlogged worker must not trigger a live aggregate")
+    monkeypatch.setattr(stats, "observed", no_live_aggregate)
+    with pytest.raises(EndpointObservationUnavailable):
+        await reader.get_many([EP])
     assert await _cursor() is None
 
-    # A run that stops on its row budget before draining does not flip the reader either.
+    # A run that stops on its row budget must not publish only the first two calls.
     partial = await catalog_stats.refresh(session_maker, max_rows=2, batch_rows=2, now=_now())
     assert partial["rows"] == 2 and not partial["caught_up"]
     assert (await _cursor()).caught_up_at is None
-    assert (await reader.get_many([EP]))[EP]["samples"] == 6     # still live, not the two folded rows
+    with pytest.raises(EndpointObservationUnavailable):
+        await reader.get_many([EP])
 
     drained = await catalog_stats.refresh(session_maker, now=_now())
     assert drained["rows"] == 4 and drained["caught_up"]
@@ -310,9 +312,8 @@ async def test_an_overlapping_run_cannot_erase_what_the_other_folded(clients):
     assert folded[EP]["samples"] == 8         # 4 (outer) + 2 (intruder) + 2 (outer), nothing erased
 
 
-async def test_a_dead_worker_sends_the_reader_back_to_the_live_aggregate(clients, caplog):
-    """A cron that stopped must not leave the catalog on buckets that quietly age out of the
-    window. Past the staleness threshold the reader computes live again, and says so."""
+async def test_a_dead_worker_makes_observations_unavailable_without_a_live_scan(clients, monkeypatch):
+    """An old worker degrades to unknown observations, preserving the request-time read bound."""
     for _ in range(6):
         await _record(EP, 200, 100, ago=timedelta(hours=1))
     assert (await catalog_stats.refresh(session_maker, now=_now()))["caught_up"]
@@ -324,15 +325,17 @@ async def test_a_dead_worker_sends_the_reader_back_to_the_live_aggregate(clients
         cursor.updated_at = _now() - timedelta(seconds=catalog_observations.STALE_AFTER_S + 60)
         db.add(cursor)
         await db.commit()
-    with caplog.at_level("WARNING", logger="treg.catalog"):
-        got = (await reader.get_many([EP]))[EP]
-    assert got["samples"] == 7 and got["ok_rate"] == round(6 / 7, 4)   # live: sees the seventh row
-    assert "computing observations live" in caplog.text
+    async def no_live_aggregate(*args, **kwargs):
+        raise AssertionError("a dead worker must not cause an audit scan")
+    monkeypatch.setattr(stats, "observed", no_live_aggregate)
+    with pytest.raises(EndpointObservationUnavailable):
+        await reader.get_many([EP])
 
 
 async def test_an_empty_audit_table_caught_up_immediately(clients):
     result = await catalog_stats.refresh(session_maker, now=_now())
-    assert result == {"rows": 0, "buckets": 0, "caught_up": True, "cursor": 0}
+    assert result == {"rows": 0, "buckets": 0, "caught_up": True, "cursor": 0,
+                      "repaired": 0, "repair_failed": 0, "repair_pending": 0}
     folded = await PostgresEndpointObservationReader(session_maker).get_many([EP])
     assert folded[EP]["samples"] == 0 and folded[EP]["ok_rate"] is None
 
