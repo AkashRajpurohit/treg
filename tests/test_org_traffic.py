@@ -2,6 +2,9 @@
 import asyncio
 import io
 import json
+import logging
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -20,11 +23,7 @@ from test_routing import enrichment_on  # noqa: F401
 
 @pytest.fixture(autouse=True)
 def capture_traffic_logs(caplog):
-    traffic.log.addHandler(caplog.handler)
-    try:
-        yield
-    finally:
-        traffic.log.removeHandler(caplog.handler)
+    caplog.set_level(logging.INFO, logger=traffic.log.name)
 
 
 @pytest.fixture
@@ -71,8 +70,8 @@ def test_percentile_nearest_rank_and_overflow(counter):
 
 def test_summary_is_one_parseable_physical_line(counter, monkeypatch, caplog):
     stream = io.StringIO()
-    handler = next(handler for handler in traffic.log.handlers if handler is not caplog.handler)
-    monkeypatch.setattr(handler, "stream", stream)
+    handler = logging.StreamHandler(stream)
+    monkeypatch.setattr(logging.getLogger(), "handlers", [handler])
     for org in range(10):
         counter.begin(org)
         counter.finish(org, 503, 65)
@@ -81,6 +80,51 @@ def test_summary_is_one_parseable_physical_line(counter, monkeypatch, caplog):
     event, payload = line.split(" ", 1)
     assert event == "org_traffic_top"
     assert len(json.loads(payload)["top"]) == 10
+
+
+@pytest.mark.parametrize("host_configured", [False, True])
+def test_app_shared_logging_keeps_single_lines_and_honors_host_configuration(host_configured):
+    script = '''
+import io, json, logging, sys
+root = logging.getLogger()
+stream = io.StringIO()
+configured = sys.argv[1] == "True"
+if configured:
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("HOST:%(message)s"))
+    root.addHandler(handler)
+    root.setLevel(logging.ERROR)
+from treg.api import app
+from treg.infra import org_flow_control as flow, org_traffic as traffic
+if configured:
+    assert root.handlers == [handler] and root.level == logging.ERROR
+else:
+    [handler] = root.handlers
+    assert type(handler) is logging.StreamHandler
+    handler.setStream(stream)
+    assert root.level == logging.INFO
+assert not flow.log.handlers and not traffic.log.handlers
+assert flow.log.propagate and traffic.log.propagate
+assert flow.log.level == traffic.log.level == logging.NOTSET
+stream.seek(0)
+stream.truncate()
+root.setLevel(logging.WARNING)
+flow._emit("org_flow_control_paused", 42, None)
+traffic.emit_snapshot()
+assert not stream.getvalue()
+root.setLevel(logging.INFO)
+flow._emit("org_flow_control_paused", 42, "synthetic" * 100)
+traffic.emit_snapshot()
+lines = stream.getvalue().splitlines()
+assert len(lines) == 2
+for line in lines:
+    json.loads(line[line.index("{"):])
+if configured:
+    assert all(line.startswith("HOST:") for line in lines)
+'''
+    result = subprocess.run([sys.executable, "-c", script, str(host_configured)],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
 
 
 def test_cross_window_in_flight_and_completion_denominator(counter):

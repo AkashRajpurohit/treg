@@ -409,8 +409,7 @@ async def run_call_surface(rest: str, request: Request, caller: Caller, *, prefi
             response = _LeasedStreamingResponse(response, slot, upstream.close)
             streaming = True  # The ASGI response now owns cleanup and slot release.
         return response
-    except (org_concurrency.AdmissionRejected, org_flow_control.PauseRejected,
-            org_flow_control.FlowControlUnavailable) as exc:
+    except (org_concurrency.AdmissionRejected, org_flow_control.PauseRejected) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail,
                             headers={"Retry-After": str(exc.retry_after_s)}) from exc
     except CallFailure as exc:

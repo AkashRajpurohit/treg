@@ -81,6 +81,11 @@ lifespan emits `analytics.capture_service_started(role)`, one `service_started` 
 carrying the `build` and `archive_config` fingerprints every server event has (see
 [data-model](data-model.md#product-analytics-writer-analyticspy)).
 
+Bootstrap configures a plain shared root log handler before importing MCP, so structured
+[Org traffic](org-traffic.md) and [pause](org-flow-control.md) records stay on one physical line
+by default. Existing host logging configuration takes precedence; those loggers inherit its
+levels, handlers and filters without installing their own sinks.
+
 Every role also owns an `infra.money_trace_runner` lifespan, independent of analytics enablement.
 It samples in-process money transactions and event-loop wakeup delay, and sends bounded diagnostic
 records to a dedicated log thread. Shutdown stops it after money-producing background work drains

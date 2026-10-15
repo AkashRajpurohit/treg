@@ -23,8 +23,10 @@ related:
 `/call/`, `/catalog/call/` and `/table/` request. The existing Uvicorn transport access log has no
 resolved Caller and is bypassed by MCP's in-process HTTP client; Render edge logs are outside the
 application's control. This deliberately small application log covers both HTTP and MCP roots.
-Its own plain stream handler keeps each JSON record on one physical line, bypassing the MCP SDK's
-wrapping console formatter without changing other loggers.
+It uses shared application logging: bootstrap installs a plain root handler before the MCP SDK's
+wrapping console default. Host-configured handlers, filters and levels take precedence. Org traffic
+and pause loggers inherit them without private handlers or forced levels. The default formatter
+keeps each JSON record on one physical line; custom formatters should preserve that property.
 It contains a fixed surface/adapter label, worker PID, trusted `Caller.org_id` and `api_key_id`,
 server-generated `call_ref`, HTTP method, resolved tool/endpoint, status, outcome and handler duration.
 API key IDs come from the resolved Caller; sessions without a managed key and unresolved

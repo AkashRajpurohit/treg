@@ -17,6 +17,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Literal, Protocol
 
 from ..config import get_settings
@@ -31,9 +32,10 @@ _LEASE_RETRY_BUDGET_S = 2.5
 _LOCAL_MAX_KEYS = 10_000
 _FLOW_CONTROL_MAX_BYTES = 32768
 _READ_ORG_FLOW_CONTROL = """
-local value = redis.call('GETRANGE', KEYS[1], 0, 32768)
-if value == '' and redis.call('EXISTS', KEYS[1]) == 0 then return false end
-return value
+local kind = redis.call('TYPE', KEYS[1]).ok
+if kind == 'none' then return false end
+if kind ~= 'string' then return -1 end
+return redis.call('GETRANGE', KEYS[1], 0, 32768)
 """
 log = logging.getLogger("treg.kv")
 _clock = time.monotonic
@@ -51,6 +53,15 @@ _LEASE_BUCKETS = (10, 50, 100, 200)
 AcquireResult = Literal["acquired", "busy", "unavailable"]
 RenewResult = Literal["renewed", "lost", "unavailable", "deadline_expired"]
 ReleaseResult = Literal["released", "lost", "not_owned", "unavailable"]
+
+
+class FlowControlReadFailure(Enum):
+    INVALID = "invalid"
+    UNAVAILABLE = "unavailable"
+
+
+FlowControlReadResult = str | None | FlowControlReadFailure
+
 _RENEW_LEASE = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
     return redis.call('pexpire', KEYS[1], ARGV[2])
@@ -94,8 +105,8 @@ class Store(Protocol):
 
     async def ping(self) -> bool: ...
 
-    async def read_org_flow_control(self, org_id: int) -> str | None | Literal[False]:
-        """Bounded published JSON; None means a healthy absent key, False means unavailable."""
+    async def read_org_flow_control(self, org_id: int) -> FlowControlReadResult:
+        """Bounded JSON or missing (None), distinct from invalid data and transport failure."""
 
     async def acquire_lease(self, key: str, token: str, ttl_ms: int) -> AcquireResult: ...
 
@@ -139,8 +150,9 @@ class LocalStore:
     async def ping(self) -> bool:
         return True
 
-    async def read_org_flow_control(self, org_id: int) -> str | None | Literal[False]:
-        return False  # Local state cannot stand in for published Redis configuration.
+    async def read_org_flow_control(self, org_id: int) -> FlowControlReadResult:
+        # Local state cannot stand in for published Redis configuration.
+        return FlowControlReadFailure.UNAVAILABLE
 
     async def acquire_lease(self, key: str, token: str, ttl_ms: int) -> AcquireResult:
         return "unavailable"  # Local counters cannot promise cross-process exclusion.
@@ -186,9 +198,9 @@ class RedisStore:
             _note_fault(exc)
             return False
 
-    async def read_org_flow_control(self, org_id: int) -> str | None | Literal[False]:
+    async def read_org_flow_control(self, org_id: int) -> FlowControlReadResult:
         if type(org_id) is not int or not 0 < org_id <= 2147483647:
-            return False
+            return FlowControlReadFailure.INVALID
         try:
             async with asyncio.timeout(_OPTIONAL_TIMEOUT_S):
                 value = await self._client.eval(
@@ -196,11 +208,13 @@ class RedisStore:
             if value is None:
                 return None
             if not isinstance(value, str) or len(value.encode("utf-8")) > _FLOW_CONTROL_MAX_BYTES:
-                return False
+                return FlowControlReadFailure.INVALID
             return value
+        except UnicodeError:
+            return FlowControlReadFailure.INVALID
         except Exception:
             # No URL, raw JSON, or exception text in the admission path.
-            return False
+            return FlowControlReadFailure.UNAVAILABLE
 
     async def _slot_eval(self, script: str, key: str, *args) -> int | None:
         try:

@@ -1,7 +1,9 @@
 """Published pause parsing, bounded refresh/cache behavior and failure recovery; no services."""
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -90,7 +92,7 @@ async def test_pause_expires_by_current_utc_without_another_refresh(env):
     store.read_org_flow_control.assert_awaited_once_with(42)
 
 
-async def test_new_version_can_resume_but_regression_or_mutation_is_unavailable(env):
+async def test_new_version_can_resume_and_conflicts_retain_previous_config(env):
     reader, store, clock, now = env
     store.read_org_flow_control.return_value = payload(
         pause_until=(now[0] + timedelta(hours=1)).isoformat().replace("+00:00", "Z"))
@@ -103,47 +105,89 @@ async def test_new_version_can_resume_but_regression_or_mutation_is_unavailable(
                         payload(version=2, rate_limit={"rps": 1, "burst": 1})]:
         clock[0] += 3
         store.read_org_flow_control.return_value = conflicting
-        with pytest.raises(flow.FlowControlUnavailable):
-            await reader.check(42, None, 2)
+        assert await reader.check(42, None, 2) == 2
         assert reader.entries[42].snapshot.version == 2
     clock[0] += 3
     store.read_org_flow_control.return_value = payload(version=2)
     assert await reader.check(42, None, 2) == 2
 
 
-@pytest.mark.parametrize("bad", [None, False, "invalid", payload(org_id=7)])
-async def test_known_snapshot_failure_refuses_new_work_and_recovers(env, bad):
-    reader, store, clock, _ = env
-    store.read_org_flow_control.return_value = payload()
-    assert await reader.check(42, None, 2) == 1
+@pytest.mark.parametrize("bad", [flow.kv.FlowControlReadFailure.UNAVAILABLE, None])
+async def test_transport_failure_or_missing_key_allows_and_recovers(env, bad):
+    reader, store, clock, now = env
+    original = payload(pause_until=(now[0] + timedelta(hours=1)).isoformat().replace("+00:00", "Z"))
+    store.read_org_flow_control.return_value = original
+    with pytest.raises(flow.PauseRejected):
+        await reader.check(42, None, 2)
     store.read_org_flow_control.return_value = bad
     # A fresh cached read is valid until its short refresh deadline.
-    assert await reader.check(42, None, 2) == 1
+    with pytest.raises(flow.PauseRejected):
+        await reader.check(42, None, 2)
     clock[0] += 3
-    with pytest.raises(flow.FlowControlUnavailable) as error:
-        await reader.check(42, "failed", 2)
-    assert error.value.status_code == 503
-    assert reader.entries[42].snapshot.version == 1
-    with pytest.raises(flow.FlowControlUnavailable):
-        await reader.check(42, "backoff", 2)
+    assert await reader.check(42, "failed", 2) == 0
+    if bad is None:
+        assert reader.entries[42].snapshot is None
+    else:
+        assert reader.entries[42].snapshot.version == 1
+    assert await reader.check(42, "backoff", 2) == 0
     assert store.read_org_flow_control.await_count == 2
     clock[0] += 3
-    store.read_org_flow_control.return_value = payload()
-    assert await reader.check(42, "recovered", 2) == 1
+    store.read_org_flow_control.return_value = original
+    with pytest.raises(flow.PauseRejected):
+        await reader.check(42, "recovered", 2)
+
+
+@pytest.mark.parametrize("bad", [flow.kv.FlowControlReadFailure.INVALID, "invalid",
+                               payload(org_id=7), payload(version=1),
+                               payload(version=2, pause_until="2035-01-01T00:00:00Z")])
+async def test_bad_config_preserves_valid_pause_and_original_expiry(env, bad):
+    reader, store, clock, now = env
+    original = payload(version=2, pause_until=(now[0] + timedelta(seconds=5)).isoformat().replace("+00:00", "Z"))
+    store.read_org_flow_control.return_value = original
+    with pytest.raises(flow.PauseRejected):
+        await reader.check(42, None, 2)
+    snapshot = reader.entries[42].snapshot
+    clock[0] += 3
+    store.read_org_flow_control.return_value = bad
+    with pytest.raises(flow.PauseRejected) as rejected:
+        await reader.check(42, None, 2)
+    assert rejected.value.detail["config_version"] == 2
+    assert reader.entries[42].snapshot is snapshot
+    now[0] += timedelta(seconds=6)
+    assert await reader.check(42, None, 2) == 2
+    clock[0] += 3
+    assert await reader.check(42, None, 2) == 2
+
+
+@pytest.mark.parametrize("bad", [flow.kv.FlowControlReadFailure.INVALID, "invalid", payload(org_id=7)])
+async def test_invalid_config_without_previous_valid_config_allows(env, bad):
+    reader, store, _, _ = env
+    store.read_org_flow_control.return_value = bad
+    assert await reader.check(42, None, 2) == 0
+
+
+async def test_missing_key_clears_rule_before_later_invalid_config(env):
+    reader, store, clock, now = env
+    store.read_org_flow_control.return_value = payload(pause_until="2035-01-01T00:00:00Z")
+    with pytest.raises(flow.PauseRejected):
+        await reader.check(42, None, 2)
+    store.read_org_flow_control.return_value = None
+    clock[0] += 3
+    assert await reader.check(42, None, 2) == 0
+    store.read_org_flow_control.return_value = "invalid"
+    clock[0] += 3
+    assert await reader.check(42, None, 2) == 0
 
 
 async def test_cold_redis_failure_and_initialization_error_are_sanitized(env, monkeypatch):
     reader, store, clock, _ = env
-    store.read_org_flow_control.return_value = False
-    with pytest.raises(flow.FlowControlUnavailable):
-        await reader.check(42, None, 2)
+    store.read_org_flow_control.return_value = flow.kv.FlowControlReadFailure.UNAVAILABLE
+    assert await reader.check(42, None, 2) == 0
     clock[0] += 3
     def broken_store():
         raise RuntimeError("private-redis-url")
     monkeypatch.setattr(flow.kv, "store", broken_store)
-    with pytest.raises(flow.FlowControlUnavailable) as error:
-        await reader.check(42, None, 2)
-    assert "private-redis-url" not in str(error.value)
+    assert await reader.check(42, None, 2) == 0
 
 
 async def test_concurrent_cold_requests_share_one_read(env):
@@ -163,26 +207,70 @@ async def test_concurrent_cold_requests_share_one_read(env):
     assert reader.entries[42].users == 0
 
 
-async def test_cancelled_refresh_preserves_watermark_and_backoff(env):
+@pytest.mark.parametrize("prior", [None, payload(version=2),
+                                 payload(version=2, pause_until="2035-01-01T00:00:00Z")])
+@pytest.mark.parametrize("blocked_on_semaphore", [False, True])
+async def test_cancelled_refresh_preserves_shared_state_and_waiter_retries(env, prior, blocked_on_semaphore):
     reader, store, clock, _ = env
-    store.read_org_flow_control.return_value = payload(version=2)
-    await reader.check(42, None, 2)
+    store.read_org_flow_control.return_value = prior
+    try:
+        await reader.check(42, None, 2)
+    except flow.PauseRejected:
+        pass
+    entry = reader.entries[42]
+    before = (entry.snapshot, entry.available, entry.next_refresh)
     clock[0] += 3
     entered = asyncio.Event()
     async def wait(_org):
         entered.set()
         await asyncio.Event().wait()
     store.read_org_flow_control.side_effect = wait
+    if blocked_on_semaphore:
+        reader.reads = asyncio.Semaphore(0)
     task = asyncio.create_task(reader.check(42, "cancelled", 2))
-    await entered.wait()
+    if blocked_on_semaphore:
+        await asyncio.sleep(0)
+    else:
+        await entered.wait()
+    waiter = asyncio.create_task(reader.check(42, "waiter", 2))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert entry.users == 1
+    assert (entry.snapshot, entry.available, entry.next_refresh) == before
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert reader.entries[42].users == 0
-    assert reader.entries[42].snapshot.version == 2
-    with pytest.raises(flow.FlowControlUnavailable):
-        await reader.check(42, None, 2)
+    assert (entry.snapshot, entry.available, entry.next_refresh) == before
+    store.read_org_flow_control.side_effect = None
+    store.read_org_flow_control.return_value = payload(version=3)
+    reader.reads = asyncio.Semaphore(32)
+    assert await reader.check(42, "retry", 2) == 3
+
+
+async def test_cancelled_owner_leaves_waiting_request_free_to_refresh(env):
+    reader, store, _, _ = env
+    entered = asyncio.Event()
+
+    async def read(_org):
+        entered.set()
+        await asyncio.Event().wait()
+
+    store.read_org_flow_control.side_effect = read
+    owner = asyncio.create_task(reader.check(42, "owner", 2))
+    await entered.wait()
+    waiter = asyncio.create_task(reader.check(42, "waiter", 2))
+    await asyncio.sleep(0)
+    store.read_org_flow_control.side_effect = None
+    store.read_org_flow_control.return_value = payload()
+    owner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+    assert await waiter == 1
     assert store.read_org_flow_control.await_count == 2
+    assert reader.entries[42].users == 0
 
 
 async def test_cache_evicts_inactive_lru_but_protects_active_pauses(env):
@@ -197,8 +285,8 @@ async def test_cache_evicts_inactive_lru_but_protects_active_pauses(env):
     with pytest.raises(flow.PauseRejected):
         await reader.check(44, None, 2)
     assert set(reader.entries) == {42, 44}
-    with pytest.raises(flow.FlowControlUnavailable):
-        await reader.check(45, None, 2)
+    assert await reader.check(45, None, 2) == 0
+    assert store.read_org_flow_control.await_count == 3
     assert len(reader.entries) == 2
     now[0] += timedelta(hours=2)
     assert await reader.check(45, None, 2) == 1
@@ -218,8 +306,7 @@ async def test_cache_cannot_evict_a_read_owner_or_waiter(env):
     await entered.wait()
     waiter = asyncio.create_task(reader.check(42, None, 2))
     await asyncio.sleep(0)
-    with pytest.raises(flow.FlowControlUnavailable):
-        await reader.check(43, None, 2)
+    assert await reader.check(43, None, 2) == 0
     assert reader.entries[42].users == 2
     release.set()
     assert await asyncio.gather(owner, waiter) == [1, 1]
@@ -235,15 +322,14 @@ async def test_read_and_semaphore_wait_have_a_total_deadline(env, blocked_on_sem
         async def blocked(_org):
             await asyncio.Event().wait()
         store.read_org_flow_control.side_effect = blocked
-    with pytest.raises(flow.FlowControlUnavailable):
-        await asyncio.wait_for(reader.check(42, None, 2), timeout=1)
+    assert await asyncio.wait_for(reader.check(42, None, 2), timeout=1) == 0
     assert store.read_org_flow_control.await_count == (0 if blocked_on_semaphore else 1)
 
 
 async def test_logs_report_pause_capability_and_no_payload_or_exception(env, monkeypatch):
     reader, store, clock, _ = env
     records = []
-    monkeypatch.setattr(flow.log, "info", lambda fmt, *args: records.append(fmt % args))
+    monkeypatch.setattr(flow.log, "log", lambda level, fmt, *args: records.append(fmt % args))
     store.read_org_flow_control.return_value = payload(version=2)
     await reader.check(42, "observed-ref", 2)
     assert "org_flow_control_version_observed" in records[0]
@@ -253,8 +339,7 @@ async def test_logs_report_pause_capability_and_no_payload_or_exception(env, mon
     assert parsed["worker_pid"] > 0
     store.read_org_flow_control.side_effect = RuntimeError("private-token-or-url")
     clock[0] += 3
-    with pytest.raises(flow.FlowControlUnavailable):
-        await reader.check(42, "failure-ref", 2)
+    assert await reader.check(42, "failure-ref", 2) == 0
     assert "private-token-or-url" not in "\n".join(records)
     assert "redis_unavailable" in records[-1]
 
@@ -276,7 +361,7 @@ async def test_logging_failure_cannot_replace_pause_refusal(env, monkeypatch):
         pause_until=(now[0] + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"))
     def broken_log(*_args):
         raise OSError("log sink unavailable")
-    monkeypatch.setattr(flow.log, "info", broken_log)
+    monkeypatch.setattr(flow.log, "log", broken_log)
     with pytest.raises(flow.PauseRejected):
         await reader.check(42, None, 2)
 
@@ -284,3 +369,55 @@ async def test_logging_failure_cannot_replace_pause_refusal(env, monkeypatch):
 def test_valid_publisher_year_zero_is_already_expired():
     snapshot = flow._parse(payload(pause_until="0000-02-29T00:00:00Z"), 42)
     assert snapshot.pause_until == datetime.min.replace(tzinfo=timezone.utc)
+
+
+async def test_pause_and_capacity_logs_are_bounded(env, caplog):
+    reader, store, clock, _ = env
+    caplog.set_level(logging.INFO, logger=flow.log.name)
+    reader.max_entries = 1
+    store.read_org_flow_control.return_value = payload(pause_until="2035-01-01T00:00:00Z")
+    for _ in range(100):
+        with pytest.raises(flow.PauseRejected):
+            await reader.check(42, None, 2)
+        assert await reader.check(43, None, 2) == 0
+    pauses = [r for r in caplog.records if r.getMessage().startswith("org_flow_control_paused ")]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(pauses) == len(warnings) == 1
+    assert "cache_capacity" in warnings[0].getMessage()
+    clock[0] += 5
+    with pytest.raises(flow.PauseRejected):
+        await reader.check(42, None, 2)
+    assert json.loads(caplog.records[-1].getMessage().split(" ", 1)[1])["suppressed_since_last_log"] == 99
+    assert await reader.check(43, None, 2) == 0
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 2
+
+
+async def test_refresh_failure_diagnostics_are_rate_limited(env, caplog):
+    reader, store, clock, _ = env
+    store.read_org_flow_control.return_value = flow.kv.FlowControlReadFailure.UNAVAILABLE
+    for _ in range(25):
+        assert await reader.check(42, None, 0.2) == 0
+        clock[0] += 0.2
+    assert len(caplog.records) == 1
+    clock[0] += 1
+    assert await reader.check(42, None, 0.2) == 0
+    assert len(caplog.records) == 2
+    assert json.loads(caplog.records[-1].getMessage().split(" ", 1)[1])["suppressed_since_last_log"] == 24
+
+
+async def test_real_publisher_contract_disables_pauses_and_resumes(env):
+    reader, store, clock, now = env
+    fixtures = Path(__file__).parent / "fixtures" / "org-flow-control"
+    now[0] = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    store.read_org_flow_control.return_value = (fixtures / "disabled.json").read_text()
+    assert await reader.check(42, None, 2) == 1
+    clock[0] += 3
+    store.read_org_flow_control.return_value = (fixtures / "paused.json").read_text()
+    with pytest.raises(flow.PauseRejected) as rejected:
+        await reader.check(42, None, 2)
+    assert rejected.value.retry_after_s == 2
+    assert rejected.value.detail["config_version"] == 2
+    assert reader.entries[42].snapshot.pause_until.microsecond == 234000
+    clock[0] += 3
+    store.read_org_flow_control.return_value = (fixtures / "resumed.json").read_text()
+    assert await reader.check(42, None, 2) == 3

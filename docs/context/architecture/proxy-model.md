@@ -761,6 +761,7 @@ cannot receive one upstream job through provider deduplication. Unpinned digests
 
 The shared `run_call_surface` checks [published Org pauses](org-flow-control.md) after identity
 and context creation, before concurrency or financial admission. It can refuse new root calls
-with 429 or return 503 when rule availability cannot be confirmed. Existing accepted work and
-its financial cleanup continue. This optional default-off check does not cover direct hub,
+with 429 for an active valid pause. Redis failures allow calls; missing keys clear cached rules,
+and malformed or conflicting publications retain the previous valid rule's original expiry.
+Existing accepted work and its financial cleanup continue. This optional default-off check does not cover direct hub,
 provider-resource or background execution outside the shared surface.

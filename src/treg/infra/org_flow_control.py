@@ -1,8 +1,9 @@
 """Published Org pause snapshots, read lazily from the shared Redis store.
 
 Only root-call pause admission is active here. Rate and concurrency fields are validated but
-not enforced. Missing/invalid known snapshots and Redis failure refuse new work; accepted work
-never enters this guard again. The bounded worker cache is not durable version history.
+not enforced. Redis failures allow new work; malformed publications retain the last valid rule
+until its original expiry. Accepted work never enters this guard again. The bounded worker cache
+is not durable version history.
 """
 from __future__ import annotations
 
@@ -23,14 +24,10 @@ from . import kv
 _MAX_ORGS = 4096
 _MAX_BYTES = 32768
 _MAX_INT = 2147483647
+_LOG_INTERVAL_S = 5
 _clock = time.monotonic
 _utcnow = lambda: datetime.now(timezone.utc)
 log = logging.getLogger("treg.org_flow_control")
-log.setLevel(logging.INFO)
-# Preserve one physical JSON record even when MCP installs a wrapping root handler.
-if not log.handlers:
-    log.addHandler(logging.StreamHandler())
-log.propagate = False
 
 
 class PauseRejected(Exception):
@@ -40,16 +37,6 @@ class PauseRejected(Exception):
         self.detail = {"error": "org_traffic_paused",
                        "message": "organization new requests are temporarily paused",
                        "retry_after_s": retry_after_s, "config_version": version}
-        super().__init__(self.detail["error"])
-
-
-class FlowControlUnavailable(Exception):
-    def __init__(self, *, retry_after_s: int = 1) -> None:
-        self.status_code = 503
-        self.retry_after_s = retry_after_s
-        self.detail = {"error": "org_traffic_control_unavailable",
-                       "message": "organization traffic control is unavailable",
-                       "retry_after_s": retry_after_s}
         super().__init__(self.detail["error"])
 
 
@@ -113,9 +100,10 @@ def _parse(raw: str, org_id: int) -> Snapshot:
     return Snapshot(data["version"], pause, canonical)
 
 
-def _emit(event: str, org_id: int, call_ref: str | None, **fields) -> None:
+def _emit(event: str, org_id: int, call_ref: str | None, *,
+          level: int = logging.INFO, **fields) -> None:
     try:
-        log.info("%s %s", event, json.dumps(
+        log.log(level, "%s %s", event, json.dumps(
             {"worker_pid": os.getpid(), "org_id": org_id, "call_ref": call_ref,
              "capability": "pause", **fields},
             separators=(",", ":")))
@@ -129,6 +117,10 @@ class Entry:
     available: bool = False
     users: int = 0
     next_refresh: float = 0.0
+    next_pause_log: float = 0.0
+    suppressed_pause_logs: int = 0
+    next_failure_log: float = 0.0
+    suppressed_failure_logs: int = 0
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -139,7 +131,7 @@ class Reader:
         self.next_capacity_warning = 0.0
         self.reads = asyncio.Semaphore(32)
 
-    def _entry(self, org_id: int, call_ref: str | None) -> Entry:
+    def _entry(self, org_id: int, call_ref: str | None) -> Entry | None:
         entry = self.entries.get(org_id)
         if entry is not None:
             self.entries.move_to_end(org_id)
@@ -152,45 +144,49 @@ class Reader:
                                or row.snapshot.pause_until <= now)), None)
             if victim is None:
                 if _clock() >= self.next_capacity_warning:
-                    self.next_capacity_warning = _clock() + 5
+                    self.next_capacity_warning = _clock() + _LOG_INTERVAL_S
                     _emit("org_flow_control_config_unavailable", org_id, call_ref,
-                          reason="cache_capacity", status=503)
-                raise FlowControlUnavailable()
+                          level=logging.WARNING, reason="cache_capacity", action="allow")
+                return None
             del self.entries[victim]
         entry = self.entries[org_id] = Entry()
         return entry
 
     def _failed(self, entry: Entry, org_id: int, call_ref: str | None, reason: str) -> None:
-        _emit("org_flow_control_config_unavailable", org_id, call_ref, reason=reason, status=503,
-              config_version=entry.snapshot.version if entry.snapshot else 0)
+        if _clock() < entry.next_failure_log:
+            entry.suppressed_failure_logs += 1
+            return
+        _emit("org_flow_control_config_unavailable", org_id, call_ref, level=logging.WARNING,
+              reason=reason, action="retain_previous" if entry.available and entry.snapshot else "allow",
+              config_version=entry.snapshot.version if entry.snapshot else 0,
+              suppressed_since_last_log=entry.suppressed_failure_logs)
+        entry.suppressed_failure_logs = 0
+        entry.next_failure_log = _clock() + _LOG_INTERVAL_S
 
     async def _refresh(self, entry: Entry, org_id: int, call_ref: str | None,
                        refresh_s: float) -> None:
-        # Mark uncertainty before the first await, including if the request is cancelled.
+        # Commit shared state only after the read. A cancelled owner leaves the snapshot and
+        # refresh deadline untouched, so the next caller/waiter can retry immediately.
         was_available = entry.available
-        entry.available = False
-        entry.next_refresh = _clock() + refresh_s
         try:
             async with asyncio.timeout(0.2):
                 async with self.reads:
                     raw = await kv.store().read_org_flow_control(org_id)
         except asyncio.CancelledError:
-            self._failed(entry, org_id, call_ref, "cancelled")
             raise
         except Exception:
+            raw = kv.FlowControlReadFailure.UNAVAILABLE
+        entry.next_refresh = _clock() + refresh_s
+        if raw is kv.FlowControlReadFailure.UNAVAILABLE:
+            entry.available = False
             self._failed(entry, org_id, call_ref, "redis_unavailable")
             return
-        if raw is False:
-            self._failed(entry, org_id, call_ref, "redis_unavailable")
-            return
+        entry.available = True
         if raw is None:
-            if entry.snapshot is not None:
-                self._failed(entry, org_id, call_ref, "snapshot_missing")
-                return
-            if not was_available:
+            if entry.snapshot is not None or not was_available:
                 _emit("org_flow_control_version_observed", org_id, call_ref, config_version=0,
                       pause_until=None)
-            entry.available = True
+            entry.snapshot = None
             return
         try:
             snapshot = _parse(raw, org_id)
@@ -208,10 +204,11 @@ class Reader:
             _emit("org_flow_control_version_observed", org_id, call_ref,
                   config_version=snapshot.version,
                   pause_until=snapshot.pause_until.isoformat() if snapshot.pause_until else None)
-        entry.available = True
 
     async def check(self, org_id: int, call_ref: str | None, refresh_s: float) -> int:
         entry = self._entry(org_id, call_ref)
+        if entry is None:
+            return 0
         entry.users += 1
         try:
             if entry.lock.locked() or _clock() >= entry.next_refresh:
@@ -220,14 +217,20 @@ class Reader:
                     if _clock() >= entry.next_refresh:
                         await self._refresh(entry, org_id, call_ref, refresh_s)
             if not entry.available:
-                raise FlowControlUnavailable()
+                return 0
             snapshot = entry.snapshot
             if snapshot is not None and snapshot.pause_until is not None:
                 remaining = (snapshot.pause_until - _utcnow()).total_seconds()
                 if remaining > 0:
                     retry = max(1, math.ceil(remaining))
-                    _emit("org_flow_control_paused", org_id, call_ref, status=429,
-                          config_version=snapshot.version, retry_after_s=retry)
+                    if _clock() >= entry.next_pause_log:
+                        _emit("org_flow_control_paused", org_id, call_ref, status=429,
+                              config_version=snapshot.version, retry_after_s=retry,
+                              suppressed_since_last_log=entry.suppressed_pause_logs)
+                        entry.suppressed_pause_logs = 0
+                        entry.next_pause_log = _clock() + _LOG_INTERVAL_S
+                    else:
+                        entry.suppressed_pause_logs += 1
                     raise PauseRejected(retry_after_s=retry, version=snapshot.version)
             return snapshot.version if snapshot else 0
         finally:

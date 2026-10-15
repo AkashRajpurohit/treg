@@ -12,7 +12,7 @@ from treg.api import app
 from treg.application.call import service
 from treg.application.call.types import UpstreamResponse
 from treg.config import get_settings
-from treg.infra import money_admission, org_concurrency, org_flow_control
+from treg.infra import kv, money_admission, org_concurrency, org_flow_control
 from treg.infra.db import session_maker
 from treg.models import CallRecord, LedgerEntry
 from treg.routers import call as routes
@@ -23,19 +23,20 @@ def _pause():
     return org_flow_control.PauseRejected(retry_after_s=30, version=7)
 
 
+def _success():
+    async def body():
+        yield b'{"ok":true}'
+    return UpstreamResponse(200, ((b"content-type", b"application/json"),), body(), AsyncMock())
+
+
 @pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
-@pytest.mark.parametrize("failure,status,error,retry", [
-    ("paused", 429, "org_traffic_paused", 30),
-    ("unavailable", 503, "org_traffic_control_unavailable", 1),
-])
 async def test_root_refusal_precedes_body_concurrency_money_and_provider(
-    clients, monkeypatch, path, failure, status, error, retry,
+    clients, monkeypatch, path,
 ):
+    status, error, retry = 429, "org_traffic_paused", 30
     org_id = (await clients.get("/orgs")).json()[0]["org_id"]
     monkeypatch.setattr(get_settings(), "table_enabled", True)
-    rejected = _pause() if failure == "paused" else org_flow_control.FlowControlUnavailable(
-        retry_after_s=1)
-    check = AsyncMock(side_effect=rejected)
+    check = AsyncMock(side_effect=_pause())
     acquire = AsyncMock(side_effect=AssertionError("refusal acquired a root slot"))
     execute = AsyncMock(side_effect=AssertionError("refusal executed a call"))
     reserve = AsyncMock(side_effect=AssertionError("refusal reserved money"))
@@ -59,8 +60,7 @@ async def test_root_refusal_precedes_body_concurrency_money_and_provider(
     detail = response.json()["detail"]
     assert detail["error"] == error
     assert detail["retry_after_s"] == retry
-    if failure == "paused":
-        assert detail["config_version"] == 7
+    assert detail["config_version"] == 7
     check.assert_awaited_once_with(org_id, call_ref)
     acquire.assert_not_awaited()
     execute.assert_not_awaited()
@@ -73,6 +73,47 @@ async def test_root_refusal_precedes_body_concurrency_money_and_provider(
     assert len(rows) == 1
     assert rows[0].org_id == org_id
     assert rows[0].call_ref == call_ref
+
+
+@pytest.mark.parametrize("path", ["/call/", "/catalog/call/", "/table/"])
+@pytest.mark.parametrize("result", [None, kv.FlowControlReadFailure.UNAVAILABLE,
+                                  kv.FlowControlReadFailure.INVALID, "invalid json"])
+async def test_reader_failures_allow_root_calls(clients, monkeypatch, path, result):
+    monkeypatch.setattr(get_settings(), "org_flow_control_enabled", True)
+    monkeypatch.setattr(get_settings(), "table_enabled", True)
+    monkeypatch.setattr(org_flow_control, "_reader", org_flow_control.Reader())
+    monkeypatch.setattr(kv.LocalStore, "read_org_flow_control", AsyncMock(return_value=result))
+    execute = AsyncMock(return_value=_success())
+    monkeypatch.setattr(routes, "execute_call", execute)
+    response = await clients.get(path + "example/path")
+    assert response.status_code == 200, response.text
+    execute.assert_awaited_once()
+
+
+async def test_cancellation_during_reader_does_not_become_http_failure(clients, monkeypatch):
+    monkeypatch.setattr(get_settings(), "org_flow_control_enabled", True)
+    reader = org_flow_control.Reader()
+    monkeypatch.setattr(org_flow_control, "_reader", reader)
+    started = asyncio.Event()
+
+    async def read(_org):
+        started.set()
+        await asyncio.Event().wait()
+
+    read_mock = AsyncMock(side_effect=read)
+    monkeypatch.setattr(kv.LocalStore, "read_org_flow_control", read_mock)
+    execute = AsyncMock(return_value=_success())
+    monkeypatch.setattr(routes, "execute_call", execute)
+    task = asyncio.create_task(clients.get("/call/example/path"))
+    await asyncio.wait_for(started.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    execute.assert_not_awaited()
+    read_mock.side_effect = None
+    read_mock.return_value = None
+    assert (await clients.get("/call/example/path")).status_code == 200
+    assert read_mock.await_count == 2
 
 
 async def test_untrusted_caller_never_enters_org_pause(clients, monkeypatch):

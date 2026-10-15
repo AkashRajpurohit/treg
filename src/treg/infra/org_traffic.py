@@ -26,12 +26,6 @@ BUCKETS = 33
 _HTTP_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT",
                            "OPTIONS", "TRACE", "PATCH"})
 log = logging.getLogger("treg.org_traffic")
-log.setLevel(logging.INFO)
-# MCP configures the root logger with RichHandler, which wraps JSON at console width. Keep
-# these machine-readable records on one physical line without changing any other logger.
-if not log.handlers:
-    log.addHandler(logging.StreamHandler())
-log.propagate = False
 _adapter: ContextVar[dict | None] = ContextVar("org_traffic_adapter", default=None)
 
 
