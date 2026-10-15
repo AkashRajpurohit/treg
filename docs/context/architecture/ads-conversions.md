@@ -88,7 +88,7 @@ read-side Ads catalog calls (`oauth_providers.GOOGLE_ADS`), a separate credentia
    association goes through neither audit nor analytics. Stash failures do not fail sign-in;
    the warning omits the email, cookie, and exception text (which could contain SQL parameters). Revision `0075` adds the table without a
    backfill or startup schema mutation. The privacy policy deliberately does not add a separate
-   paragraph for the URL carry or the email association (owner decision, 2026-10-14); its existing
+   paragraph for the URL carry or the email association (an owner decision); its existing
    `treg_ad` section is the disclosure.
 3. **Fire** — three chokepoints call `adsconv.queue(db, org, action, ...)`, which writes an
    `AdConversion` outbox row inside a `SAVEPOINT` (a nested transaction, not a bare flush or a
