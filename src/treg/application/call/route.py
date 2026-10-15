@@ -12,9 +12,10 @@ stops at once — it would be the same 4xx everywhere — unless the endpoint's 
 status as its "no result" answer (`miss: {status: 404}`), which is a MISS. A declared
 `not_found:` (the target itself does not exist) ends the call with that answer. Child-local treg authorization failures and
 platform vendor 401/403 responses are errors because another child may work. A MISS (2xx,
-`adapter.miss`) stops unless the
-caller turned the waterfall off (`X-Treg-Route-Waterfall: 0`). The waterfall is ON by default —
-the endpoint's job is to find the thing — bounded by `X-Treg-Route-Max-Cost` (default $1.00).
+`adapter.miss`) tries the next candidate: the waterfall is ON by default (the endpoint's job is
+to find the thing), and each attempt settles at its own price. `X-Treg-Route-Waterfall: 0` stops
+at the first miss. `X-Treg-Route-Max-Cost` (default $1.00) bounds the call: a candidate is started
+only while what was already charged plus its catalog estimate fits under it.
 
 `X-Treg-Route-Verify` asks for one more call after a hit, the contract's `check` (an email find
 checked by `treg.people.email.verify`). It is its own linked child `:v` with its own hold and
