@@ -23,7 +23,7 @@ _stamp_call_exit: Any = None
 def _capture_call_intake_failure(request: Request, *, surface: str) -> None:
     """Report a call-shaped request that failed before treg could resolve its caller."""
     user_agent = request.headers.get("user-agent", "")
-    analytics.capture("treg-server", "call_intake_failed", {
+    props = {
         "status_code": 503,
         "outcome": "gateway_failed",
         "failure_kind": "db_pool",
@@ -33,7 +33,9 @@ def _capture_call_intake_failure(request: Request, *, surface: str) -> None:
         "method": request.method,
         "user_agent": user_agent[:100],
         "ua_family": _norm_client(user_agent),
-    })
+    }
+    request.state.call_failure_kind = props["failure_kind"]
+    analytics.capture("treg-server", "call_intake_failed", props)
 
 
 async def _pool_saturated(request: Request, exc: PoolTimeoutError) -> JSONResponse:

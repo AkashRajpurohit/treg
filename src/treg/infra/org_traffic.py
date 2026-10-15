@@ -189,7 +189,8 @@ class Observation:
     endpoint_id: str | None = None
     replay_of: str | None = None
 
-    def finish(self, status: int | None, outcome: str, *, call_ref: str | None = None) -> None:
+    def finish(self, status: int | None, outcome: str, *, call_ref: str | None = None,
+               failure_kind: str | None = None) -> None:
         elapsed = (time.perf_counter() - self.started) * 1000 if self.started is not None else None
         try:
             if self.tracked is not None:
@@ -200,6 +201,7 @@ class Observation:
         _emit("request", {"surface": self.surface, "adapter": self.adapter,
                           "org_id": self.org_id, "api_key_id": self.api_key_id,
                           "call_ref": call_ref, "status": status, "outcome": outcome,
+                          "failure_kind": failure_kind,
                           "method": self.method, "tool_name": self.tool_name,
                           "endpoint_id": self.endpoint_id, "replay_of": self.replay_of,
                           "handler_ms": round(elapsed, 3) if elapsed is not None else None})
@@ -256,7 +258,8 @@ class RequestLogMiddleware:
                 # Successful MCP envelopes are not another call. An eager auth challenge has no
                 # adapter/root invocation, but still needs an explicitly unresolved identity.
                 if not mcp_transport or status == 401:
-                    observation.finish(status, outcome, call_ref=state.get("call_ref"))
+                    observation.finish(status, outcome, call_ref=state.get("call_ref"),
+                                       failure_kind=state.get("call_failure_kind"))
             except Exception:
                 pass
 
