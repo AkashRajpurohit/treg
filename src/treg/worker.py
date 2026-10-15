@@ -336,7 +336,9 @@ async def _catalog_stats(args) -> int:
     from .application.catalog_stats import refresh
 
     await verify_db()
-    result = await refresh(max_rows=args.max_rows)
+    result = await refresh(max_rows=args.max_rows, max_dirty_buckets=args.max_dirty_buckets,
+                           max_repair_seconds=args.max_repair_seconds,
+                           bucket_timeout_s=args.bucket_timeout_seconds)
     print(json.dumps(result, sort_keys=True))
     return 0
 
@@ -487,6 +489,12 @@ def main(argv: list[str] | None = None) -> int:
     stats = catalogsub.add_parser("stats", help="fold new audit rows into per-endpoint, per-day reliability stats")
     stats.add_argument("--max-rows", type=int, default=500_000,
                        help="audit rows to consume in one run; the next run resumes from the cursor")
+    stats.add_argument("--max-dirty-buckets", type=int, default=20,
+                       help="maximum endpoint/day corrections to attempt in one run (zero pauses repairs)")
+    stats.add_argument("--max-repair-seconds", type=float, default=60.0,
+                       help="total time budget for late-terminal corrections after the append fold")
+    stats.add_argument("--bucket-timeout-seconds", type=float, default=10.0,
+                       help="timeout for one endpoint/day replacement; failures stay queued for retry")
     stats.set_defaults(fn=_catalog_stats)
     spend = sub.add_parser("spend", help="spend read models derived from the ledger")
     spendsub = spend.add_subparsers(dest="cmd", required=True)
