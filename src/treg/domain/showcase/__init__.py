@@ -215,7 +215,8 @@ def boards(apps: dict[int, tuple[Activity, Consent, int]]) -> dict[str, list[int
 # What a team submits. Checked here so the /showcase form, the dashboard and the staff API refuse
 # the same things. Text is stored as given and escaped wherever it is shown.
 
-MAX_APPS_PER_TEAM = 5
+# One app per team: activity is counted from the team's calls, so a team's numbers are its app's.
+MAX_APPS_PER_TEAM = 1
 MAX_SHOTS = 4
 CATEGORIES: dict[str, str] = {
     "social-listening": "Social listening", "ads": "Ads", "sales": "Sales and leads",

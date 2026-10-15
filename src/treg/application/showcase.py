@@ -48,6 +48,9 @@ APPLY_NS = "showcase_apply"
 APPLY_MAX_PER_USER = 20
 
 
+LIMIT_DETAIL = "a team lists one app - withdraw it to apply with another"
+
+
 class ShowcaseError(Exception):
     """A framework-neutral refusal translated by the HTTP router."""
 
@@ -184,8 +187,8 @@ async def _team_full(db: AsyncSession, org_id: int, *, besides: int | None = Non
 
 
 async def apply(user: User, org_id: int, raw: dict) -> dict:
-    """A new application for `org_id`. Owner or admin; at most MAX_APPS_PER_TEAM entries per team
-    (rejected ones do not count)."""
+    """A new application for `org_id`. Owner or admin; one entry per team (MAX_APPS_PER_TEAM;
+    a rejected one does not count)."""
     rev = _clean(raw)
     async with session_maker() as db:
         if await team_role(db, user.id, org_id) not in ("owner", "admin"):
@@ -199,7 +202,7 @@ async def apply(user: User, org_id: int, raw: dict) -> dict:
             raise ShowcaseError("rate_limited", "too many applications today - try again tomorrow")
         if await _team_full(db, org_id):
             await db.commit()
-            raise ShowcaseError("limit", f"a team can list at most {rules.MAX_APPS_PER_TEAM} apps")
+            raise ShowcaseError("limit", LIMIT_DETAIL)
         app = ShowcaseApp(org_id=org_id, status="pending", pending=rev, submitted_by=user.id)
         db.add(app)
         await db.flush()
@@ -224,7 +227,7 @@ async def edit(user: User, app_id: int, raw: dict, expected_version: int) -> dic
         if app.status == "rejected":
             # Back in review, it counts towards the team's limit again.
             if await _team_full(db, app.org_id, besides=app.id):
-                raise ShowcaseError("limit", f"a team can list at most {rules.MAX_APPS_PER_TEAM} apps")
+                raise ShowcaseError("limit", LIMIT_DETAIL)
             app.status, app.reject_reason = "pending", ""
         app.pending = rev
         _event(db, app, "edited", changed, actor=user.email, source="web")
@@ -303,7 +306,7 @@ async def approve(app_id: int, expected_version: int, *, actor: str, source: str
         if app.pending is None:
             raise ShowcaseError("invalid", "nothing is waiting for review")
         if app.status == "rejected" and await _team_full(db, app.org_id, besides=app.id):
-            raise ShowcaseError("limit", f"a team can list at most {rules.MAX_APPS_PER_TEAM} apps")
+            raise ShowcaseError("limit", LIMIT_DETAIL)
         rev, live_keys = dict(app.pending), _live_keys(app)
     await _publish_revision(rev, already=live_keys)  # storage I/O with no session open
     async with session_maker() as db:
@@ -392,7 +395,7 @@ async def staff_create(org_id: int, raw: dict, *, approve_now: bool, actor: str,
         if await db.get(Org, org_id) is None:
             raise ShowcaseError("not_found", "no such team")
         if await _team_full(db, org_id):
-            raise ShowcaseError("limit", f"a team can list at most {rules.MAX_APPS_PER_TEAM} apps")
+            raise ShowcaseError("limit", LIMIT_DETAIL)
         app = ShowcaseApp(org_id=org_id, status="pending", pending=rev)
         db.add(app)
         await db.flush()

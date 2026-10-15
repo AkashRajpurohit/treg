@@ -999,7 +999,7 @@ var BOARD = (function () {
     var full = teams.every(function (t) { return t.apps >= t.limit; });
     body.innerHTML =
       '<label class="f">Team<select id="ap-team">' + teams.map(function (t) {
-        return '<option value="' + t.id + '"' + (t.apps >= t.limit ? ' disabled' : '') + '>' + esc(t.name) + ' (' + t.apps + ' of ' + t.limit + ' used)</option>'; }).join('') + '</select></label>' +
+        return '<option value="' + t.id + '"' + (t.apps >= t.limit ? ' disabled' : '') + '>' + esc(t.name) + (t.apps >= t.limit ? ' (already listed)' : '') + '</option>'; }).join('') + '</select></label>' +
       '<div class="row2"><label class="f">App name<input type="text" id="ap-name" maxlength="60" required></label>' +
       '<label class="f">Link<input type="url" id="ap-url" placeholder="https://" required></label></div>' +
       '<label class="f">One line about it <small>(up to 80 characters)</small><input type="text" id="ap-tagline" maxlength="80" required></label>' +
@@ -1020,7 +1020,7 @@ var BOARD = (function () {
     document.getElementById('ap-cancel').addEventListener('click', close);
     document.getElementById('ap-submit').addEventListener('click', submit);
     if (state.uploads) { paintPics(); wireFile('ap-icon-file', 'showcase_icon'); wireFile('ap-shot-file', 'showcase_shot'); }
-    if (full) document.getElementById('ap-err').textContent = 'Each of your teams already lists 5 apps.';
+    if (full) document.getElementById('ap-err').textContent = 'Each of your teams already lists its app. A team lists one app.';
   }
   function pic(src, onRemove, label) {
     var d = el('div', { class: 'pic' }, '<img alt="' + esc(label) + '" src="' + esc(src) + '"><button type="button" aria-label="Remove ' + esc(label) + '">✕</button>');

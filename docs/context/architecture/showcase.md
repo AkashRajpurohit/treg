@@ -29,7 +29,8 @@ review, people upvote, and approved apps show activity badges their makers agree
 
 An owner or admin of a team applies on /showcase or the dashboard's Team page: name, link, tagline,
 description, category, maker, X handle, launch post, an icon and up to four screenshots, and which
-metrics may be shown. A team lists at most five apps (rejected ones do not count). The proposal is
+metrics may be shown. A team lists one app (a rejected one does not count): activity is counted
+from the team's calls, so the team's numbers are its app's. The proposal is
 stored in `ShowcaseApp.pending`; nothing is public before staff approve it. An edit to a live app
 is a new proposal and the live version stays until it is approved; a rejected application can be
 edited and resubmits itself. Staff review in the private admin, which calls the staff API

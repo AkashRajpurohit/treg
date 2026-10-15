@@ -1,7 +1,7 @@
 // The Team page's Showcase tab: what a team's entries say and what an application sends.
 // The server (domain/showcase) is the judge of every field; these only shape the form.
 
-export const MAX_APPS = 5
+export const MAX_APPS = 1   // one app per team (domain.showcase.MAX_APPS_PER_TEAM)
 export const MAX_SHOTS = 4
 
 export const CATEGORIES: [string, string][] = [

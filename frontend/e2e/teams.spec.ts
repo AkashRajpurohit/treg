@@ -210,7 +210,8 @@ const entry = (id: number, name: string, over: object) => ({
   id, org_id: 1, status: 'pending', version: 1, live: null, pending: rev(name), reject_reason: '',
   approved_at: null, created_at: '2026-10-01T00:00:00', updated_at: '2026-10-01T00:00:00', ...over,
 })
-const FIVE = [
+// One entry in each state, to check every label (the list itself does not enforce the limit).
+const STATES = [
   entry(1, 'Waiting app', {}),
   entry(2, 'Live app', { status: 'approved', approved_at: '2026-10-02T00:00:00', live: rev('Live app'), pending: null }),
   entry(3, 'Changing app', { status: 'approved', approved_at: '2026-10-02T00:00:00', live: rev('Changing app') }),
@@ -251,7 +252,7 @@ test('an owner lists the team\'s showcase entries, applies with pictures, meets 
     await uploads(page, true)
     await page.goto('/app#orgs/showcase')
     await page.reload()  // the hash alone does not boot again, and boot reads /auth/me
-    await expect(page.getByText('0 of 5 used')).toBeVisible()
+    await expect(page.getByText('One app per team')).toBeVisible()
     await page.getByRole('button', { name: '＋ Apply with an app' }).click()
     const form = page.getByRole('form', { name: 'Apply with an app' })
     await form.getByLabel('App name').fill('Lead scout')
@@ -281,15 +282,22 @@ test('an owner lists the team\'s showcase entries, applies with pictures, meets 
     }])
   })
 
-  await test.step('each entry says where it is, and five places is the limit', async () => {
-    apps = FIVE
+  await test.step('each entry says where it is', async () => {
+    apps = STATES
     await page.reload()
     const list = page.getByRole('list', { name: 'Your showcase entries' })
     for (const chip of ['In review', 'Live', 'Live (change in review)', 'Rejected: the link does not open', 'Hidden'])
       await expect(list.getByText(chip, { exact: true }).first()).toBeVisible()
-    await expect(page.getByText('5 of 5 used')).toBeVisible()  // the rejected one does not count
+  })
+
+  await test.step('a team lists one app; a rejected one does not count', async () => {
+    apps = [STATES[3]]
+    await page.reload()
+    await expect(page.getByRole('button', { name: '＋ Apply with an app' })).toBeEnabled()
+    apps = [STATES[3], STATES[1]]
+    await page.reload()
     await expect(page.getByRole('button', { name: '＋ Apply with an app' })).toBeDisabled()
-    await expect(page.getByText(/Your team uses all 5 places/)).toBeVisible()
+    await expect(page.getByText(/Your team already lists its app/)).toBeVisible()
   })
 
   await test.step('without uploads the form still works, with no picture controls', async () => {

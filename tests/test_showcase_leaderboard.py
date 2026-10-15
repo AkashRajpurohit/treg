@@ -1,7 +1,7 @@
 """The /showcase leaderboard: teams apply, staff review, the public board shows only what was
 approved and consented, and people upvote.
 
-What these pin: an owner or admin applies for their team, at most five entries per team; nothing is
+What these pin: an owner or admin applies for their team, one entry per team; nothing is
 public before approval, and approval publishes the pictures before the row points at them; an edit
 to a live entry leaves the live version until it is approved; a rejected application can be fixed
 and resubmitted; the public JSON never carries a team, an exact call count or money; the weekly fold
@@ -125,7 +125,7 @@ async def test_apply_review_approve_and_nothing_public_before(clients, store, st
     user, org_id = await _tim()
     _cookie(clients, user)
     teams = (await clients.get("/showcase/my-teams")).json()
-    assert any(t["id"] == org_id and t["limit"] == 5 for t in teams)
+    assert any(t["id"] == org_id and t["limit"] == 1 for t in teams)
     icon, shot = await _upload(clients, "showcase_icon"), await _upload(clients, "showcase_shot")
     applied = await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(icon_key=icon, shot_keys=[shot]))
     assert applied.status_code == 200, applied.text
@@ -197,8 +197,7 @@ async def test_a_rejected_app_cannot_return_to_review_past_the_limit(clients, st
     first = (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 0"))).json()
     rejected = (await clients.post(f"/admin/showcase/apps/{first['id']}/reject", headers=staff,
                                    json={"expected_version": first["version"], "reason": "No"})).json()
-    for i in range(1, 6):
-        assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name=f"App {i}"))).status_code == 200
+    assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 1"))).status_code == 200
     back = await clients.patch(f"/showcase/apps/{first['id']}", json={"expected_version": rejected["version"],
                                                                         "fields": fields(name="App 0 again")})
     assert back.status_code == 409
@@ -223,14 +222,14 @@ async def test_an_edit_previews_kept_pictures_from_the_public_side(clients, stor
     assert approved.status_code == 200 and approved.json()["live"]["name"] == "Renamed"
 
 
-async def test_five_apps_per_team_and_only_owners_or_admins_apply(clients, staff):
+async def test_one_app_per_team_and_only_owners_or_admins_apply(clients, staff):
     user, org_id = await _tim()
     _cookie(clients, user)
-    for i in range(5):
-        assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name=f"App {i}"))).status_code == 200
-    assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 6"))).status_code == 409
+    assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 1"))).status_code == 200
+    second = await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 2"))
+    assert second.status_code == 409 and "one app" in second.json()["detail"]
     assert (await clients.post(f"/admin/showcase/teams/{org_id}/apps", headers=staff,
-                               json={"fields": fields(name="Staff 6")})).status_code == 409
+                               json={"fields": fields(name="Staff 2")})).status_code == 409
     async with session_maker() as db:
         db.add(Org(name="Not mine", slug="not-mine"))
         await db.commit()

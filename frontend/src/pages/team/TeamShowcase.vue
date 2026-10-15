@@ -130,14 +130,14 @@ export default {
       </p>
     </div>
     <div v-if="!scClosed" class="sc-slots">
-      <span class="sub" style="margin:0">{{scUsed}} of {{MAX_APPS}} used</span>
+      <span class="sub" style="margin:0">One app per team</span>
       <button class="btn primary sm" :disabled="scFull || !scLoaded" @click="scNew">＋ Apply with an app</button>
     </div>
   </div>
 
   <p v-if="scClosed" class="sub">The showcase is not open on this registry.</p>
   <template v-else>
-    <p v-if="scFull" class="tut-notice" role="status" style="margin:10px 0 0">Your team uses all {{MAX_APPS}} places. Withdraw an entry to apply with another. Rejected entries do not count.</p>
+    <p v-if="scFull" class="tut-notice" role="status" style="margin:10px 0 0">Your team already lists its app. Withdraw it to apply with another. A rejected app does not count.</p>
     <div v-if="scErr" class="banner" role="alert" style="margin-top:10px">{{scErr}}</div>
     <div v-if="scMsg" class="tut-notice" role="status" style="margin-top:10px;display:flex;justify-content:space-between;gap:12px">
       <span>{{scMsg}}</span><button class="btn sm ico" aria-label="Dismiss" @click="scMsg=''">✕</button>
