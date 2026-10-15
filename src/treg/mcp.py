@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import inspect
 import json
 import logging
@@ -45,7 +46,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from typing import Annotated, Any, TypedDict
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, quote, urlsplit
 
 import httpx
 from mcp.server import MCPServer
@@ -1303,6 +1304,29 @@ async def call(endpoint_id: str, params: dict | list | None = None,
     )
 
 
+_IDEMPOTENCY_KEY_MAX = 200  # the server keeps this many characters (application/call/idempotency.py)
+
+
+def _header_idempotency_key(key: str) -> str:
+    """The caller's key as an HTTP header value.
+
+    A header value is ASCII, and the client's header block refused anything else, so a key built
+    from an accented keyword failed the whole tool call before any request. An ASCII key travels
+    unchanged, exactly as before. A non-ASCII key is percent-encoded as UTF-8: deterministic, so
+    repeating the same key still finds the stored answer. When the encoding outgrows what the server
+    keeps, a digest of the whole key stands in, so two long keys with a common prefix stay distinct.
+    """
+    if key.isascii():
+        return key[:_IDEMPOTENCY_KEY_MAX]
+    encoded = quote(key, safe=_HEADER_SAFE)
+    if len(encoded) <= _IDEMPOTENCY_KEY_MAX:
+        return encoded
+    return "sha256:" + hashlib.sha256(key.encode()).hexdigest()
+
+
+_HEADER_SAFE = "".join(chr(c) for c in range(0x20, 0x7F) if chr(c) != "%")
+
+
 @org_traffic.mcp_adapter("call")
 async def _call_impl(endpoint_id: str, params: dict | list | None = None,
                      method: str | None = None, idempotency_key: str | None = None,
@@ -1446,7 +1470,7 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
             # and never derived from the request: two identical searches an hour apart are new work,
             # not a retry, and a server-invented key would hand back the stale answer — a 24-hour
             # cache wearing an idempotency badge.
-            client.headers["Idempotency-Key"] = idempotency_key[:200]
+            client.headers["Idempotency-Key"] = _header_idempotency_key(idempotency_key)
         # The SAME route the CLI and the proxy use, so the tool ACL, deny rules, both daily caps,
         # the balance reserve and the settle all happen exactly once, in one place. params= is
         # only passed when there ARE pairs — see the inline-query gotcha above.
@@ -1602,7 +1626,7 @@ async def _call_media_impl(
         if inbound_meta:
             extra_headers["X-Treg-Meta"] = str(inbound_meta)
         if idempotency_key:
-            client.headers["Idempotency-Key"] = idempotency_key[:200]
+            client.headers["Idempotency-Key"] = _header_idempotency_key(idempotency_key)
         kw: dict[str, Any] = {"headers": extra_headers} if extra_headers else {}
         if isinstance(body, str):
             kw["content"] = body.encode()
