@@ -98,9 +98,14 @@ re-runs the server's `install.sh` to upgrade the CLI in place. A global **`--jso
 `main` like `--org`; both last one `main()` call, reset on entry and exit) makes the human-table commands (`org ls`, `agents ls`, `catalog` in all its forms)
 emit raw JSON instead — one stable contract for agents. On `call` (not `--await`) it prints one
 compact envelope, `{"result": <body>, "_treg": {http_status, call_id, charged_micro | reserved_micro,
-replay?, async?, hint?}}` (`_call_envelope`; text as a string, binary as base64), and suppresses the
-charge, hint and failure-diagnostic stderr lines: a script that merged the streams once discarded
-every result it had paid for. Exit status is unchanged (1 on HTTP >= 400).
+replay?, async?, hint?, treg_saturated?, retry_after_seconds?}}` (`_call_envelope`; text as a
+string, binary as base64), and suppresses the charge, hint and failure-diagnostic stderr lines: a
+script that merged the streams once discarded every result it had paid for. Exit status is
+unchanged (1 on HTTP >= 400).
+The failure-diagnostic line names whose answer a 4xx/5xx is from `X-Treg-Error`. treg's
+saturation 503 carries no `X-Treg-Error` (see [api](api.md)), so the CLI reads its typed
+`treg_saturated` body instead; a client that only checks the header blames the provider.
+Output and the CLI's own text files are UTF-8 on every console.
 **`TREG_CONFIG`** points the CLI at an alternate config file (CI/agents/tests; default
 `~/.treg/config.json`). `org use` validates the slug against `/orgs`, then gets that membership's
 active Default key before it saves either value. If that exchange fails, the previous team and token
