@@ -154,9 +154,11 @@ async def test_async_without_adapter_publishes_complete_folded_evidence(clients,
 async def test_async_hits_are_read_after_the_fold_cursor_passes_submission(clients, monkeypatch):
     """A mixed read folds immutable tasks but still sees terminal corrections on adapter tasks.
 
-    Losing verification later cannot erase already-recorded terminal evidence.
+    Phase one repairs buckets without switching the read path: even a reconciled async bucket
+    still reads live. Losing verification later cannot erase already-recorded terminal evidence.
     """
     from treg.domain.catalog import store as catalog_store
+    from treg.infra.catalog_stat_dirty import mark_dirty
 
     endpoint = "wiza.people.email.find"
     folded_endpoint = _async_without_adapter(monkeypatch)
@@ -165,6 +167,10 @@ async def test_async_hits_are_read_after_the_fold_cursor_passes_submission(clien
     row_ids = [await _record(endpoint, 200, 100, ago=timedelta(hours=1), cost=0)
                for _ in range(20)]
     assert (await catalog_stats.refresh(session_maker, now=_now()))["caught_up"]
+    async with session_maker() as db:
+        bucket = (await db.execute(select(EndpointDayStat).where(
+            EndpointDayStat.endpoint_id == endpoint))).scalar_one()
+        assert bucket.terminal_reconciled is True
     live_calls = []
     original_observed = stats.observed
 
@@ -186,7 +192,15 @@ async def test_async_hits_are_read_after_the_fold_cursor_passes_submission(clien
         for n, row in enumerate(rows):
             row.hit = n < 12
             db.add(row)
+        await mark_dirty(db, {(row.endpoint_id, row.created_at.strftime("%Y-%m-%d")) for row in rows})
         await db.commit()
+    repaired = await catalog_stats.refresh(session_maker, now=_now())
+    assert repaired["repaired"] == 1
+    async with session_maker() as db:
+        bucket = (await db.execute(select(EndpointDayStat).where(
+            EndpointDayStat.endpoint_id == endpoint))).scalar_one()
+        assert bucket.terminal_reconciled is True
+        assert bucket.hit_decided == 20 and bucket.hits == 12
     catalog = catalog_store.load()
     monkeypatch.setitem(catalog.adapters, endpoint,
                         replace(catalog.adapters[endpoint], verified=False, miss=""))
@@ -332,7 +346,8 @@ async def test_a_dead_worker_sends_the_reader_back_to_the_live_aggregate(clients
 
 async def test_an_empty_audit_table_caught_up_immediately(clients):
     result = await catalog_stats.refresh(session_maker, now=_now())
-    assert result == {"rows": 0, "buckets": 0, "caught_up": True, "cursor": 0}
+    assert result == {"rows": 0, "buckets": 0, "caught_up": True, "cursor": 0,
+                      "repaired": 0, "repair_failed": 0, "repair_pending": 0}
     folded = await PostgresEndpointObservationReader(session_maker).get_many([EP])
     assert folded[EP]["samples"] == 0 and folded[EP]["ok_rate"] is None
 

@@ -35,6 +35,8 @@ sources:
   - src/treg/alembic/versions/0035_default_key_generation.py
   - src/treg/alembic/versions/0036_activity_key_indexes.py
   - src/treg/alembic/versions/0038_endpoint_day_stats.py
+  - src/treg/alembic/versions/0074_endpoint_stat_dirty.py
+  - src/treg/infra/catalog_stat_dirty.py
   - src/treg/maintenance.py
   - src/treg/web/sitetrack.js
   - src/treg/models.py
@@ -316,15 +318,27 @@ uses this metadata, never the encrypted token's shape.
   here queues every other query and the API pool empties into `503 treg_saturated` - see
   [deploy](../ops/deploy.md) § Database pools. The table has no retention sweep yet, so it only grows.
 
-  **Nothing on the request path aggregates it any more.** The two readers that did, the catalog's
-  observed reliability and the Arena's rolling insights, are scheduled `treg-worker` commands
-  that walk it incrementally by primary key. Revision 0038 adds their catalog half:
+  **The catalog and Arena have scheduled read models.** Their `treg-worker` commands walk audit
+  rows incrementally by primary key. The catalog's process cache still starts background live
+  aggregation for async endpoints with result adapters, and falls back to it when its worker is
+  absent, has not caught up or is stale. Revision 0038 adds the catalog's daily read model:
   `EndpointDayStat` (one row per endpoint per UTC day: counts, newest success, hit tallies and a
   bounded latency sample, plus `verdicts`, calls per verdict word, added nullable by `0066`;
   primary key `(endpoint_id, day)`, indexed by `day` for the window prune)
   and the single-row `EndpointStatCursor` (`cursor_id`, the `created_at` watermark and
-  `caught_up_at`, which is what lets the reader fall back to the live aggregate until the worker
-  has caught up). `application/catalog_stats.py` is the only writer of both; see
+  `caught_up_at`, which selects folded observations after the worker has caught up).
+  `application/catalog_stats.py` is the only writer of both. Revision `0074` adds
+  `terminal_reconciled` (false for legacy buckets) and `EndpointStatDirty`: primary key
+  `(endpoint_id, day)`, monotonically incremented `revision`, first invalidation `queued_at` and
+  indexed retry scheduling `(retry_at, endpoint_id, day)`. `infra/catalog_stat_dirty.py` owns all
+  marker writes, without committing: audit marks the original day in the same transaction as its
+  terminal update; the worker replaces a whole bucket through its fold cursor and acknowledges
+  only an unchanged revision. Existing async/result-adapter buckets are queued from the summary
+  table for historical correction. This first stage changes background maintenance only: the
+  current reader ignores `terminal_reconciled` and the dirty queue, retains its live reads and
+  fallback behavior, and does not yet gain a slow-query reduction. A separate reader PR must
+  validate the corrected evidence before switching async observations to the day buckets.
+  These tables are optional analytics and never determine a money transaction. See
   [catalog](catalog.md) § Choosing between providers.
 
   **`LedgerEntry` is the other one, and it was the larger.** It is append-only and never pruned

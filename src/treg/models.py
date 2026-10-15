@@ -2090,13 +2090,37 @@ class EndpointDayStat(SQLModel, table=True):
     # Calls per contract verdict word (`CallRecord.verdict`), `{"valid": 31, "catch_all": 4}`.
     # NULL on a bucket folded before the column existed; read as empty.
     verdicts: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # Legacy async buckets need a full recount before their mutable terminal evidence is read.
+    terminal_reconciled: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default=text("false")))
+
+
+class EndpointStatDirty(SQLModel, table=True):
+    """An audit-corrected endpoint/day whose reliability bucket needs a recount.
+
+    Audit marks the actual submission day in the same transaction as its terminal correction.
+    The catalog worker replaces that day's folded evidence and acknowledges only the revision
+    it read, so another correction during a recount remains queued. This is lossy analytics,
+    separate from the durable task status and money transaction.
+    """
+
+    __table_args__ = (Index("ix_endpointstatdirty_retry_at_endpoint_id_day",
+                            "retry_at", "endpoint_id", "day"),)
+
+    endpoint_id: str = Field(primary_key=True)
+    day: str = Field(primary_key=True)
+    revision: int = Field(
+        default=1, sa_column=Column(BigInteger, nullable=False, server_default=text("1")))
+    queued_at: NaiveUTC = Field(default_factory=_now)
+    retry_at: NaiveUTC = Field(default_factory=_now)
 
 
 class EndpointStatCursor(SQLModel, table=True):
     """Where `application.catalog_stats.refresh` has got to in `callrecord`, and whether it has
     caught up. One row (`id = "callrecord"`). `caught_up_at` is NULL until a run drains the backlog,
-    and the catalog keeps computing observations live until then, so a fresh install or a
-    deployment that has not scheduled the worker yet behaves exactly as before.
+    and the catalog keeps computing observations live until then. A stale worker also restores
+    live fallback; async endpoints with result adapters retain live reads even after catch-up.
+    Background terminal repair does not change that reader selection in this stage.
     """
 
     id: str = Field(primary_key=True)
