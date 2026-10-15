@@ -1,12 +1,9 @@
 """Fold `callrecord` into per-endpoint, per-day reliability buckets (`EndpointDayStat`).
 
-Why this exists: the catalog's "does it still work, how fast" numbers can require a thirty-day
-aggregate over the audit table (`domain.catalog.stats.observed`) whenever a web process's cache
-expires, and again from cold after a deploy. The `treg-worker catalog stats` cron folds new audit
-evidence incrementally so eligible endpoints read small day buckets. Async endpoints with result
-adapters still read observations live, and an absent, incomplete or stale worker still triggers
-live fallback. This stage adds background correction without changing that reader or cache policy;
-it does not remove the remaining slow aggregate.
+Why this exists: the catalog's "does it still work, how fast" numbers were computed on demand by
+`domain.catalog.stats.observed`, a thirty-day aggregate over the audit table run by every web
+process whenever its cache expired or started cold. The `treg-worker catalog stats` cron consumes
+that evidence incrementally, and cache refreshes read only bounded UTC day buckets per endpoint.
 
 How it walks the table: by primary key from a persisted cursor, never by `created_at` (the audit
 table has no bare `created_at` index, and does not need one for this). Rows younger than `LAG`
@@ -16,14 +13,13 @@ always younger than the lag and everything from the first young row onward is de
 lossy by design (`audit.py` sheds rows under load), so the one remaining race, a row queued for
 longer than the lag before its insert, only ever undercounts a day by a row it already might have
 lost. The first run starts at the id of the first row inside the window, found by bisection on
-the primary key so the backfill never scans a row older than the window. Until a run catches up,
-readers retain their existing live aggregation.
+the primary key so the backfill never scans a row older than the window. Readers use only complete,
+recent folds; an unavailable worker never authorizes a live audit-table aggregate.
 
 Late terminal corrections are coalesced in `EndpointStatDirty`. Each repair replaces one UTC day
 bucket, under the same cursor lock as the append fold, and includes only already-folded ids.
-Old mutable buckets are seeded for repair, and `terminal_reconciled` records their readiness for a
-separate reader change. The current reader ignores that flag and the dirty queue. Repairs have
-both per-bucket and per-pass budgets; a failed bucket remains queued with retry backoff.
+Old mutable buckets are seeded for repair before readers trust their terminal evidence. Repairs
+have both per-bucket and per-pass budgets; a failed bucket remains queued with retry backoff.
 
 This module is the only runtime writer of `endpointdaystat` and `endpointstatcursor`. Audit marks
 dirty buckets; this worker acknowledges them after replacement, in the same transaction.
@@ -236,6 +232,8 @@ async def _repair_bucket(session_factory, endpoint_id: str, day: str, at: dateti
         empty_fails = catalog_store.empty_is_failure(endpoint_id)
         # The endpoint/time pair bounds the existing index. Do not lock source rows: audit owns
         # their corrections and must not wait for this scan. Streaming bounds Python memory.
+        # Bound retained correction age by this source snapshot, not the earlier pass timestamp.
+        scanned_at = utcnow_naive()
         rows = await db.stream(select(
             CallRecord.status_code, CallRecord.created_at, CallRecord.duration_ms,
             CallRecord.hit, CallRecord.cost_observed_micro, CallRecord.refused_by, CallRecord.verdict,
@@ -257,7 +255,7 @@ async def _repair_bucket(session_factory, endpoint_id: str, day: str, at: dateti
         await _store_tally(db, endpoint_id, day, tally, at, terminal_reconciled=True)
         # UPDATE + mark is one audit transaction. A marker changed while the source scan ran is
         # retained; an upsert waiting on this DELETE recreates it after our commit.
-        await catalog_stat_dirty.acknowledge(db, endpoint_id, day, revision)
+        await catalog_stat_dirty.acknowledge(db, endpoint_id, day, revision, scanned_at=scanned_at)
         await db.commit()
     return True
 
@@ -341,8 +339,7 @@ async def refresh(session_factory=session_maker, *, max_rows: int = 500_000,
 
     Corrections seed legacy mutable buckets and replace marked days after the append pass.
     Their count, elapsed-time and per-bucket budgets do not bound append folding or queue
-    maintenance. Reconciliation readiness is recorded for a separate reader change; this stage
-    leaves the current async live reads, stale-worker fallback and process cache unchanged.
+    maintenance. Readers require reconciled terminal evidence before publishing async summaries.
     """
     if max_dirty_buckets < 0 or max_repair_seconds < 0 or bucket_timeout_s <= 0:
         raise ValueError("catalog repair budgets must be nonnegative, with a positive bucket timeout")

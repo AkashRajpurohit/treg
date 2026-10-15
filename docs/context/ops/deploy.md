@@ -513,19 +513,18 @@ without importing the heavy database stack into the light `treg` CLI.
   repairs. The elapsed-time budget excludes append folding and queue maintenance. Each failed
   bucket rolls back and retries after a delay; JSON results include `repaired`, `repair_failed` and
   `repair_pending`. A persistently failing bucket must be investigated rather than retried with
-  unlimited time. This first stage preserves the current observation reader and cache: async
-  endpoints with result adapters still refresh live, and a missing, incomplete or stale worker
-  still causes live fallback. It prepares corrected summaries without reducing that slow SQL.
+  unlimited time. Web cache refreshes read only summaries: missing, incomplete or stale worker
+  evidence gives unmeasured reliability, with existing cache entries expiring normally.
   Apply additive revision `0074` before the new writers. Retire all old audit-producing processes
   before starting historical correction, including Web processes and in-flight `asynctasks settle`
   jobs; wait for their work to finish, and require new writers for subsequent jobs. Web shutdown drains
   audit; settlement jobs do not guarantee an audit drain on exit, and audit remains best effort.
   The updated worker automatically queues legacy async buckets from `endpointdaystat` and repairs
   them across bounded runs. Setting a repair budget to zero pauses recounts only; ordinary folding
-  still runs and can mark newly created buckets reconciled. A separate second-stage PR must
-  validate corrected summaries and confirm no old writer remains before changing reader source
-  selection or fallback behavior. If old writers run after reconciliation, their unmarked changes
-  require another historical correction before that switch.
+  still runs and can mark newly created buckets reconciled. Async observations remain unavailable
+  until their applicable buckets are reconciled; no live aggregate fills this gap. If old writers
+  run after reconciliation, their unmarked changes require another historical correction before
+  trusting the summaries.
 - `treg-worker catalog requeue-async-stats` previews the existing mutable async day buckets in the
   current UTC observation window. After all earlier writers have stopped, run it once with
   `--apply` to reset their reconciliation flags and enqueue full repairs atomically. Save the JSON
@@ -545,8 +544,31 @@ without importing the heavy database stack into the light `treg` CLI.
   any target is pending or missing, and 2 for an invalid manifest. Expired targets are listed as
   `aged_out` rather than claimed as repaired. A default preview cannot be used as completion
   evidence. Appending new calls cannot satisfy a reset flag; only a full repair restores it.
-  Repeating `--apply` starts another requeue, so do not add it to a recurring schedule. Leave the
-  current reader in place until target coverage, writer versions and worker health are verified.
+  Repeating `--apply` starts another requeue, so do not add it to a recurring schedule. Active-day
+  buckets can return to `pending` after reconciliation because new terminal results enqueue more
+  corrections. That status combines unreconciled buckets and already-reconciled buckets with a
+  marker. Initial repair coverage, writer versions and worker health must be verified before
+  switching a reader; fresh same-day markers do not by themselves mean the initial repair failed.
+  For the summary-only reader cutover, deploy the worker with successful-repair age advancement
+  first and verify a successful repair pass, then deploy the Web reader. This change requires no
+  migration or scheduled-command change. A retained marker can be normal on an active bucket:
+  successful full repair advances its age bound to the source scan start, while failed or rolled
+  back repairs leave it aging. Check `caught_up`, `repair_failed`, cursor age and marker age;
+  `repair_pending > 0` alone does not indicate failure.
+
+  The reader logs `endpoint stats fold unavailable` when it cannot publish trustworthy evidence.
+  Consider a sustained-warning alert, scoped to the Web service, such as the following Loki
+  condition with a ten-minute pending period (replace the selector with your service label):
+
+  ```logql
+  sum(rate({service_name="<web-service>"} |= "endpoint stats fold unavailable" [5m])) > 0
+  ```
+
+  Correlate this with repair failures and worker lag; it is an optional-statistics warning, not
+  a failed provider call. This is alerting guidance, not a provisioned alert rule. There is no
+  reader feature flag or live-query fallback. Rollback requires redeploying the previous known
+  working Web build, which may restore expensive live aggregates; keep the audit writers and
+  statistics worker running. No schema downgrade is required.
 - `treg-worker spend rollup` folds new ledger settle entries into per-key, per-tool, per-day spend
   (`--max-rows`, default 50,000, bounds one pass; schedule it every few minutes, after the web
   service runs a build with revision 0070). It reads the primary database in small batches, and
