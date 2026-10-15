@@ -423,8 +423,7 @@ def _show_failure_diagnostics(resp: httpx.Response) -> None:
     whose = "the provider answered; treg relayed it unchanged" if relayed else (
         "treg refused the call" if path.startswith("/call/") else "treg answered")
     if saturated:
-        # treg's own capacity, answered without X-Treg-Error (bootstrap_handlers._pool_saturated).
-        # Called "the provider answered", agents dropped a healthy provider instead of waiting.
+        # Saturation carries no X-Treg-Error by design (bootstrap_handlers._pool_saturated).
         wait = headers.get("Retry-After")
         whose = ("treg is overloaded, not the provider; retry "
                  + (f"in {wait}s" if wait else "in a moment"))
@@ -2600,8 +2599,7 @@ def _show_call_response(response: httpx.Response) -> None:
 
 
 def _data_body(data: str | None) -> bytes | None:
-    """The `--data` body. `@path` reads the file and `@-` reads stdin, as in curl: `--data @req.json`
-    used to send the literal text `@req.json`, and the provider's 4xx blamed the request."""
+    """The `--data` body. `@path` reads the file and `@-` reads stdin, as in curl."""
     if not data:
         return None
     if not data.startswith("@"):
@@ -2657,8 +2655,7 @@ def cmd_call(args, cfg) -> None:
             json.loads(content)
             ctype = "application/json"
         except ValueError:
-            # PowerShell strips the inner quotes of '{"a":1}' before treg sees it, so the upstream
-            # got `{a:1}` with no content type and answered with a 4xx that blamed the request.
+            # PowerShell strips the inner quotes of '{"a":1}', so treg receives `{a:1}`.
             if not args.file and not _JSON_OVERRIDE and content.lstrip()[:1] in (b"{", b"["):
                 print("treg: warning: --data looks like JSON but does not parse, so it is sent as-is "
                       "with no content type (a shell may have stripped its quotes; "
@@ -2957,7 +2954,7 @@ def _run_helper(tool, user_args, cfg) -> None:
             env["HOME"] = fsjail_dir      # tool caches land in the private scratch, not a readable HOME
             env["TMPDIR"] = fsjail_dir + "/"
             prof = os.path.join(fsjail_dir, "profile.sb")
-            Path(prof).write_text(fsjail.macos_profile(fsjail_dir))
+            Path(prof).write_text(fsjail.macos_profile(fsjail_dir), encoding="utf-8")
             cmd = fsjail.wrap_macos(cmd, prof)
         else:
             print("  ! --fs-jail is enforced on macOS only for now; running without it", file=sys.stderr)
@@ -3162,19 +3159,19 @@ def _install_egress(registry_url: str | None) -> None:
         return
     os.makedirs("/etc/treg-run", exist_ok=True)
     if sys.platform == "darwin":
-        Path("/etc/treg-run/egress.pf").write_text(egress.pf_ruleset(ips, _RUN_USER))
+        Path("/etc/treg-run/egress.pf").write_text(egress.pf_ruleset(ips, _RUN_USER), encoding="utf-8")
         # A root-owned loader that re-applies Apple's ruleset + our per-uid rules (pf is last-match; our
         # `quick` user rules take effect without disturbing anyone else's traffic).
-        Path(_EGRESS_LOADER).write_text("#!/bin/sh\ncat /etc/pf.conf /etc/treg-run/egress.pf | pfctl -f -\n")
+        Path(_EGRESS_LOADER).write_text("#!/bin/sh\ncat /etc/pf.conf /etc/treg-run/egress.pf | pfctl -f -\n", encoding="utf-8")
         os.chmod(_EGRESS_LOADER, 0o755)
         subprocess.run([_EGRESS_LOADER], capture_output=True)  # enforce now
         plist = "/Library/LaunchDaemons/dev.treg.egress.plist"
-        Path(plist).write_text(_EGRESS_PLIST.format(loader=_EGRESS_LOADER))
+        Path(plist).write_text(_EGRESS_PLIST.format(loader=_EGRESS_LOADER), encoding="utf-8")
         subprocess.run(["launchctl", "load", "-w", plist], capture_output=True)  # re-apply at boot
         print(f"  egress: pf allow-list active — {_RUN_USER} may reach {len(hosts)} host(s), all else dropped")
     else:  # linux
         uid = subprocess.run(["id", "-u", _RUN_USER], capture_output=True, text=True).stdout.strip() or "0"
-        Path("/etc/treg-run/egress.nft").write_text(egress.nft_ruleset(ips, int(uid)))
+        Path("/etc/treg-run/egress.nft").write_text(egress.nft_ruleset(ips, int(uid)), encoding="utf-8")
         subprocess.run(["nft", "-f", "/etc/treg-run/egress.nft"], capture_output=True)
         print(f"  egress: nftables allow-list active — {_RUN_USER} may reach {len(hosts)} host(s), all else dropped")
         print("    (to persist across reboot, load /etc/treg-run/egress.nft from your nftables service)")
@@ -3243,7 +3240,7 @@ def cmd_setup_local_run(args, cfg) -> None:
     proof = args.run_proof or os.environ.get("TREG_RUN_PROOF") or ""
     if proof:
         os.makedirs(os.path.dirname(_RUN_PROOF_PATH), exist_ok=True)
-        Path(_RUN_PROOF_PATH).write_text(proof)
+        Path(_RUN_PROOF_PATH).write_text(proof, encoding="utf-8")
         subprocess.run(["chown", f"{_RUN_USER}:{_RUN_USER}", _RUN_PROOF_PATH], check=True)  # user:group (macOS-safe)
         os.chmod(_RUN_PROOF_PATH, 0o400)  # only treg-run (and root) can read it; the member cannot
         print(f"installed runner proof at {_RUN_PROOF_PATH} (shared-key local runs enabled)")
@@ -3256,7 +3253,7 @@ def cmd_setup_local_run(args, cfg) -> None:
     Path(_RUNNER_PATH).write_text(
         '#!/bin/sh\nexport HOME=/tmp\n'
         f'[ -r {_RUN_PROOF_PATH} ] && export TREG_RUN_PROOF="$(cat {_RUN_PROOF_PATH})"\n'
-        f'exec "{treg_bin}" __run-helper "$@"\n')
+        f'exec "{treg_bin}" __run-helper "$@"\n', encoding="utf-8")
     os.chmod(_RUNNER_PATH, 0o755)  # we are root -> root-owned; the member cannot modify it
     print(f"installed runner at {_RUNNER_PATH}")
 
@@ -3266,7 +3263,7 @@ def cmd_setup_local_run(args, cfg) -> None:
             f'{member} ALL=({_RUN_USER}) NOPASSWD: {_RUNNER_PATH}\n')
     os.makedirs("/etc/sudoers.d", exist_ok=True)  # present on Linux; on macOS it's the @includedir target
     tmp = "/etc/sudoers.d/.treg-run.tmp"
-    Path(tmp).write_text(rule)
+    Path(tmp).write_text(rule, encoding="utf-8")
     os.chmod(tmp, 0o440)
     if subprocess.run(["visudo", "-cf", tmp], capture_output=True).returncode != 0:
         os.unlink(tmp)
@@ -5502,11 +5499,11 @@ def _hub_read_folder(path: str) -> dict:
     if (folder / "check.json").is_file():
         body["check"] = json.loads((folder / "check.json").read_text(encoding="utf-8"))
     if (folder / "README.md").is_file():
-        body["readme"] = (folder / "README.md").read_text()
+        body["readme"] = (folder / "README.md").read_text(encoding="utf-8")
     if (folder / "run.js").is_file():
-        body["script"] = (folder / "run.js").read_text()
+        body["script"] = (folder / "run.js").read_text(encoding="utf-8")
     if (folder / "data.csv").is_file():
-        body["data"] = (folder / "data.csv").read_text()    # the maker's uploaded CSV: ctx.data in the script
+        body["data"] = (folder / "data.csv").read_text(encoding="utf-8")    # the maker's uploaded CSV: ctx.data in the script
     return body
 
 
@@ -5609,14 +5606,14 @@ def cmd_hub_init(args, cfg) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     skeleton = dict(_HUB_SCRIPT_SKELETON if args.script else _HUB_STEPS_SKELETON)
     skeleton["name"] = name
-    (folder / "recipe.json").write_text(json.dumps(skeleton, indent=2) + "\n")
+    (folder / "recipe.json").write_text(json.dumps(skeleton, indent=2) + "\n", encoding="utf-8")
     if args.script:
-        (folder / "run.js").write_text(_HUB_RUN_JS)
+        (folder / "run.js").write_text(_HUB_RUN_JS, encoding="utf-8")
         check = {"inputs": {"query": "example query", "limit": 3}, "fields": ["items", "count"]}
     else:
         check = {"inputs": {"query": "example query", "limit": 2}, "fields": ["items"]}
-    (folder / "check.json").write_text(json.dumps(check, indent=2) + "\n")
-    (folder / "README.md").write_text(_HUB_README.format(name=name))
+    (folder / "check.json").write_text(json.dumps(check, indent=2) + "\n", encoding="utf-8")
+    (folder / "README.md").write_text(_HUB_README.format(name=name), encoding="utf-8")
     _section(f"① New hub tool: {name}")
     for f in HUB_FILES:
         if (folder / f).exists():
@@ -6187,7 +6184,7 @@ def _byo_body(args) -> dict:
     if not args.name:
         sys.exit("a name is required when bringing your own client secret")
     try:
-        cs = json.loads(Path(args.client_secret).read_text())
+        cs = json.loads(Path(args.client_secret).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         sys.exit(f"could not read client-secret JSON {args.client_secret!r}: {exc}")
     block = cs.get("installed") or cs.get("web") or cs
@@ -7256,10 +7253,9 @@ def _subcommands(parser) -> set[str]:
 
 def _utf8_stdio() -> None:
     """Write stdout and stderr as UTF-8 whatever the console's code page. A Windows pipe or a Git
-    Bash terminal reports cp1252 (or cp949, GBK), and the first `●` of `catalog search`, `✓` of
-    `login` or non-Latin character in a provider's answer raised UnicodeEncodeError — for `call`,
-    after the charge, so the paid answer was lost. A real Windows console is already UTF-8 (PEP 528)
-    and is left alone; `backslashreplace` keeps a lone surrogate from raising instead."""
+    Bash terminal reports cp1252 (or cp949, GBK), where any non-ASCII output raises. A real Windows
+    console is already UTF-8 (PEP 528) and is left alone; `backslashreplace` keeps a lone surrogate
+    from raising."""
     for stream in (sys.stdout, sys.stderr):
         encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "").replace("_", "")
         if encoding != "utf8" and hasattr(stream, "reconfigure"):

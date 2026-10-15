@@ -3,6 +3,8 @@ the literal text, a body mangled by shell quoting went out silently, and treg's 
 was called the provider's answer. Driven through `main()`."""
 import io
 import json
+import os
+import subprocess
 import sys
 
 import httpx
@@ -111,3 +113,16 @@ def test_non_utf8_console_gets_utf8_instead_of_a_crash(monkeypatch):
     cli.main(["--json", "call", "x.search"])
     console.flush()
     assert json.loads(raw.getvalue().decode("utf-8"))["result"] == {"name": "株式会社 ●"}
+
+
+def test_hub_folder_reads_as_utf8_under_a_non_utf8_locale(tmp_path):
+    # A locale whose default encoding is not UTF-8 (here ASCII, on Windows cp1252).
+    for name, text in {"recipe.json": "{}", "README.md": "# 名片 ●", "run.js": "// é", "data.csv": "名,值"}.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    env = {**os.environ, "LC_ALL": "C", "LANG": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
+    code = ("import json, sys; from treg import cli; "
+            "print(json.dumps(cli._hub_read_folder(sys.argv[1]), ensure_ascii=True))")
+    out = subprocess.run([sys.executable, "-c", code, str(tmp_path)], env=env,
+                         capture_output=True, text=True, check=True).stdout
+    body = json.loads(out)
+    assert (body["readme"], body["script"], body["data"]) == ("# 名片 ●", "// é", "名,值")

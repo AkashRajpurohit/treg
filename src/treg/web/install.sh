@@ -86,7 +86,7 @@ fi
 # MCP server into every supported agent, header-authed. Both are best-effort — a failure here never
 # fails the install, since the CLI + skill are already in place.
 if [ -n "$TOKEN" ]; then
-  # Keep login's stderr: a crash after the token was saved used to read as "did not verify".
+  # Show login's own error: it can fail after the token was accepted.
   if LOGIN_ERR=$(treg login --token "$TOKEN" 2>&1 >/dev/null); then
     printf '\033[32m✓\033[0m Signed in.\n'
     treg mcp install 2>/dev/null || true
