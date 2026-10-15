@@ -417,10 +417,6 @@ ROLE_STARTUP_CHECKS: dict[AppRole, tuple[str, ...]] = {
 
 _STATIC_ANCHOR = ("/auth/cli-token", ("GET",), "auth_cli_token")
 
-# Install a plain shared default before MCP can install its wrapping RichHandler.
-# basicConfig preserves host-supplied handlers/levels; module loggers inherit them.
-logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
-
 try:
     from . import mcp as _mcp
 except Exception:  # pragma: no cover - exercised by deploys without the optional dependency

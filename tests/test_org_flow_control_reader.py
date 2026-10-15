@@ -12,6 +12,15 @@ import pytest
 from treg.infra import org_flow_control as flow
 
 
+@pytest.fixture(autouse=True)
+def capture_flow_logs(caplog):
+    flow.log.addHandler(caplog.handler)
+    try:
+        yield
+    finally:
+        flow.log.removeHandler(caplog.handler)
+
+
 def payload(org_id=42, version=1, pause_until=None, **config):
     return json.dumps({"org_id": org_id, "version": version, "config": {
         "schema_version": 1, "pause_until": pause_until,

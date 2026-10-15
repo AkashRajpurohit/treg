@@ -24,6 +24,11 @@ from test_routing import enrichment_on  # noqa: F401
 @pytest.fixture(autouse=True)
 def capture_traffic_logs(caplog):
     caplog.set_level(logging.INFO, logger=traffic.log.name)
+    traffic.log.addHandler(caplog.handler)
+    try:
+        yield
+    finally:
+        traffic.log.removeHandler(caplog.handler)
 
 
 @pytest.fixture
@@ -70,8 +75,8 @@ def test_percentile_nearest_rank_and_overflow(counter):
 
 def test_summary_is_one_parseable_physical_line(counter, monkeypatch, caplog):
     stream = io.StringIO()
-    handler = logging.StreamHandler(stream)
-    monkeypatch.setattr(logging.getLogger(), "handlers", [handler])
+    handler = next(handler for handler in traffic.log.handlers if handler is not caplog.handler)
+    monkeypatch.setattr(handler, "stream", stream)
     for org in range(10):
         counter.begin(org)
         counter.finish(org, 503, 65)
@@ -82,48 +87,103 @@ def test_summary_is_one_parseable_physical_line(counter, monkeypatch, caplog):
     assert len(json.loads(payload)["top"]) == 10
 
 
-@pytest.mark.parametrize("host_configured", [False, True])
-def test_app_shared_logging_keeps_single_lines_and_honors_host_configuration(host_configured):
+@pytest.mark.parametrize("configuration", ["mcp", "host", "managed"])
+def test_event_logging_preserves_root_configuration_and_single_lines(configuration):
     script = '''
 import io, json, logging, sys
 root = logging.getLogger()
-stream = io.StringIO()
-configured = sys.argv[1] == "True"
-if configured:
-    handler = logging.StreamHandler(stream)
-    handler.setFormatter(logging.Formatter("HOST:%(message)s"))
+stream, root_stream = io.StringIO(), io.StringIO()
+configuration = sys.argv[1]
+if configuration == "host":
+    handler = logging.StreamHandler(root_stream)
+    handler.setFormatter(logging.Formatter("HOST:%(levelname)s:%(message)s"))
+    handler.addFilter(logging.Filter())
     root.addHandler(handler)
     root.setLevel(logging.ERROR)
+elif configuration == "mcp":
+    from mcp.server import MCPServer
+    MCPServer(name="logging-baseline")
+else:
+    # A host may own logging and suppress SDK defaults, including leaving root unconfigured.
+    import mcp.server.mcpserver.server as server
+    server.configure_logging = lambda *args, **kwargs: None
+baseline = (root.level, list(root.handlers), [h.formatter for h in root.handlers],
+            [list(h.filters) for h in root.handlers],
+            logging.getLogger("unrelated.library").isEnabledFor(logging.INFO))
 from treg.api import app
 from treg.infra import org_flow_control as flow, org_traffic as traffic
-if configured:
-    assert root.handlers == [handler] and root.level == logging.ERROR
-else:
-    [handler] = root.handlers
+from treg.config import get_settings
+assert not get_settings().org_flow_control_enabled
+assert (root.level, list(root.handlers), [h.formatter for h in root.handlers],
+        [list(h.filters) for h in root.handlers],
+        logging.getLogger("unrelated.library").isEnabledFor(logging.INFO)) == baseline
+assert not flow.log.propagate and not traffic.log.propagate
+assert flow.log.level == traffic.log.level == logging.NOTSET
+for logger in (flow.log, traffic.log):
+    [handler] = logger.handlers
     assert type(handler) is logging.StreamHandler
     handler.setStream(stream)
-    assert root.level == logging.INFO
-assert not flow.log.handlers and not traffic.log.handlers
-assert flow.log.propagate and traffic.log.propagate
-assert flow.log.level == traffic.log.level == logging.NOTSET
-stream.seek(0)
-stream.truncate()
-root.setLevel(logging.WARNING)
+# Parent-level filtering remains effective without touching root or library loggers.
+logging.getLogger("treg").setLevel(logging.WARNING)
 flow._emit("org_flow_control_paused", 42, None)
 traffic.emit_snapshot()
 assert not stream.getvalue()
-root.setLevel(logging.INFO)
+logging.getLogger("treg").setLevel(logging.INFO)
 flow._emit("org_flow_control_paused", 42, "synthetic" * 100)
 traffic.emit_snapshot()
 lines = stream.getvalue().splitlines()
 assert len(lines) == 2
-for line in lines:
-    json.loads(line[line.index("{"):])
-if configured:
-    assert all(line.startswith("HOST:") for line in lines)
+assert json.loads(lines[0].split(" ", 1)[1])["call_ref"] == "synthetic" * 100
+assert lines[1].startswith("org_traffic_top ")
+json.loads(lines[1].split(" ", 1)[1])
+assert not root_stream.getvalue()  # No duplicate propagation to the root sink.
+assert root.level == baseline[0] and root.handlers == baseline[1]
 '''
-    result = subprocess.run([sys.executable, "-c", script, str(host_configured)],
+    result = subprocess.run([sys.executable, "-c", script, configuration],
                             capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("propagate", [False, True])
+def test_explicit_named_event_logger_configuration_is_preserved(monkeypatch, propagate):
+    from treg.infra.structured_logging import get_logger
+
+    stream = io.StringIO()
+    logger = logging.getLogger("treg.test_structured")
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("CUSTOM:%(message)s"))
+    handler.addFilter(lambda record: "allowed" in record.getMessage())
+    monkeypatch.setattr(logger, "handlers", [handler])
+    monkeypatch.setattr(logger, "level", logging.WARNING)
+    monkeypatch.setattr(logger, "propagate", propagate)
+    assert get_logger(logger.name) is logger
+    assert logger.handlers == [handler]
+    assert logger.level == logging.WARNING
+    assert logger.propagate is propagate
+    logger.info("allowed but below configured level")
+    logger.warning("filtered")
+    logger.warning("allowed")
+    assert stream.getvalue() == "CUSTOM:allowed\n"
+
+
+def test_event_logger_import_does_not_configure_bare_root():
+    script = '''
+import logging
+root = logging.getLogger()
+assert root.level == logging.WARNING and root.handlers == []
+from treg.infra import org_flow_control, org_traffic
+from treg.infra.structured_logging import get_logger
+assert root.level == logging.WARNING and root.handlers == []
+for logger in (org_flow_control.log, org_traffic.log):
+    assert get_logger(logger.name) is logger
+    assert len(logger.handlers) == 1
+    assert logger.level == logging.NOTSET
+    assert not logger.isEnabledFor(logging.INFO)
+    assert logger.isEnabledFor(logging.WARNING)
+assert not logging.getLogger("unrelated.library").isEnabledFor(logging.INFO)
+'''
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                            text=True, timeout=20)
     assert result.returncode == 0, result.stderr
 
 

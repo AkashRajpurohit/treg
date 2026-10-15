@@ -3,6 +3,7 @@ title: Published organization pause admission
 status: shipped
 sources:
   - src/treg/infra/org_flow_control.py
+  - src/treg/infra/structured_logging.py
   - src/treg/infra/kv.py
   - src/treg/config.py
   - src/treg/routers/call.py
@@ -105,7 +106,9 @@ process and does not cancel accepted work or erase Redis data.
 Single-line `org_flow_control_version_observed`, `org_flow_control_paused` and
 `org_flow_control_config_unavailable` records carry worker PID, trusted Org, call reference,
 version and `capability=pause`. They omit raw configuration, credentials and exception text.
-They use the shared application logging configuration and inherit its handlers and levels.
+They use the scoped plain handler described in [Org traffic logs](org-traffic.md), inherit
+existing logger levels and preserve explicitly configured named handlers. Root logging is not
+changed; root handler routing and filters do not apply to the default event sink.
 Pause events and refresh warnings are each limited to one per Org every five seconds; the next
 event reports `suppressed_since_last_log` for that event category, possibly spanning versions or
 failure reasons. Counts remaining when an entry is evicted or a worker exits are lost. Capacity

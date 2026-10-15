@@ -3,6 +3,7 @@ title: Process-local organization traffic logs
 status: shipped
 sources:
   - src/treg/infra/org_traffic.py
+  - src/treg/infra/structured_logging.py
   - src/treg/bootstrap.py
   - src/treg/routers/call.py
   - src/treg/routers/table.py
@@ -23,10 +24,14 @@ related:
 `/call/`, `/catalog/call/` and `/table/` request. The existing Uvicorn transport access log has no
 resolved Caller and is bypassed by MCP's in-process HTTP client; Render edge logs are outside the
 application's control. This deliberately small application log covers both HTTP and MCP roots.
-It uses shared application logging: bootstrap installs a plain root handler before the MCP SDK's
-wrapping console default. Host-configured handlers, filters and levels take precedence. Org traffic
-and pause loggers inherit them without private handlers or forced levels. The default formatter
-keeps each JSON record on one physical line; custom formatters should preserve that property.
+`structured_logging.get_logger` supplies a plain stderr handler only for the named
+`treg.org_traffic` and `treg.org_flow_control` event loggers when they have no configured handlers.
+Their levels remain inherited from `treg` or root; no root level, handler or format is changed.
+The default handlers prevent wrapping and duplicate propagation through MCP's root console
+formatter. Consequently root handler routing, filters and formatting do not apply to these two
+streams. Configure handlers and filters on the named loggers to customize their destinations;
+existing named handlers, levels and propagation settings are preserved. Custom formatters
+should keep each JSON record on one physical line.
 It contains a fixed surface/adapter label, worker PID, trusted `Caller.org_id` and `api_key_id`,
 server-generated `call_ref`, HTTP method, resolved tool/endpoint, status, outcome and handler duration.
 API key IDs come from the resolved Caller; sessions without a managed key and unresolved

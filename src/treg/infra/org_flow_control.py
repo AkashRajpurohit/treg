@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 from ..config import get_settings
 from . import kv
+from .structured_logging import get_logger
 
 _MAX_ORGS = 4096
 _MAX_BYTES = 32768
@@ -27,7 +28,7 @@ _MAX_INT = 2147483647
 _LOG_INTERVAL_S = 5
 _clock = time.monotonic
 _utcnow = lambda: datetime.now(timezone.utc)
-log = logging.getLogger("treg.org_flow_control")
+log = get_logger("treg.org_flow_control")
 
 
 class PauseRejected(Exception):
