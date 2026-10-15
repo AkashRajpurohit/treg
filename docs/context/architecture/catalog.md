@@ -2228,6 +2228,9 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   still decides among candidates that ignore equally much. `limit` never counts: it is a page size,
   not a narrowing filter, and the contract defaults it, so counting it demoted every limit-less
   child (a free-on-miss role finder fell behind a search that bills its empty pages).
+  A filter the adapter sends only through a one-argument transform (`dfs_location(country)`) counts as ignored
+  when the transform has no value for what was sent, so an unmappable country is reported and
+  ranked down like a missing geo field instead of becoming another country.
   **Coverage caveat**: of 16 `people.search` children, only icypeas maps geo today, so the rule
   currently floats one provider. lusha, crustdata, companyenrich and leadmagic all filter on
   location upstream — their adapters just do not map it. Until they do, the rule is doing more work
@@ -2284,11 +2287,16 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   bracket-safe target), crustdata/diffbot people.enrich (truncated examples), the `*.bulk` jobs
   (async), hunter multi-domain (masked rows).
 - **Filters reach providers, or say they did not (2026-08-29)**: `country` (ISO code) becomes a name
-  through `country_name` (`catalog/countries.json`, 249 rows generated from pycountry) for providers
+  through `country_name` (`catalog/countries.json`, generated from pycountry) for providers
   that filter on a location NAME (icypeas); `location` is a free-text pass-through ("London, United
   Kingdom", "Europe") for the same providers; a filter the caller sent that an adapter never mentions
   is listed on the attempt as `ignored_filters` — silently unapplied was the worst outcome (the bench
-  had post-filtered in the agent because of it). Bench re-run, recruiting 30: same icypeas rows as the
+  had post-filtered in the agent because of it). DataForSEO takes a location code: `dfs_location`
+  maps any ISO country (alpha-2, `uk` or a name) to its Google Ads geo target id, 2000 + the ISO
+  3166-1 numeric code (`catalog/country_numeric.json`, generated from pycountry), and returns
+  nothing for a value that names no country. It once knew a short list and sent the United States
+  for every other country, which answered a Thai volume question with US volumes, billed, with no
+  signal. Bench re-run, recruiting 30: same icypeas rows as the
   hand-written policy, one automatic fall-through, region briefs rescued by the pass-through.
 - **Routed DISCOVERY is a runtime switch (2026-08-29)**: `TREG_ROUTED_DISCOVERY=off` (default `on`)
   stops search leading with `treg.<capability>` and stops a routed parent riding in when a child

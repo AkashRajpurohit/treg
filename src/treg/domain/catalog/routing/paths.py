@@ -84,16 +84,14 @@ def length(items: Any) -> int | None:
     return len(items) if isinstance(items, (list, dict, str)) else None
 
 
-# The location table, in miniature (routing plan §1.1 names a full one as an R1 deliverable): the
-# countries the SEO providers are actually called for, mapped to each provider's own code.
-_DFS_LOCATION = {"us": 2840, "gb": 2826, "uk": 2826, "ca": 2124, "au": 2036, "de": 2276, "fr": 2250, "es": 2724,
-                 "it": 2380, "nl": 2528, "in": 2356, "br": 2076, "mx": 2484, "jp": 2392, "sg": 2702, "ie": 2372,
-                 "se": 2752, "ch": 2756, "at": 2040, "be": 2056, "pl": 2616, "pt": 2620, "nz": 2554, "za": 2710,
-                 "ae": 2784, "kr": 2410, "tr": 2792, "id": 2360, "ph": 2608, "vn": 2704}
-
-
-def dfs_location(country: Any) -> int:
-    return _DFS_LOCATION.get(str(country or "us").lower(), 2840)
+def dfs_location(country: Any) -> int | None:
+    """DataForSEO's location_code for a country: its country codes are Google Ads geo target ids,
+    2000 + the ISO 3166-1 numeric code (us 2840, gb 2826, ma 2504). Takes an alpha-2 code, `uk`, or
+    a country name. None for a value that names no country, so the adapter sends no location and
+    the plan reports `country` as ignored instead of asking about the United States."""
+    code = _country_code(country if country not in (None, "") else "us")
+    numeric = _table("country_numeric.json").get(code or "")
+    return 2000 + int(numeric) if numeric else None
 
 
 def seranking_source(country: Any) -> str:
@@ -233,21 +231,38 @@ def csv(v: Any) -> str | None:
     return ",".join(str(x) for x in v) if isinstance(v, list) else str(v)
 
 
-_COUNTRIES: dict[str, str] | None = None
+_TABLES: dict[str, dict[str, str]] = {}
+
+
+def _table(name: str) -> dict[str, str]:
+    """An ISO 3166 table keyed by lowercase alpha-2 code, generated from pycountry: `countries.json`
+    (common names), `country_numeric.json` (the numeric code)."""
+    if name not in _TABLES:
+        from pathlib import Path
+        _TABLES[name] = json.loads((Path(__file__).resolve().parents[3] / "catalog" / name).read_text())
+    return _TABLES[name]
+
+
+def _country_code(v: Any) -> str | None:
+    """`TH`, `th`, `Thailand` or `uk` -> `th`/`gb`; None when the value names no ISO country."""
+    if not isinstance(v, str) or not v.strip():
+        return None
+    key = v.strip().lower()
+    if key == "uk":
+        return "gb"
+    names = _table("countries.json")
+    if key in names:
+        return key
+    return next((code for code, name in names.items() if name.lower() == key), None)
 
 
 def country_name(v: Any) -> str | None:
     """`country_name('fr')` → 'France' — the ISO 3166 alpha-2 table (catalog/countries.json, generated
-    from pycountry, 249 rows, common names). Providers that filter on a location NAME (icypeas,
-    lusha, apollo) get this; code-taking providers keep the code. A name passes through."""
-    global _COUNTRIES
+    from pycountry, common names). Providers that filter on a location NAME (icypeas, lusha, apollo)
+    get this; code-taking providers keep the code. A name passes through."""
     if not isinstance(v, str) or not v.strip():
         return None
-    if _COUNTRIES is None:
-        import json
-        from pathlib import Path
-        _COUNTRIES = json.loads((Path(__file__).resolve().parents[3] / "catalog" / "countries.json").read_text())
-    return _COUNTRIES.get(v.strip().lower(), v if len(v) > 3 else None)
+    return _table("countries.json").get(v.strip().lower(), v if len(v) > 3 else None)
 
 
 def as_list(v: Any) -> Any:
