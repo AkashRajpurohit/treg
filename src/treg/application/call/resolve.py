@@ -1460,6 +1460,9 @@ def _apify_max_timeout() -> int:
     # Catalog rows pin timeout 90, so call_timeout_s must stay >= 120 or those rows refuse every call.
     return max(1, min(_APIFY_PLATFORM_MAX_TIMEOUT, get_settings().call_timeout_s - 30))
 _APIFY_PLATFORM_QUERY = frozenset({"maxTotalChargeUsd", "maxItems", "memory", "timeout"})
+_APOLLO_WEBHOOK_PARAMS = frozenset({
+    "reveal_phone_number", "webhook_url", "poll_only", "run_waterfall_email", "run_waterfall_phone",
+})
 _ASCII_INT = re.compile(r"[0-9]+")
 _ASCII_DECIMAL = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 
@@ -1569,6 +1572,20 @@ def _enforce_platform_request(ep: dict, body: bytes, headers=None, query=None) -
                                        "connect your own key for reveals",
                         },
                     )
+
+    if ep.get("id") == "apollo.people.enrich" and query is not None:
+        # These answer later at the caller's webhook, outside the response settlement reads, and
+        # the phone and waterfall reveals draw credits the 1-credit hold never covered.
+        for name, _ in query.multi_items():
+            if name in _APOLLO_WEBHOOK_PARAMS:
+                raise ResolutionFailed(
+                    "catalog_parameter_invalid", status_code=400, detail={
+                        "error": "catalog_parameter_invalid", "endpoint_id": ep["id"],
+                        "parameter": f"queryParams.{name}",
+                        "message": "Apollo phone, waterfall and webhook options are not available on "
+                                   "the shared key; connect your own key for them",
+                    },
+                )
 
     if ep.get("provider") == "octen" and ep.get("id") in _OCTEN_ENDPOINTS:
         from . import octen

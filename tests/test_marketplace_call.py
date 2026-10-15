@@ -2650,6 +2650,18 @@ def test_oceanio_platform_person_enrich_refuses_separately_billed_reveals(field)
     assert exc.value.detail['parameter'] == f'body.{field}'
 
 
+@pytest.mark.parametrize('name', ['reveal_phone_number', 'webhook_url', 'poll_only',
+                                  'run_waterfall_email', 'run_waterfall_phone'])
+def test_apollo_platform_person_enrich_refuses_webhook_channels(name):
+    ep = catalog_store.load().by_id['apollo.people.enrich']
+    call_resolution._enforce_platform_request(
+        ep, b'', query=call_resolution.QueryValues((('email', 'a@stripe.com'), ('reveal_personal_emails', 'true'))))
+    with pytest.raises(ResolutionFailed) as exc:
+        call_resolution._enforce_platform_request(
+            ep, b'', query=call_resolution.QueryValues((('email', 'a@stripe.com'), (name, 'false'))))
+    assert exc.value.detail['parameter'] == f'queryParams.{name}'
+
+
 @pytest.mark.parametrize('endpoint,credits,expected', [
     ('oceanio.companies.lookalike', 0.2, 16_200),
     ('oceanio.companies.search', 0, 0),
