@@ -262,6 +262,13 @@ Optional, and it is the caller's. Pass the same key when repeating a call whose 
 treg replays the stored response, does not reach the provider, and charges nothing, with
 `replayed: true` on the result.
 
+## Request-building tools refuse undeclared arguments
+
+The SDK's argument model ignores keys a tool does not declare. For `call`, `call_media`,
+`catalog_call_read` and `catalog_call_write` a dropped key is a wrong request (`data` instead of
+`body` sent an empty POST), so `_UnknownCallArguments`, a `tools/call` middleware on both surfaces,
+refuses it before anything is sent and names the accepted arguments. Advertised schemas are unchanged.
+
 ## `call` says when the overflow relay served it
 
 `/call/` discloses a relayed answer in `X-Treg-Served-Via`; an MCP client never sees headers, so

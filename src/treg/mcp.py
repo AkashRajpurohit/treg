@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import inspect
 import json
 import logging
 import os
@@ -168,6 +169,41 @@ class _StaticSurfaceCapabilities:
         return result
 
 
+class _UnknownCallArguments:
+    """Refuse an argument a request-building tool does not declare, naming the ones it does.
+
+    The SDK's argument model ignores undeclared keys, so `call(endpoint_id=..., data={...})` (the
+    CLI's flag name) dropped `data` and relayed a POST with an empty body: the provider answered
+    "POST Data Is Empty" and the agent retried blind. For a tool that BUILDS a request, a dropped
+    argument is a wrong request, so it is refused before anything is sent. Both surfaces: call
+    errors are shared behavior; the advertised tools and their schemas do not change.
+    """
+
+    def __init__(self, tools: dict[str, str]) -> None:
+        self._tools = tools  # tool name -> the module function that serves it
+
+    async def __call__(
+        self, ctx: ServerRequestContext[Any, Any], call_next: CallNext
+    ) -> HandlerResult:
+        params = ctx.params or {}
+        name = params.get("name")
+        arguments = params.get("arguments")
+        if ctx.method != "tools/call" or name not in self._tools or not isinstance(arguments, dict):
+            return await call_next(ctx)
+        accepted = [p for p in inspect.signature(globals()[self._tools[name]]).parameters if p != "ctx"]
+        unknown = sorted(set(arguments) - set(accepted))
+        if not unknown:
+            return await call_next(ctx)
+        refusal = {
+            "error": f"{name} does not take {', '.join(repr(u) for u in unknown)}; nothing was sent",
+            "hint": ("arguments are " + ", ".join(accepted) + ". The request body goes in `body` "
+                     "(or `params` for a POST), the query string in `query` (or `params` for a GET)"),
+            "endpoint_id": arguments.get("endpoint_id"),
+        }
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(refusal))],
+                              structured_content=refusal, is_error=True)
+
+
 _HUB_TOOL_NAMES = frozenset({"hub_create", "hub_update", "hub_mine"})
 
 # OpenAI's clients: ChatGPT and its plugin reviewer send `openai-mcp/...`, Codex `codex-mcp-client/...`.
@@ -291,7 +327,9 @@ mcp = MCPServer(
         "Wan) and voice), plus your team's own tools."
     ),
     instructions=f"{_BASE_INSTRUCTIONS} {_REVIEW_INSTRUCTION}",
-    middleware=[_StaticSurfaceCapabilities(), _HubToolsGate(), _OpenAIClientGate()],
+    middleware=[_StaticSurfaceCapabilities(),
+                _UnknownCallArguments({"call": "call", "call_media": "call_media"}),
+                _HubToolsGate(), _OpenAIClientGate()],
 )
 
 
@@ -1763,7 +1801,10 @@ directory_mcp = MCPServer(
         "several providers cover one job, catalog_get ranks them by measured success, speed and "
         "price; you pick."
     ),
-    middleware=[_StaticSurfaceCapabilities()],
+    middleware=[_StaticSurfaceCapabilities(), _UnknownCallArguments({
+        "catalog_call_read": "directory_catalog_call_read",
+        "catalog_call_write": "directory_catalog_call_write",
+    })],
 )
 
 # `MCPServer(...)` calls `logging.basicConfig(level="INFO")` (the library's default), so the HTTP
