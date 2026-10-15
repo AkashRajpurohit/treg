@@ -4,7 +4,7 @@ import logging
 from datetime import timedelta
 from urllib.parse import quote, unquote
 
-from sqlalchemy import inspect as sa_inspect, update
+from sqlalchemy import delete, inspect as sa_inspect, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -237,13 +237,31 @@ async def stash_ad_click(email: str, raw_cookie: str) -> None:
         logging.getLogger("treg").warning("ad click stash failed; sign-in continues")
 
 
+# Google accepts a click conversion for 90 days, and the `treg_ad` cookie lives as long.
+AD_CLICK_STASH_TTL = timedelta(days=90)
+
+
 async def _ad_cookie_for(db: AsyncSession, email: str, raw_cookie: str) -> str:
     if raw_cookie or not adsconv.enabled():
         return raw_cookie
     stash = await db.get(AdClickStash, email.strip().lower())
-    if stash is not None and stash.updated_at >= _utcnow_naive() - timedelta(days=90):
+    if stash is not None and stash.updated_at >= _utcnow_naive() - AD_CLICK_STASH_TTL:
         return stash.raw_cookie
     return ""
+
+
+async def _forget_ad_click(db: AsyncSession, email: str) -> None:
+    """The team now holds the click itself, so the email association has no further use."""
+    await db.execute(delete(AdClickStash).where(AdClickStash.email == email.strip().lower()))
+
+
+async def purge_expired_ad_clicks(*, session_factory=session_maker) -> dict:
+    """Delete stash rows past the lookup window; run daily by `treg-worker admin purge-ad-clicks`."""
+    async with session_factory() as db:
+        result = await db.execute(
+            delete(AdClickStash).where(AdClickStash.updated_at < _utcnow_naive() - AD_CLICK_STASH_TTL))
+        await db.commit()
+    return {"deleted": result.rowcount or 0}
 
 
 _UTM_FIELDS = ("utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_referrer")
@@ -330,6 +348,7 @@ async def register_user(
             # asyncpg rejects aware datetimes for this TIMESTAMP WITHOUT TIME ZONE column.
             org.ad_click_at = _utcnow_naive()
             db.add(org)
+            await _forget_ad_click(db, user.email)
         _stamp_utm(org, utm_cookie)
         db.add(org)
         try:
@@ -377,6 +396,7 @@ async def create_org(
                 # asyncpg rejects aware datetimes for this TIMESTAMP WITHOUT TIME ZONE column.
                 org.ad_click_at = _utcnow_naive()
                 db.add(org)
+                await _forget_ad_click(db, user.email)  # inside the loop: a rollback undoes it
             _stamp_utm(org, utm_cookie)
             db.add(org)
             try:

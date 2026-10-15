@@ -999,5 +999,6 @@ The PostgreSQL build still scans each table and uses I/O; no production build du
 `AdClickStash` (additive revision `0075`) is owned by `application.signup.stash_ad_click`.
 Its email primary key supplies uniqueness and indexed lookup; `raw_cookie` stores the encoded,
 length-capped click fields, and `created_at`/`updated_at` use naive UTC. Authentication routes
-submit successful email observations; cookie-less signup uses observations from the last 90 days.
-No cleanup job or analytics/audit emission is involved. See [ads conversions](ads-conversions.md).
+submit observations of proven emails; cookie-less signup uses observations from the last 90 days.
+Signup deletes the row once its team holds the click, and `treg-worker admin purge-ad-clicks`
+deletes rows past 90 days. No analytics or audit emission is involved. See [ads conversions](ads-conversions.md).

@@ -82,7 +82,9 @@ read-side Ads catalog calls (`oauth_providers.GOOGLE_ADS`), a separate credentia
    creation/update timestamps. An atomic upsert replaces the prior observation. Capture and lookup
    are disabled with `adsconv.enabled()`. `_ad_cookie_for` falls back to this first-party stash
    at both signup doors only when the request cookie is empty, and ignores observations older than
-   90 days. Rows are not periodically deleted; expiry limits lookup, not physical retention. This
+   90 days. A signup that stores a click on its team deletes that email's row in the same
+   transaction, and `treg-worker admin purge-ad-clicks` (schedule it daily) deletes rows whose
+   `updated_at` is past the 90-day window, so expiry limits retention as well as lookup. This
    association goes through neither audit nor analytics. Stash failures do not fail sign-in;
    the warning omits the email, cookie, and exception text (which could contain SQL parameters). Revision `0075` adds the table without a
    backfill or startup schema mutation. The privacy policy deliberately does not add a separate

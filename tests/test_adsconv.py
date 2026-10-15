@@ -1025,6 +1025,9 @@ async def test_signup_stash_fallback(clients, ads_enabled, door, cookie, age, ex
         if expected == 'LATEST':
             assert org.ad_click_id_type == 'gbraid'
             assert org.ad_landing == 'original'
+        # Once a team holds a click, the email association is deleted; an unused expired row
+        # waits for the purge.
+        assert (await db.get(AdClickStash, email) is None) == (expected is not None)
 
 
 async def test_login_redirect_preserves_click(clients):
@@ -1045,6 +1048,23 @@ async def test_stash_caps_fields_and_disabled_lookup(clients, ads_enabled, monke
         assert await _ad_cookie_for(db, 'ab@gmail.com', '') == ''
         monkeypatch.setattr(adsconv, 'enabled', lambda: False)
         assert await _ad_cookie_for(db, 'a.b+tag@gmail.com', '') == ''
+
+
+async def test_purge_deletes_only_expired_stash_rows(clients, ads_enabled):
+    from treg.application.signup import purge_expired_ad_clicks, stash_ad_click
+    from treg.models import AdClickStash
+    for email, age in (('fresh@example.com', 89), ('old@example.com', 91)):
+        await stash_ad_click(email, 'gclid|CLICK|landing')
+        async with session_maker() as db:
+            stash = await db.get(AdClickStash, email)
+            stash.updated_at = utcnow_naive() - timedelta(days=age)
+            db.add(stash)
+            await db.commit()
+    assert await purge_expired_ad_clicks() == {'deleted': 1}
+    async with session_maker() as db:
+        assert await db.get(AdClickStash, 'fresh@example.com') is not None
+        assert await db.get(AdClickStash, 'old@example.com') is None
+    assert await purge_expired_ad_clicks() == {'deleted': 0}
 
 
 async def test_stash_failure_does_not_break_signin(clients, ads_enabled, monkeypatch, caplog):
