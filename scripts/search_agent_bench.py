@@ -98,7 +98,7 @@ async def answer(case: Case, cat: store.Catalog, limit: int) -> Answer:
     r = await catalog_find.recall_with_meaning(case.q, cat, _provider_display)
     found = await catalog_find.answer_v2(case.q, r.cands, cat, _provider_display,
                                          timeout_s=float(get_settings().typesafe_timeout_s),
-                                         not_task=catalog_find.KEYWORD, keyword_rows=False)
+                                         not_task=catalog_find.KEYWORD, keyword_rows=False, focus=r.focus)
     served = catalog_search.serve(found, cat, limit, hub=[], steer=True)
     if served is None:
         rows, jobs = list(case.baseline_ids[:limit]), []

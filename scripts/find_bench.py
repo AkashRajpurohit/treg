@@ -238,7 +238,8 @@ class V2:
 
     async def answer(self, case: Case) -> Answer:
         cands, a = await self._recall(case)
-        found = await catalog_find.answer_v2(case.q, cands, self.cat, _provider_display)
+        found = await catalog_find.answer_v2(case.q, cands, self.cat, _provider_display,
+                                             focus=catalog_find.focus_of(case.q, self.cat))
         j = found.judgement
         a.verdict = found.verdict
         a.kept = [(c.unit.id, round(p, 3)) for c, p in found.kept]

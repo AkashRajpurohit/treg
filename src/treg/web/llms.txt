@@ -619,7 +619,8 @@ A small tool set, the same for every client:
     feedback         share a problem or suggestion (omit private information)
 
 `catalog_search` answers a described job with the endpoints that do it, every provider of that
-job ranked by measured success (a provider or platform name lists what it offers). Read its
+job ranked by measured success (a provider or platform name lists what it offers; a provider
+named with a task, "exa search", puts that provider's tools first). Read its
 `verdict`: `strong` means these do the job; `closest` means the nearest, read `catalog_get`
 before relying on one; `none` means the catalog has no tool for it, so file `catalog_request`
 instead of rephrasing; `keyword` means ranked by words alone. To see recently added tools, give

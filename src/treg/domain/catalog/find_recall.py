@@ -358,10 +358,12 @@ def fuse(*channels: tuple[Sequence[float], Sequence[float], bool]) -> list[int]:
 
 def recall(query: str, ix: Index, aliases: dict[str, list[str]], *,
            semantic: Sequence[float] | None = None, platform: str | None = None,
-           n_jobs: int = 25, n_delta: int = 10, n_raw: int = 10, n_plat: int = 8) -> list[Candidate]:
+           n_jobs: int = 25, n_delta: int = 10, n_raw: int = 10, n_plat: int = 8,
+           providers: frozenset[str] = frozenset()) -> list[Candidate]:
     """The units the judge reads for `query`: jobs, then representatives, then uncatalogued
     endpoints. `semantic` is one similarity per unit (None = that channel is off). `platform` keeps
-    one shelf's units only."""
+    one shelf's units only. `providers` are the ones the query named: their jobs take the first
+    seats and their uncatalogued endpoints come first."""
     raw_lex = lexical(query, ix, aliases)
     lex, lsrc = pooled(raw_lex, ix)
     channels = [(lex, raw_lex, False)]
@@ -375,11 +377,18 @@ def recall(query: str, ix: Index, aliases: dict[str, list[str]], *,
 
     named, _ = named_platforms(query_tokens(query), ix)
     jobs: list[int] = []
-    if named:
+    if providers:
         for i in order:
             if len(jobs) >= min(n_plat, n_jobs):
                 break
-            if ix.units[i].kind == JOB and ix.units[i].platform in named:
+            if ix.units[i].kind == JOB and providers & set(ix.units[i].providers):
+                jobs.append(i)
+    if named:
+        seats = min(len(jobs) + n_plat, n_jobs)
+        for i in order:
+            if len(jobs) >= seats:
+                break
+            if ix.units[i].kind == JOB and ix.units[i].platform in named and i not in jobs:
                 jobs.append(i)
     taken = set(jobs)
     for i in order:
@@ -398,7 +407,8 @@ def recall(query: str, ix: Index, aliases: dict[str, list[str]], *,
             if m is not None and m not in reps and (not platform or ix.units[m].platform == platform):
                 reps.append(m)
     reps = sorted(reps, key=lambda m: rank.get(m, 10 ** 9))[:n_delta]
-    raw = [i for i in order if ix.units[i].kind == ENDPOINT and not ix.units[i].cap][:n_raw]
+    raw = sorted((i for i in order if ix.units[i].kind == ENDPOINT and not ix.units[i].cap),
+                 key=lambda i: not providers & set(ix.units[i].providers))[:n_raw]
     return ([Candidate(ix.units[i]) for i in jobs] + [Candidate(ix.units[i], "rep") for i in reps]
             + [Candidate(ix.units[i]) for i in raw])
 

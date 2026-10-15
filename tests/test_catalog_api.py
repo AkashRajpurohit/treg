@@ -1106,15 +1106,15 @@ def test_a_stored_EMPTY_json_body_survives_into_the_call_template():
 
 
 async def test_search_pulls_the_routed_parent_in_when_a_child_matches(clients: AsyncClient):
-    """`leadsforge email` matches leadsforge.* on the provider's NAME; the routed row for that job
-    carries no such word, yet it is the row to show first — so a matched child brings its parent
-    along. And `find leads` lands on the lead-search job itself (people.search says "leads")."""
-    rows = (await clients.get("/catalog/search", params={"q": "leadsforge email"})).json()["results"]
-    ids = [r["id"] for r in rows]
-    assert "treg.people.email.find" in ids, ids
-    assert ids.index("treg.people.email.find") < ids.index("leadsforge.people.email.find")
+    """`find leads` lands on the lead-search job itself (people.search says "leads"), and its routed
+    row leads. A query that names a provider (`leadsforge email`) asked for that provider: its rows
+    lead and no routed row is pulled in."""
     rows = (await clients.get("/catalog/search", params={"q": "find leads"})).json()["results"]
     assert rows[0]["id"] == "treg.people.search", [r["id"] for r in rows[:3]]
+    rows = (await clients.get("/catalog/search", params={"q": "leadsforge email"})).json()["results"]
+    ids = [r["id"] for r in rows]
+    assert ids[0] == "leadsforge.people.email.find", ids
+    assert not any(r.get("kind") == "routed" for r in rows), ids
 
 
 async def test_search_caps_a_routed_group_at_a_few_children(clients: AsyncClient):
