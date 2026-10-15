@@ -54,10 +54,12 @@ related:
 finalization. `application.call.resolve` selects the target and credential;
 `infra.upstream.relay.relay` only injects credentials and forwards bytes.
 
-The shared HTTP ingress can apply default-disabled [published Org concurrent-request admission](org-concurrency.md)
-before `execute_call`. Configured orgs share Redis slots across keys and workers; streaming retains
-the root slot through response cleanup. Routing children do not acquire additional root slots.
-Published null disables the concurrency limit; legacy environment maps have no effect.
+The shared HTTP ingress can apply default-disabled [published Org admission](org-flow-control.md)
+before `execute_call`. Configured Orgs share rate tokens and Redis slots across keys and workers;
+when rate is configured, one Redis operation checks both limits before consuming either.
+Streaming retains the root slot through response cleanup. Routing children do not acquire
+additional root slots or rate tokens. Published null disables its limit; legacy environment
+maps have no effect.
 
 Named catalog calls with authorization metadata select the provider and grant method before
 comparing hosts. This separates Facebook and Instagram tools sharing `graph.facebook.com`;
@@ -762,9 +764,11 @@ cannot receive one upstream job through provider deduplication. Unpinned digests
 ## Optional published root admission
 
 The shared `run_call_surface` checks [published Org flow control](org-flow-control.md) after identity
-and context creation, before financial admission. One effective snapshot supplies the pause and
-concurrency checks. It can refuse new root calls with 429 for an active valid pause or a full
-published concurrency limit. Redis failures allow calls; missing keys clear cached rules, and
+and context creation, before financial admission. One effective snapshot supplies pause, rate and
+concurrency checks. It can refuse new root calls with 429 for an active valid pause, an exhausted
+rate bucket or a full published concurrency limit. Rate and concurrency refusals consume neither
+token nor slot; tokens already spent on admission are not refunded after later failure or
+cancellation. Redis failures allow calls; missing keys clear cached rules, and
 malformed or conflicting publications retain the previous valid snapshot and original pause expiry.
 Existing accepted work and its financial cleanup continue. This optional default-off check does
 not cover direct hub, provider-resource or background execution outside the shared surface.

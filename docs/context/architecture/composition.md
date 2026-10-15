@@ -84,6 +84,9 @@ carrying the `build` and `archive_config` fingerprints every server event has (s
 Bootstrap leaves root logging configuration to the host and existing MCP initialization.
 [Org traffic](org-traffic.md) and [published flow control](org-flow-control.md) use scoped plain
 event handlers without changing the root logger or third-party loggers.
+The shared call surface uses one published snapshot for pause and atomic rate/concurrency
+admission before entering the call application; it adds no lifespan task, environment setting
+or database write.
 
 Every role also owns an `infra.money_trace_runner` lifespan, independent of analytics enablement.
 It samples in-process money transactions and event-loop wakeup delay, and sends bounded diagnostic

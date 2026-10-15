@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,15 +75,17 @@ async def test_disabled_guard_never_reads_redis(env, monkeypatch):
     store.read_org_flow_control.assert_not_awaited()
 
 
-async def test_healthy_missing_is_unconfigured_and_rate_only_is_inert(env):
+async def test_healthy_missing_is_unconfigured_and_rate_only_snapshot_is_shared(env):
     reader, store, clock, _ = env
     assert await reader.check(42, "first", 2) is None
     store.read_org_flow_control.return_value = payload(
         rate_limit={"rps": 0.01, "burst": 1})
     clock[0] += 3
-    # Rate limits remain validated but do not yet affect admission.
-    assert (await reader.check(42, "second", 2)).version == 1
-    assert (await reader.check(42, "third", 2)).version == 1
+    snapshot = await reader.check(42, "second", 2)
+    assert snapshot.version == 1
+    assert snapshot.rate_limit == flow.RateLimit(rps=0.01, burst=1)
+    assert snapshot.max_in_flight is None
+    assert await reader.check(42, "third", 2) is snapshot
     assert store.read_org_flow_control.await_count == 2
 
 
@@ -90,6 +93,7 @@ async def test_pause_expires_by_current_utc_without_another_refresh(env):
     reader, store, clock, now = env
     store.read_org_flow_control.return_value = payload(
         pause_until=(now[0] + timedelta(seconds=1.2)).isoformat().replace("+00:00", "Z"),
+        rate_limit={"rps": 0.5, "burst": 2},
         concurrency_limit={"max_in_flight": 3})
     with pytest.raises(flow.PauseRejected) as rejected:
         await reader.check(42, "paused", 2)
@@ -101,6 +105,7 @@ async def test_pause_expires_by_current_utc_without_another_refresh(env):
     snapshot = reader.entries[42].snapshot
     assert await reader.check(42, "expired", 2) is snapshot
     assert snapshot.max_in_flight == 3
+    assert snapshot.rate_limit == flow.RateLimit(rps=0.5, burst=2)
     store.read_org_flow_control.assert_awaited_once_with(42)
 
 
@@ -222,6 +227,7 @@ async def test_concurrent_cold_requests_share_one_read(env):
 
 
 @pytest.mark.parametrize("prior", [None, payload(version=2),
+                                 payload(version=2, rate_limit={"rps": 0.5, "burst": 2}),
                                  payload(version=2, pause_until="2035-01-01T00:00:00Z")])
 @pytest.mark.parametrize("blocked_on_semaphore", [False, True])
 async def test_cancelled_refresh_preserves_shared_state_and_waiter_retries(env, prior, blocked_on_semaphore):
@@ -350,8 +356,9 @@ async def test_logs_report_pause_capability_and_no_payload_or_exception(env, mon
     assert "org_flow_control_version_observed" in records[0]
     parsed = json.loads(records[0].split(" ", 1)[1])
     assert parsed["capability"] == "pause" and parsed["config_version"] == 2
-    assert parsed["capabilities"] == ["pause", "concurrency"]
+    assert parsed["capabilities"] == ["pause", "rate", "concurrency"]
     assert parsed["max_in_flight"] is None
+    assert parsed["rate_limit"] is None
     assert parsed["org_id"] == 42 and parsed["call_ref"] == "observed-ref"
     assert parsed["worker_pid"] > 0
     store.read_org_flow_control.side_effect = RuntimeError("private-token-or-url")
@@ -439,6 +446,7 @@ async def test_real_publisher_contract_disables_pauses_and_resumes(env):
     store.read_org_flow_control.return_value = (fixtures / "resumed.json").read_text()
     snapshot = await reader.check(42, None, 2)
     assert snapshot.version == 3 and snapshot.max_in_flight == 2
+    assert snapshot.rate_limit == flow.RateLimit(rps=0.5, burst=5)
 
 
 def test_parser_retains_published_concurrency_and_defaults_to_disabled():
@@ -498,3 +506,117 @@ async def test_cache_protects_published_concurrency_until_null_replaces_it(env):
     assert (await reader.check(42, None, 2)).max_in_flight is None
     assert (await reader.check(45, None, 2)).max_in_flight == 2
     assert set(reader.entries) == {44, 45}
+
+
+@pytest.mark.parametrize("rps,burst", [(2, 4), (0.5, 3), (9007199254740991, 2147483647)])
+def test_parser_retains_published_rate_without_mutable_configuration(rps, burst):
+    assert flow._parse(payload(), 42).rate_limit is None
+    snapshot = flow._parse(payload(version=4, rate_limit={"rps": rps, "burst": burst}), 42)
+    assert snapshot.version == 4
+    assert snapshot.rate_limit == flow.RateLimit(rps=rps, burst=burst)
+    with pytest.raises(FrozenInstanceError):
+        snapshot.rate_limit.rps = 3
+    with pytest.raises(FrozenInstanceError):
+        snapshot.rate_limit = None
+
+
+async def test_rate_updates_and_null_replace_one_complete_snapshot(env):
+    reader, store, clock, _ = env
+    store.read_org_flow_control.return_value = payload(
+        version=1, rate_limit={"rps": 0.5, "burst": 2})
+    first = await reader.check(42, None, 2)
+    assert first.rate_limit == flow.RateLimit(rps=0.5, burst=2)
+    assert first.max_in_flight is None
+    assert await reader.check(42, None, 2) is first
+    clock[0] += 3
+    store.read_org_flow_control.return_value = payload(
+        version=2, rate_limit={"rps": 2, "burst": 5},
+        concurrency_limit={"max_in_flight": 3})
+    second = await reader.check(42, None, 2)
+    assert second.version == 2 and second.max_in_flight == 3
+    assert second.rate_limit == flow.RateLimit(rps=2, burst=5)
+    assert first.rate_limit == flow.RateLimit(rps=0.5, burst=2)
+    clock[0] += 3
+    store.read_org_flow_control.return_value = payload(version=3)
+    disabled = await reader.check(42, None, 2)
+    assert disabled.version == 3
+    assert disabled.rate_limit is None and disabled.max_in_flight is None
+
+
+@pytest.mark.parametrize("bad", [
+    flow.kv.FlowControlReadFailure.INVALID, "invalid", payload(version=1),
+    payload(version=3, rate_limit={"rps": "3", "burst": 4}),
+    payload(version=2, rate_limit={"rps": 3, "burst": 4}),
+])
+async def test_invalid_rate_or_version_conflict_retains_same_valid_snapshot(env, bad):
+    reader, store, clock, _ = env
+    store.read_org_flow_control.return_value = payload(
+        version=2, rate_limit={"rps": 0.5, "burst": 2},
+        concurrency_limit={"max_in_flight": 3})
+    snapshot = await reader.check(42, None, 2)
+    clock[0] += 3
+    store.read_org_flow_control.return_value = bad
+    assert await reader.check(42, None, 2) is snapshot
+    assert snapshot.rate_limit == flow.RateLimit(rps=0.5, burst=2)
+    assert snapshot.max_in_flight == 3
+
+
+@pytest.mark.parametrize("bad", [None, flow.kv.FlowControlReadFailure.UNAVAILABLE])
+async def test_missing_or_unavailable_rate_snapshot_allows_and_can_recover(env, bad):
+    reader, store, clock, _ = env
+    original = payload(version=2, rate_limit={"rps": 0.5, "burst": 2})
+    store.read_org_flow_control.return_value = original
+    snapshot = await reader.check(42, None, 2)
+    clock[0] += 3
+    store.read_org_flow_control.return_value = bad
+    assert await reader.check(42, None, 2) is None
+    assert reader.entries[42].snapshot is (None if bad is None else snapshot)
+    assert await reader.check(42, None, 2) is None
+    clock[0] += 3
+    store.read_org_flow_control.return_value = original
+    recovered = await reader.check(42, None, 2)
+    assert recovered.version == 2
+    assert recovered.rate_limit == flow.RateLimit(rps=0.5, burst=2)
+
+
+async def test_cache_protects_rate_only_rules_after_pause_expiry_until_null(env):
+    reader, store, clock, now = env
+    reader.max_entries = 2
+    disabled = set()
+    store.read_org_flow_control.side_effect = lambda org: payload(
+        org_id=org, version=2 if org in disabled else 1,
+        pause_until="2029-01-01T00:00:00Z",
+        rate_limit={"rps": 0.5, "burst": 2} if org not in disabled and org != 43 else None)
+    assert (await reader.check(42, None, 2)).rate_limit is not None
+    assert (await reader.check(43, None, 2)).rate_limit is None
+    assert (await reader.check(44, None, 2)).rate_limit is not None
+    assert set(reader.entries) == {42, 44}
+    now[0] += timedelta(days=10)
+    assert await reader.check(45, None, 2) is None
+    assert store.read_org_flow_control.await_count == 3
+    disabled.add(42)
+    clock[0] += 3
+    assert (await reader.check(42, None, 2)).rate_limit is None
+    assert (await reader.check(45, None, 2)).rate_limit is not None
+    assert set(reader.entries) == {44, 45}
+
+
+async def test_version_observations_report_rate_and_clear_it_for_missing_key(env, monkeypatch):
+    reader, store, clock, _ = env
+    events = []
+    monkeypatch.setattr(flow.log, "log", lambda level, fmt, *args: events.append(
+        json.loads((fmt % args).split(" ", 1)[1])))
+    store.read_org_flow_control.return_value = payload(
+        version=2, rate_limit={"rps": 0.5, "burst": 2},
+        concurrency_limit={"max_in_flight": 3})
+    await reader.check(42, "populated", 2)
+    clock[0] += 3
+    store.read_org_flow_control.return_value = payload(version=3)
+    await reader.check(42, "disabled", 2)
+    clock[0] += 3
+    store.read_org_flow_control.return_value = None
+    assert await reader.check(42, "missing", 2) is None
+    assert [event["config_version"] for event in events] == [2, 3, 0]
+    assert [event["rate_limit"] for event in events] == [{"rps": 0.5, "burst": 2}, None, None]
+    assert [event["max_in_flight"] for event in events] == [3, None, None]
+    assert all(event["capabilities"] == ["pause", "rate", "concurrency"] for event in events)

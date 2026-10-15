@@ -250,26 +250,33 @@ provider credential.
 
 ## Optional money admission
 
-Root Web requests have separate, default-disabled [published Org pause and concurrency
+Root Web requests have separate, default-disabled [published Org pause, rate and concurrency
 admission](../architecture/org-flow-control.md), enabled with `TREG_ORG_FLOW_CONTROL_ENABLED`
 and read through the shared Redis destination. A full snapshot's non-null
-`concurrency_limit.max_in_flight` controls shared root slots; null removes that limit. Published
-rate limits are validated but not enforced. This does not change the money admission or
-financial cleanup below.
+`concurrency_limit.max_in_flight` controls shared root slots; `rate_limit:{rps,burst}` controls a
+shared token bucket. Each null field removes that limit. Rate and concurrency checks are atomic:
+a refusal consumes neither token nor slot. This does not change money admission or financial
+cleanup below, and requires no additional setting or database migration.
 
 The old `TREG_ORG_CONCURRENCY_*` configuration no longer controls concurrent request admission.
 There is no automatic migration or static fallback. Review old values and already published
-non-null concurrency values before deploying the new behavior. Any equivalent dynamic rules
-must be separately approved, saved and published, and the shared flag enabled, through an
+non-null rate and concurrency values before deploying the new behavior. Workers with the flag
+already enabled will begin enforcing published rate values after this deployment. Any equivalent
+dynamic rules must be separately approved, saved and published, and the shared flag enabled, through an
 authorized rollout. Saving alone does not activate rules; this code change performs none of
 those operational actions. See [concurrency migration](../architecture/org-concurrency.md#configuration-migration-and-rollback)
 for the sequence and the fixed lease/retry behavior.
 
 Restore published Redis keys before enabling workers; Redis connectivity, initialization and
-timeout failures allow new root calls, including failures while acquiring a slot. Missing keys
-clear local rules; malformed or conflicting publications retain the last valid concurrency limit
-and original pause expiry. Cache saturation allows uncached Orgs. Per-worker refresh is eventual,
-not an all-worker acknowledgment. See the flow-control fragment for recovery limits.
+timeout failures allow new root calls, including failures during combined rate/slot admission.
+Missing keys clear local rules; malformed or conflicting publications retain the last valid rate
+and concurrency limits and original pause expiry. Cache saturation allows uncached Orgs.
+Per-worker refresh is eventual, not an all-worker acknowledgment. See the flow-control fragment
+for recovery limits.
+Bucket and slot keys are shared across configuration versions; rule updates do not reset live
+owners or grant a fresh burst. Accepted rate tokens are not refunded on request failure,
+cancellation or an ambiguous Redis reply. Disabling the flag bypasses new checks while accepted
+requests finish their existing cleanup.
 
 `TREG_MONEY_ADMISSION_ENABLED` defaults to `false`. Enabling it requires a shared Redis-compatible
 store at `TREG_KV_URL`; all participating web and money-worker processes must use the same store
