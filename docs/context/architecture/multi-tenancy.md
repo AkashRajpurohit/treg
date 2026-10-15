@@ -73,8 +73,9 @@ change is required. This is a current-ownership cap, not a daily creation limit.
 and the active team to match. Regular team membership alone does not expose another member's results.
 Team deletion removes evaluations before their runs through `ORG_SCOPED_MODELS`.
 `OrgFlowControlVersion` configuration history is also in that list and is explicitly deleted
-with its Org. Its `org_id` intentionally has no foreign key; management writes must validate
-Org existence and coordinate with deletion before cleanup starts. See [configuration storage](data-model.md#org-flow-control-configuration-storage).
+with its Org. Its `org_id` intentionally has no foreign key. On PostgreSQL, deletion takes the
+per-Org transaction advisory lock before cleanup; management writers use the same lock before
+checking Org existence and allocating versions. See [configuration storage](data-model.md#org-flow-control-configuration-storage).
 
 - **`Org`** — `id, name, slug (unique), previous_slug, suspended, demo, public_demo, created_at`. The tenant that owns
   secrets/tools/bundles. **`public_demo`** marks a team whose member token is PUBLISHED (e.g. on the

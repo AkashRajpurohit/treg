@@ -1,5 +1,6 @@
 """Configuration storage on both model-created and migrated SQLite/PostgreSQL schemas."""
 
+import asyncio
 from datetime import datetime
 from importlib import import_module
 
@@ -185,3 +186,141 @@ async def test_postgres_migration_does_not_lock_org_while_balance_writer_is_open
                 await transaction.rollback()
     finally:
         await db.reset_db()
+
+
+@pytest.fixture
+async def postgres_configuration_orgs():
+    if db._engine.dialect.name != "postgresql":
+        pytest.skip("requires PostgreSQL transaction advisory locks")
+    await db.reset_db()
+    async with db._engine.begin() as connection:
+        for org_id in (1, 2):
+            await connection.execute(Org.__table__.insert().values(
+                id=org_id, name=f"Coordination {org_id}", slug=f"coordination-{org_id}",
+                balance_micro=123,
+            ))
+            await connection.execute(table.insert().values(**_row(org_id=org_id)))
+    try:
+        yield
+    finally:
+        await db.reset_db()
+
+
+async def _management_lock(connection, org_id=1):
+    # Literal protocol key: independent management clients must use this same namespace.
+    await connection.execute(sa.text(
+        "SELECT pg_advisory_xact_lock(1414677831, :org_id)"
+    ), {"org_id": org_id})
+
+
+async def _wait_for_management_lock(observer, pid, task):
+    async with asyncio.timeout(5):
+        while True:
+            waiting = (await observer.execute(sa.text(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid=:pid "
+                "AND locktype='advisory' AND classid=1414677831 "
+                "AND objid=1 AND objsubid=2 AND NOT granted)"
+            ), {"pid": pid})).scalar_one()
+            if waiting:
+                return
+            if task.done():
+                await task
+                pytest.fail("operation finished instead of waiting for the management lock")
+            await asyncio.sleep(0.01)
+
+
+async def test_postgres_delete_waits_for_save_before_clearing_history(postgres_configuration_orgs):
+    async with db._engine.connect() as saver, AsyncSession(
+        db._engine, expire_on_commit=False,
+    ) as deleting:
+        await saver.begin()
+        await _management_lock(saver)
+        assert (await saver.execute(sa.select(Org.id).where(Org.id == 1))).scalar_one() == 1
+        # This is still uncommitted when deletion starts. Cleanup must wait, then see this version.
+        await saver.execute(table.insert().values(**_row(version=2)))
+        org = await deleting.get(Org, 1)
+        pid = (await deleting.execute(sa.text("SELECT pg_backend_pid()"))).scalar_one()
+        task = asyncio.create_task(cascade_delete_org(org, deleting))
+        try:
+            await _wait_for_management_lock(saver, pid, task)
+            await saver.commit()
+            await asyncio.wait_for(task, 5)
+            await deleting.commit()
+        finally:
+            await saver.rollback()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    async with db._engine.connect() as connection:
+        assert (await connection.execute(sa.select(Org.id))).scalars().all() == [2]
+        assert (await connection.execute(
+            sa.select(table.c.org_id, table.c.version)
+        )).all() == [(2, 1)]
+
+
+@pytest.mark.parametrize("commit_delete", [True, False])
+async def test_postgres_save_checks_org_after_delete_finishes(
+    postgres_configuration_orgs, commit_delete,
+):
+    async with AsyncSession(db._engine, expire_on_commit=False) as deleting:
+        org = await deleting.get(Org, 1)
+        await cascade_delete_org(org, deleting)
+        await deleting.flush()
+        saver_pid = asyncio.get_running_loop().create_future()
+
+        async def save():
+            async with db._engine.begin() as connection:
+                saver_pid.set_result((await connection.execute(
+                    sa.text("SELECT pg_backend_pid()")
+                )).scalar_one())
+                await _management_lock(connection)
+                exists = (await connection.execute(
+                    sa.select(Org.id).where(Org.id == 1)
+                )).scalar_one_or_none()
+                if exists is None:
+                    return False
+                await connection.execute(table.insert().values(**_row(version=2)))
+                return True
+
+        task = asyncio.create_task(save())
+        try:
+            pid = await asyncio.wait_for(saver_pid, 5)
+            await _wait_for_management_lock(deleting, pid, task)
+            if commit_delete:
+                await deleting.commit()
+            else:
+                await deleting.rollback()
+            assert await asyncio.wait_for(task, 5) is (not commit_delete)
+        finally:
+            await deleting.rollback()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    async with db._engine.connect() as connection:
+        versions = (await connection.execute(
+            sa.select(table.c.version).where(table.c.org_id == 1).order_by(table.c.version)
+        )).scalars().all()
+        assert versions == ([] if commit_delete else [1, 2])
+        assert (await connection.execute(sa.select(Org.id).where(
+            Org.id == 1,
+        ))).scalar_one_or_none() == (None if commit_delete else 1)
+        assert (await connection.execute(sa.select(table.c.version).where(
+            table.c.org_id == 2,
+        ))).scalars().all() == [1]
+
+
+async def test_postgres_management_lock_does_not_block_balances_or_other_orgs(
+    postgres_configuration_orgs,
+):
+    async with db._engine.begin() as saver:
+        await _management_lock(saver)
+        async with db._engine.begin() as writer:
+            await writer.execute(sa.text("SET LOCAL lock_timeout = '1s'"))
+            await writer.execute(sa.text("SET LOCAL statement_timeout = '5s'"))
+            await writer.execute(sa.update(Org).where(Org.id == 1).values(balance_micro=124))
+            assert (await writer.execute(sa.text(
+                "SELECT pg_try_advisory_xact_lock(1414677831, 2)"
+            ))).scalar_one() is True
+        assert (await saver.execute(sa.select(Org.balance_micro).where(
+            Org.id == 1,
+        ))).scalar_one() == 124

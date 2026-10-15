@@ -4,7 +4,7 @@ import re
 
 import sys
 
-from sqlalchemy import delete, exists, func, update
+from sqlalchemy import delete, exists, func, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlmodel import select
@@ -62,6 +62,10 @@ from ..identity.access import _membership_by_token, _resolve_org, lock_user
 
 
 MAX_OWNED_TEAMS = 10
+
+# Shared with management configuration writers: the two-int PostgreSQL advisory key is
+# ("TREG", org_id). It coordinates saves with deletion without locking the balance row.
+ORG_FLOW_CONTROL_LOCK_NAMESPACE = 1414677831  # 0x54524547
 
 
 class OwnedTeamLimitReached(Exception):
@@ -366,6 +370,12 @@ async def cascade_delete_org(org: Org, db: AsyncSession) -> None:
     one was guarded by a test, so when `IdempotentCall` arrived the other two never learned of it,
     and on 2026-09-02 the reaper hit its foreign key on every run - from inside the sandbox mint, so
     every visitor got a 500 until it was noticed. Do not grow a private copy of this list again."""
+    if db.get_bind().dialect.name == "postgresql":
+        # Take this before any child cleanup, and retain it until the caller commits/rolls back.
+        # Management writers must take the same lock before checking Org existence or versions.
+        await db.execute(text("SELECT pg_advisory_xact_lock(:namespace, :org_id)"), {
+            "namespace": ORG_FLOW_CONTROL_LOCK_NAMESPACE, "org_id": org.id,
+        })
     # OAuthGrant names its mutable team `current_org_id` to distinguish family authority from the
     # immutable `OAuthRefresh.org_id` provenance. A family can name this team on EITHER side: after
     # a move, only a retired provenance row still names the former team. Deleting just that row

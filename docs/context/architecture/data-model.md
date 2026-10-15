@@ -176,9 +176,13 @@ increasing versions, JSON schema validation, and immutable snapshots are managem
 responsibilities; this migration does not grant that writer access or prohibit arbitrary
 SQL updates. No rows are backfilled and existing request admission is unchanged.
 `org_id` has no foreign key, keeping this migration independent of locks on the balance table.
-`cascade_delete_org` explicitly removes this history with its Org. The management writer must
-validate Org existence and coordinate saves with Org deletion before its cleanup begins;
-direct SQL writes or deletes have no database-enforced referential integrity.
+`cascade_delete_org` explicitly removes this history with its Org. On PostgreSQL it first takes
+transaction advisory lock `(1414677831, org_id)` (`ORG_FLOW_CONTROL_LOCK_NAMESPACE`, `TREG`).
+Management writers must acquire the same two-integer lock before validating Org existence and
+allocating a version, then retain it through commit or rollback. This serializes saves with
+cleanup without locking the Org balance row. Every process that can delete an Org must support
+this protocol before management writes are enabled; direct SQL writes or deletes still have no
+database-enforced referential integrity.
 An application rollback leaves the table in place; a schema downgrade deletes its saved history.
 
 ## Registry tables
