@@ -337,8 +337,8 @@ endpoints:
       bodyType: json
       body:
         keyword: {type: string, required: true, note: "seed keyword, lowercased by the API", example: "coffee"}
-        location_code: {type: integer, required: true, note: "one of location_code | location_name; 2840 = United States", example: 2840}
-        language_code: {type: string, required: true, note: "one of language_code | language_name", example: "en"}
+        location_code: {type: integer, required: true, note: "one of location_code | location_name; codes from the Labs locations list (GET /v3/dataforseo_labs/locations_and_languages, free). 2840 = United States", example: 2840}
+        language_code: {type: string, required: true, note: "one of language_code | language_name; must be a language Labs supports for that location (pairs from GET /v3/dataforseo_labs/locations_and_languages, free). An unsupported pair returns 40501 Invalid Field, e.g. Mexico or Colombia with en (both take es) or Brazil with en (pt)", example: "en"}
         depth: {type: integer, required: false, note: "0-4, default 1. Breadth of the related-search crawl: 0 = seed only, 1 = ~8 keywords, 2 = ~72, 3 = ~584, 4 = ~4680", example: 1}
         limit: {type: integer, required: false, note: "1-1000; default 100", example: 2}
         offset: {type: integer, required: false, note: "default 0"}

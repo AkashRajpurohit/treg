@@ -3203,21 +3203,21 @@ endpoints:
       location_name:
         type: string
         required: false
-        note: 'full name of the location required field if you don’t specify location_code Note: it is required to specify either location_name or location_code you can receive the list of available locations with their location_name by making a separate request to https://api.dataforseo.com/v3/dataforseo_labs/loc'
+        note: "full name of the location; one of location_name | location_code is required (a body with neither returns 40501). This App Store route supports only United States: send location_code 2840 (or location_name \"United States\"); any other location returns 40501 Invalid Field."
       location_code:
         type: integer
         required: false
-        note: 'location code required field if you don’t specify location_name Note: it is required to specify either location_name or location_code you can receive the list of available locations with their location_code by making a separate request to https://api.dataforseo.com/v3/dataforseo_labs/locations_and_l'
+        note: "location code; one of location_code | location_name is required (a body with neither returns 40501). This App Store route supports only United States (2840); any other location returns 40501 Invalid Field."
         example: 2840
       language_name:
         type: string
         required: false
-        note: 'full name of the language required field if you don’t specify language_code Note: it is required to specify either language_name or language_code you can receive the list of available languages with their language_name by making a separate request to the https://api.dataforseo.com/v3/dataforseo_labs'
+        note: "full name of the language; one of language_name | language_code is required. This App Store route supports only English; any other language returns 40501 Invalid Field."
         example: English
       language_code:
         type: string
         required: false
-        note: 'language code required field if you don’t specify language_name Note: it is required to specify either language_name or language_code you can receive the list of available languages with their language_code by making a separate request to the https://api.dataforseo.com/v3/dataforseo_labs/locations_a'
+        note: "language code; one of language_code | language_name is required. This App Store route supports only English (en); any other language returns 40501 Invalid Field."
       filters:
         type: array
         required: false
@@ -6804,21 +6804,21 @@ endpoints:
       location_name:
         type: string
         required: false
-        note: 'full name of the location required field if you don’t specify location_code Note: it is required to specify either location_name or location_code you can receive the list of available locations with their location_name by making a separate request to https://api.dataforseo.com/v3/dataforseo_labs/loc'
+        note: "full name of the location; one of location_name | location_code is required (a body with neither returns 40501). This Google Play route supports only United States: send location_code 2840 (or location_name \"United States\"); any other location returns 40501 Invalid Field."
       location_code:
         type: integer
         required: false
-        note: 'location code required field if you don’t specify location_name Note: it is required to specify either location_name or location_code you can receive the list of available locations with their location_code by making a separate request to https://api.dataforseo.com/v3/dataforseo_labs/locations_and_l'
+        note: "location code; one of location_code | location_name is required (a body with neither returns 40501). This Google Play route supports only United States (2840); any other location returns 40501 Invalid Field."
         example: 2840
       language_name:
         type: string
         required: false
-        note: 'full name of the language required field if you don’t specify language_code Note: it is required to specify either language_name or language_code you can receive the list of available languages with their language_name by making a separate request to the https://api.dataforseo.com/v3/dataforseo_labs'
+        note: "full name of the language; one of language_name | language_code is required. This Google Play route supports only English; any other language returns 40501 Invalid Field."
         example: English
       language_code:
         type: string
         required: false
-        note: 'language code required field if you don’t specify language_name Note: it is required to specify either language_name or language_code you can receive the list of available languages with their language_code by making a separate request to the https://api.dataforseo.com/v3/dataforseo_labs/locations_a'
+        note: "language code; one of language_code | language_name is required. This Google Play route supports only English (en); any other language returns 40501 Invalid Field."
       filters:
         type: array
         required: false
@@ -9617,7 +9617,7 @@ endpoints:
       location_code:
         type: integer
         required: false
-        note: '<p><em>search engine location code</em><p><strong>required field if you don''t specify</strong> <code>location_name</code>&nbsp;or <code>location_coordinate</code><p><strong>if you use this field, you don''t need to specify <code>location_name</code> or <code>location_coordinate</code></strong><p>you '
+        note: "search engine location code. Required field if you don't specify location_coordinate; 2840 = United States. Use location_code or location_coordinate; Live Local Finder rejects location_name with 40501 Invalid Field even though vendor docs list it."
         example: 2840
       language_code:
         type: string
@@ -9632,10 +9632,6 @@ endpoints:
         type: string
         required: false
         note: '<p><em>device type</em><p>optional field<p>return results for a specific device type<p>can take the values:<code>desktop</code>, <code>mobile</code><p>default value: <code>desktop</code></p>'
-      location_name:
-        type: string
-        required: false
-        note: <p><em>full name of search engine location</em><p><strong>required field if you don't specify</strong> <code>location_code</code> or <code>location_coordinate</code><p><strong>if you use this field, you don't need to specify <code>location_code</code> or <code>location_coordinate</code></strong><p>y
       language_name:
         type: string
         required: false
@@ -9655,7 +9651,7 @@ endpoints:
       location_coordinate:
         type: string
         required: false
-        note: <p><em>GPS coordinates of a location</em><p><strong>required field if you don't specify</strong> <code>location_name</code>&nbsp;or <code>location_code</code><p><strong>if you use this field, you don't need to specify <code>location_name</code> or <code>location_code</code></strong><p><code>location
+        note: "GPS coordinates of a location. Required field if you don't specify location_code. Use location_code or location_coordinate; Live Local Finder rejects location_name with 40501 Invalid Field even though vendor docs list it."
       min_rating:
         type: number
         required: false
