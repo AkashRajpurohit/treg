@@ -7,10 +7,12 @@ cursor, never locks source audit rows, and does not consume a future incremental
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
 from sqlalchemy import event, select, update
 
 from treg.application import catalog_stats
@@ -400,3 +402,106 @@ async def test_recount_preserves_refusal_and_status_evidence_rules(clients, monk
     assert bucket.hits == bucket.hit_decided == 4
     assert bucket.verdicts == {"valid": 4}
     assert bucket.latency_seen == 1 and bucket.latency_sample == [100]
+
+
+@pytest.mark.parametrize("empty_fails", [False, True])
+async def test_recount_keeps_complete_evidence_across_batches_and_a_partial_tail(
+    clients, monkeypatch, empty_fails,
+):
+    """A busy day's replacement accumulates every batch, including the incomplete final one.
+
+    Distinct status/hit/cost/verdict values catch swapped tuple fields as well as a tally reset or
+    dropped tail. Keep the sample below its reservoir cap so the successful durations are exact.
+    """
+    monkeypatch.setattr(catalog_stats, "BATCH_ROWS", 4)
+    monkeypatch.setattr(catalog_store, "empty_is_failure", lambda _: empty_fails)
+    evidence = [
+        # status, duration, hit, observed cost, refused_by, verdict
+        (200, 100, True, 5000, None, "valid"),
+        (202, 200, None, 5000, None, None),
+        (200, 300, False, 0, None, "not_found"),
+        (500, 400, False, None, None, "unknown"),
+        (405, 500, None, None, None, None),
+        (422, None, True, None, None, "valid"),
+        (200, None, None, 0, None, None),
+        (200, 700, True, 0, None, "catch_all"),
+        (200, 800, False, 5000, None, "not_found"),
+        (200, 900, True, 5000, "balance", "valid"),
+        (503, None, None, None, None, "unknown"),
+        (200, 1100, None, None, None, None),
+        (200, 1200, True, 5000, None, "valid"),
+        (200, 1300, False, 0, None, "not_found"),
+    ]
+    for n, (status, ms, hit, cost, refused_by, verdict) in enumerate(evidence):
+        await _record(ASYNC, at=YESTERDAY + timedelta(minutes=n), status=status, ms=ms,
+                      hit=hit, cost=cost, refused_by=refused_by, verdict=verdict)
+    await catalog_stats.refresh(session_maker, batch_rows=4, now=NOW)
+    async with session_maker() as db:
+        bucket = await db.get(EndpointDayStat, (ASYNC, _day(YESTERDAY)))
+        # Recount must replace stale evidence, rather than append to any of these values.
+        bucket.n = bucket.ok = bucket.bad = bucket.hits = bucket.hit_decided = 99
+        bucket.paid_hits = bucket.free_misses = bucket.latency_seen = 99
+        bucket.last_ok_at = NOW
+        bucket.latency_sample = [9999]
+        bucket.verdicts = {"stale": 99}
+        db.add(bucket)
+        await mark_dirty(db, {(ASYNC, _day(YESTERDAY))}, now=NOW)
+        await db.commit()
+
+    result = await catalog_stats.refresh(session_maker, max_rows=0, now=NOW)
+    assert result["repaired"] == 1 and result["repair_failed"] == result["repair_pending"] == 0
+    bucket = await _bucket()
+    assert (bucket.n, bucket.ok, bucket.bad) == (13, 6 if empty_fails else 9,
+                                               6 if empty_fails else 3)
+    assert (bucket.hits, bucket.hit_decided, bucket.paid_hits, bucket.free_misses) == (4, 8, 1, 1)
+    assert bucket.last_ok_at == YESTERDAY + timedelta(minutes=12 if empty_fails else 13)
+    durations = [100, 200, 700, 1100, 1200] if empty_fails else [100, 200, 300, 700, 800, 1100, 1200, 1300]
+    assert bucket.latency_seen == len(durations)
+    assert sorted(bucket.latency_sample) == durations
+    assert bucket.verdicts == {"valid": 3, "not_found": 3, "unknown": 2, "catch_all": 1}
+    assert bucket.terminal_reconciled and await _dirty() == []
+
+
+async def test_cancelled_recount_keeps_previous_bucket_and_dirty_work(clients, monkeypatch):
+    monkeypatch.setattr(catalog_stats, "BATCH_ROWS", 2)
+    ids = [await _record(ASYNC) for _ in range(5)]
+    await catalog_stats.refresh(session_maker, now=NOW)
+    await _correct(ids, hit=True, verdict="valid")
+    async with session_maker() as db:
+        bucket = await db.get(EndpointDayStat, (ASYNC, _day(YESTERDAY)))
+        bucket.updated_at = NOW - timedelta(minutes=5)
+        db.add(bucket)
+        await db.commit()
+        before = bucket.model_dump()
+
+    original_fold = stats.Tally.fold
+    folded = 0
+    cancellation_requested = False
+    repair = None
+
+    def cancel_after_batch(tally, **fields):
+        nonlocal folded, cancellation_requested
+        result = original_fold(tally, **fields)
+        if asyncio.current_task() is repair:
+            folded += 1
+            if folded >= catalog_stats.BATCH_ROWS and not cancellation_requested:
+                cancellation_requested = True
+                repair.cancel()
+        return result
+
+    monkeypatch.setattr(stats.Tally, "fold", cancel_after_batch)
+    repair = asyncio.create_task(catalog_stats.refresh(session_maker, max_rows=0, now=NOW))
+    with pytest.raises(asyncio.CancelledError):
+        await repair
+    assert cancellation_requested
+    assert (await _bucket()).model_dump() == before
+    marker, = await _dirty()
+    assert marker.revision == 1
+
+    monkeypatch.setattr(stats.Tally, "fold", original_fold)
+    result = await catalog_stats.refresh(session_maker, max_rows=0, now=NOW)
+    assert result["repaired"] == 1 and result["repair_failed"] == result["repair_pending"] == 0
+    bucket = await _bucket()
+    assert bucket.n == bucket.hits == bucket.hit_decided == 5
+    assert bucket.free_misses == 0 and bucket.verdicts == {"valid": 5}
+    assert bucket.updated_at == NOW and await _dirty() == []

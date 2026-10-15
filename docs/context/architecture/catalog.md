@@ -1743,8 +1743,11 @@ counts. A replacement recomputes the entire `Tally`, including success classific
 hit/verdict counts and the bounded latency reservoir. It conditionally acknowledges only the marker
 revision it read; a correction arriving during the scan remains queued. `catalog_stat_dirty` owns
 all marker writes; the worker owns transaction boundaries. Repairs read only one endpoint/day
-through the existing `(endpoint_id, created_at)` index, stream rows without source-row locks, and
-have independent bucket-count, elapsed-time and per-bucket timeout budgets. A failed replacement
+through the existing `(endpoint_id, created_at)` index and stream bounded batches without source-row
+locks. Each batch is unpacked locally, avoiding an async result transition per row, and yields to
+the event loop before the next batch. Batching preserves the complete source query and its single
+snapshot; it does not cap the day or reduce the database scan. Repairs have independent bucket-count,
+elapsed-time and per-bucket timeout budgets. A failed replacement
 rolls back, retains its marker and defers retry, allowing other buckets to progress. The elapsed-time
 budget covers the repair loop, not the append pass or queue maintenance.
 
