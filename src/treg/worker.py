@@ -6,6 +6,8 @@
     treg-worker asynctasks settle [--limit 50]       # complete deferred metered-call holds
     treg-worker arena insights [--max-seconds 110]   # fold new audit rows into the Arena aggregate
     treg-worker catalog stats [--max-rows 500000]    # fold new audit rows into per-day endpoint stats
+    treg-worker catalog requeue-async-stats [--apply]   # preview or queue one async-window repair
+    treg-worker catalog repair-status --manifest <path>  # check the saved applied target list
     treg-worker spend rollup [--max-rows 50000]      # fold new ledger settles into per-key daily spend
     treg-worker jev xboost [--posts 60] [--min-likes 150]   # the /jev launch-radar demo: X posts <24h -> jev
     treg-worker admin purge-evidence [--batch-size 5000]  # blank expired error evidence past 14-day retention
@@ -343,6 +345,36 @@ async def _catalog_stats(args) -> int:
     return 0
 
 
+async def _catalog_requeue_async_stats(args) -> int:
+    from .infra.db import verify_db
+    from .application.catalog_stats import requeue_async_stats
+
+    await verify_db()
+    try:
+        result = await requeue_async_stats(apply=args.apply)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+async def _catalog_repair_status(args) -> int:
+    from pathlib import Path
+    from .infra.db import verify_db
+    from .application.catalog_stats import repair_status
+
+    try:
+        manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+        await verify_db()
+        result = await repair_status(manifest)
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print(json.dumps(result, sort_keys=True))
+    return 0 if result["complete"] else 1
+
+
 async def _spend_rollup(args) -> int:
     from .infra.db import verify_db
     from .application.key_spend_rollup import refresh
@@ -496,6 +528,16 @@ def main(argv: list[str] | None = None) -> int:
     stats.add_argument("--bucket-timeout-seconds", type=float, default=10.0,
                        help="timeout for one endpoint/day replacement; failures stay queued for retry")
     stats.set_defaults(fn=_catalog_stats)
+    requeue = catalogsub.add_parser("requeue-async-stats",
+        help="preview existing mutable async day buckets; --apply queues one full repair")
+    requeue.add_argument("--apply", action="store_true",
+        help="reset target readiness and enqueue repairs (default: read-only preview)")
+    requeue.set_defaults(fn=_catalog_requeue_async_stats)
+    repair_status = catalogsub.add_parser("repair-status",
+        help="check coverage of the same database's saved applied repair manifest")
+    repair_status.add_argument("--manifest", required=True,
+        help="JSON output saved from requeue-async-stats --apply")
+    repair_status.set_defaults(fn=_catalog_repair_status)
     spend = sub.add_parser("spend", help="spend read models derived from the ledger")
     spendsub = spend.add_subparsers(dest="cmd", required=True)
     rollup = spendsub.add_parser("rollup", help="fold new ledger settles into per-key, per-tool, per-day spend")
