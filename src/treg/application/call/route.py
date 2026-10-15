@@ -301,6 +301,7 @@ async def build_plan(ep: dict, identity_given: dict, caller, options: RouteOptio
                     continue
                 if caller.org_id is not None and await _marketplace_secret(service, caller.org_id, db) is not None:
                     own.add(service)
+    given = {k for k, v in (identity_given or {}).items() if v not in (None, "")}
     cands: list[Candidate] = []
     for e, ad, v in raw:
         st = stats.get(e["id"]) or {}
@@ -326,7 +327,7 @@ async def build_plan(ep: dict, identity_given: dict, caller, options: RouteOptio
                       exhausted=direct_exhausted and overflow_route is None,
                       note=(f"direct account exhausted; overflow via {overflow_route.aggregator}"
                             if overflow_route is not None else ""),
-                      ignored=ignored_filters(ad, contract, identity))
+                      ignored=ignored_filters(ad, contract, identity, given))
         if catalog_store.paused(e):
             dropped.append({"endpoint_id": e["id"], "why": f"{e['provider']} is paused on this deployment"})
             continue
@@ -358,7 +359,7 @@ async def build_plan(ep: dict, identity_given: dict, caller, options: RouteOptio
         cands = kept
     return Plan(contract=contract, identity=identity, variant=variant,
                 candidates=rank(cands, prefer=options.prefer or list(contract.prefer), exclude=options.exclude,
-                                given={k for k, v in (identity_given or {}).items() if v not in (None, "")},
+                                given=given,
                                 derive=contract.derive), dropped=dropped)
 
 

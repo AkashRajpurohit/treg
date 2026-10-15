@@ -2002,3 +2002,31 @@ def test_se_ranking_volume_names_great_britain_by_its_own_source_code():
     ident, _ = canonical_identity(contract, {"keywords": ["tea"], "country": "GB"})
     q, _ = cat.adapters["seranking.google.keywords.volume"].to_upstream(ident)
     assert q["source"] == "uk", q
+
+
+def test_a_contract_default_the_caller_did_not_send_is_not_an_ignored_filter():
+    """`google.keywords.volume` defaults `language: en`. SE Ranking has no language field, so the
+    default alone ranked it behind a child fifty times its price on every call, while the catalog
+    quote (which ranks without the default) named SE Ranking first. Only a filter the caller sent
+    can make an answer looser than the question."""
+    from treg.domain.catalog.routing.plan import ignored_filters
+    cat = catalog_store.load()
+    contract = cat.contracts["google.keywords.volume"]
+    seranking = cat.adapters["seranking.google.keywords.volume"]
+    ident, _ = canonical_identity(contract, {"keywords": ["tea"]})
+    assert ident["language"] == "en", "the default still reaches the providers that take it"
+    assert ignored_filters(seranking, contract, ident, given={"keywords"}) == ()
+    sent, _ = canonical_identity(contract, {"keywords": ["tea"], "language": "de"})
+    assert ignored_filters(seranking, contract, sent, given={"keywords", "language"}) == ("language",)
+
+    def cand(eid, price, ignored):
+        return Candidate(endpoint={"id": eid, "provider": eid.split(".")[0], "cost": {"type": "per_call"}},
+                         adapter=None, variant=("keywords",), tier="platform", price_micro=price, hit_rate=None,
+                         ok_rate=None, p50_ms=None, last_ok_days=None, ignored=ignored)
+    plan = [cand("seranking.google.keywords.volume", 1_790,
+                 ignored_filters(seranking, contract, ident, given={"keywords"})),
+            cand("dataforseo.google.keywords.volume", 90_000,
+                 ignored_filters(cat.adapters["dataforseo.google.keywords.volume"], contract, ident, given={"keywords"}))]
+    quote = [cand(c.endpoint["id"], c.price_micro, ()) for c in plan]
+    assert [c.endpoint["id"] for c in rank(plan, given={"keywords"})] == \
+        [c.endpoint["id"] for c in rank(quote)] == ["seranking.google.keywords.volume", "dataforseo.google.keywords.volume"]

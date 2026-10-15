@@ -2228,7 +2228,11 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   still decides among candidates that ignore equally much. `limit` never counts: it is a page size,
   not a narrowing filter, and the contract defaults it, so counting it demoted every limit-less
   child (a free-on-miss role finder fell behind a search that bills its empty pages).
-  A filter the adapter sends only through a one-argument transform (`dfs_location(country)`) counts as ignored
+  Only a filter the caller SENT counts (`ignored_filters(given=…)`): a contract default
+  (`language: en` on `google.keywords.volume`) is not a question anyone asked, and counting it
+  ranked SE Ranking, which has no language field, behind a child fifty times its price on every
+  call while the catalog quote, which ranks without defaults, named SE Ranking first. A filter the
+  adapter sends only through a one-argument transform (`dfs_location(country)`) counts as ignored
   when the transform has no value for what was sent, so an unmappable country is reported and
   ranked down like a missing geo field instead of becoming another country.
   **Coverage caveat**: of 16 `people.search` children, only icypeas maps geo today, so the rule
