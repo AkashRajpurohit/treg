@@ -7,7 +7,7 @@ sources:
   - src/treg/web/adtrack.js
   - src/treg/web/gtag.js
   - src/treg/routers/auth.py
-  - src/treg/alembic/versions/0074_ad_click_stash.py
+  - src/treg/alembic/versions/0075_ad_click_stash.py
 related:
   - architecture/money.md
   - architecture/multi-tenancy.md
@@ -83,7 +83,7 @@ read-side Ads catalog calls (`oauth_providers.GOOGLE_ADS`), a separate credentia
    at both signup doors only when the request cookie is empty, and ignores observations older than
    90 days. Rows are not periodically deleted; expiry limits lookup, not physical retention. This
    association goes through neither audit nor analytics. Stash failures do not fail sign-in;
-   the warning omits the email, cookie, and exception text (which could contain SQL parameters). Revision `0074` adds the table without a
+   the warning omits the email, cookie, and exception text (which could contain SQL parameters). Revision `0075` adds the table without a
    backfill or startup schema mutation. The privacy policy deliberately does not add a separate
    paragraph for the URL carry or the email association (owner decision, 2026-10-14); its existing
    `treg_ad` section is the disclosure.

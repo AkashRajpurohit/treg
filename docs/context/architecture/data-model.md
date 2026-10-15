@@ -58,7 +58,7 @@ sources:
   - src/treg/alembic/versions/0072_callrecord_call_ref_index.py
   - src/treg/alembic/versions/0073_org_flow_control_version.py
   - tests/test_org_flow_control_schema.py
-  - src/treg/alembic/versions/0074_ad_click_stash.py
+  - src/treg/alembic/versions/0075_ad_click_stash.py
   - src/treg/timeutil.py
   - src/treg/infra/db.py
   - src/treg/infra/money_timing.py
@@ -996,7 +996,7 @@ The PostgreSQL build still scans each table and uses I/O; no production build du
 
 ## Email-to-click attribution stash
 
-`AdClickStash` (additive revision `0074`) is owned by `application.signup.stash_ad_click`.
+`AdClickStash` (additive revision `0075`) is owned by `application.signup.stash_ad_click`.
 Its email primary key supplies uniqueness and indexed lookup; `raw_cookie` stores the encoded,
 length-capped click fields, and `created_at`/`updated_at` use naive UTC. Authentication routes
 submit successful email observations; cookie-less signup uses observations from the last 90 days.
