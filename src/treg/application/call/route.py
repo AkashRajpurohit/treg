@@ -12,9 +12,10 @@ stops at once — it would be the same 4xx everywhere — unless the endpoint's 
 status as its "no result" answer (`miss: {status: 404}`), which is a MISS. A declared
 `not_found:` (the target itself does not exist) ends the call with that answer. Child-local treg authorization failures and
 platform vendor 401/403 responses are errors because another child may work. A MISS (2xx,
-`adapter.miss`) stops unless the
-caller turned the waterfall off (`X-Treg-Route-Waterfall: 0`). The waterfall is ON by default —
-the endpoint's job is to find the thing — bounded by `X-Treg-Route-Max-Cost` (default $1.00).
+`adapter.miss`) tries the next candidate: the waterfall is ON by default (the endpoint's job is
+to find the thing), and each attempt settles at its own price. `X-Treg-Route-Waterfall: 0` stops
+at the first miss. `X-Treg-Route-Max-Cost` (default $1.00) bounds the call: a candidate is started
+only while what was already charged plus its catalog estimate fits under it.
 
 `X-Treg-Route-Verify` asks for one more call after a hit, the contract's `check` (an email find
 checked by `treg.people.email.verify`). It is its own linked child `:v` with its own hold and
@@ -301,6 +302,7 @@ async def build_plan(ep: dict, identity_given: dict, caller, options: RouteOptio
                     continue
                 if caller.org_id is not None and await _marketplace_secret(service, caller.org_id, db) is not None:
                     own.add(service)
+    given = {k for k, v in (identity_given or {}).items() if v not in (None, "")}
     cands: list[Candidate] = []
     for e, ad, v in raw:
         st = stats.get(e["id"]) or {}
@@ -326,7 +328,7 @@ async def build_plan(ep: dict, identity_given: dict, caller, options: RouteOptio
                       exhausted=direct_exhausted and overflow_route is None,
                       note=(f"direct account exhausted; overflow via {overflow_route.aggregator}"
                             if overflow_route is not None else ""),
-                      ignored=ignored_filters(ad, contract, identity))
+                      ignored=ignored_filters(ad, contract, identity, given))
         if catalog_store.paused(e):
             dropped.append({"endpoint_id": e["id"], "why": f"{e['provider']} is paused on this deployment"})
             continue
@@ -358,7 +360,7 @@ async def build_plan(ep: dict, identity_given: dict, caller, options: RouteOptio
         cands = kept
     return Plan(contract=contract, identity=identity, variant=variant,
                 candidates=rank(cands, prefer=options.prefer or list(contract.prefer), exclude=options.exclude,
-                                given={k for k, v in (identity_given or {}).items() if v not in (None, "")},
+                                given=given,
                                 derive=contract.derive), dropped=dropped)
 
 
@@ -733,8 +735,13 @@ async def _run_routed(parent: CallContext, ep: dict, body_bytes: bytes, get_head
             if errors > MAX_ERROR_FALLBACKS or not plan.contract.idempotent:
                 break
             continue
-        if doc is None or is_miss or empty_core:
-            tried.append(Attempt(cand.endpoint["id"], cand.endpoint["provider"], "miss", response.status, charged, ignored=ignored))
+        # The provider's own `expect` success rule (a DataForSEO task status other than 20000 under
+        # a 20000 envelope) says this request failed: not an answer, whatever the remains read as.
+        upstream_failed = catalog_results.fails_expect(cand.endpoint["id"], raw)
+        if doc is None or is_miss or empty_core or upstream_failed:
+            tried.append(Attempt(cand.endpoint["id"], cand.endpoint["provider"], "miss", response.status, charged,
+                                 f"provider reported failure: {upstream_failed}" if upstream_failed else "",
+                                 ignored=ignored))
             if options.waterfall:
                 continue
             winner = (cand, doc if doc is not None else {}, {}, raw)

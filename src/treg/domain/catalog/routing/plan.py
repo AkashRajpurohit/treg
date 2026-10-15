@@ -18,9 +18,19 @@ def _used_keys(adapter: Adapter) -> set[str]:
     return set(adapter.in_map) | {n for e in (adapter.in_expr or {}).values() for n in re.findall(r"[A-Za-z_]\w*", e)}
 
 
-def ignored_filters(adapter: Adapter, contract: Contract, identity: dict[str, Any]) -> tuple[str, ...]:
+def ignored_filters(adapter: Adapter, contract: Contract, identity: dict[str, Any],
+                    given: set[str] | frozenset[str] | None = None) -> tuple[str, ...]:
     """Filters the caller supplied that this adapter has no place for — the provider will answer a
     LOOSER question than the one asked. Pure, and knowable before the call, so ranking can use it.
+
+    `given` = the keys the caller actually sent. A contract default fills a filter the caller left
+    out (`language: en`), and a default is not a question anyone asked: counting it ranked a child
+    with no language field behind one fifty times its price on every call. None = every filter in
+    `identity` was sent.
+
+    A filter the adapter sends only through a one-argument transform of it (`dfs_location(country)`)
+    is ignored when the transform has no value for what was sent: the provider gets no location,
+    which is the same looser question as an adapter with no country field at all.
 
     `limit` is a page size, not a filter: an adapter without one answers the same question, and its
     price already reflects the rows it bills. The contract defaults it, so counting it ranked every
@@ -28,7 +38,23 @@ def ignored_filters(adapter: Adapter, contract: Contract, identity: dict[str, An
     answers."""
     used = _used_keys(adapter)
     return tuple(k for k in (contract.filters or ()) if k != "limit"
-                 and identity.get(k) not in (None, "") and k not in used)
+                 and identity.get(k) not in (None, "") and (given is None or k in given)
+                 and (k not in used or _unmappable(adapter, k, identity)))
+
+
+def _unmappable(adapter: Adapter, key: str, identity: dict[str, Any]) -> bool:
+    """True when `key` reaches the provider only through `f(key)` / `f(g(key))` expressions and
+    every one of them yields nothing for this value."""
+    if key in adapter.in_map:
+        return False
+    unary = re.compile(rf"^(?:\w+\()+{re.escape(key)}\)+$")
+    exprs = [e.replace(" ", "") for e in (adapter.in_expr or {}).values() if re.search(rf"\b{re.escape(key)}\b", e)]
+    if not exprs or not all(unary.match(e) for e in exprs):
+        return False
+    try:
+        return all(P.evaluate(e, identity) in (None, "", []) for e in exprs)
+    except Exception:  # noqa: BLE001 - ranking must never crash on an expression
+        return False
 
 
 def unscoped(adapter: Adapter, contract: Contract, identity: dict[str, Any]) -> tuple[str, ...]:

@@ -125,6 +125,23 @@ class Settings(BaseSettings):
     # The shared key-value store (Redis protocol). Empty = an in-process fallback; see infra/kv.py.
     kv_url: str = ""
 
+    # Published root-call pause rules only; rate/concurrency fields are not enforced here.
+    org_flow_control_enabled: bool = False
+    org_flow_control_refresh_s: float = Field(default=2.0, ge=0.2, le=10)
+
+    @model_validator(mode="after")
+    def _org_flow_control_configuration(self):
+        if self.org_flow_control_enabled:
+            try:
+                url = urlsplit(self.kv_url)
+                valid = (url.scheme in {"redis", "rediss"} and bool(url.hostname)
+                         or url.scheme == "unix" and bool(url.path))
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError("enabled org flow control requires a valid Redis kv_url")
+        return self
+
     # Root Web requests only; shared across keys/processes through Redis. Enabling requires
     # an explicit outage policy. Unlisted and exempt orgs retain their existing behavior.
     org_concurrency_enabled: bool = False

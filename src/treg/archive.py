@@ -1416,7 +1416,7 @@ async def _lookup_key(kh: str, *, entry, endpoint_id: str, result_aware: bool,
     """One scope's attempt: the served answer, or the miss reason."""
     from sqlalchemy import select
 
-    from .domain.catalog.results import classify
+    from .domain.catalog.results import classify, fails_expect
     # The API pool, deliberately: a lookup runs INSIDE a caller's /call/. Every other session in
     # this module is a write nobody awaits and goes to the background pool; this one is on the
     # hot path and must not queue behind them.
@@ -1474,6 +1474,10 @@ async def _lookup_key(kh: str, *, entry, endpoint_id: str, result_aware: bool,
         result = classify(endpoint_id, newest.status_code, body)
         if result.state != "found":
             return miss("result_" + result.state)
+    elif fails_expect(endpoint_id, body) is not None:
+        # Recorded before the recorder learned the endpoint's `expect` rule: the provider said the
+        # request failed, so it is not an answer to serve.
+        return miss("result_error")
     return {"body": body, "media_type": newest.media_type,
             "status_code": newest.status_code, "fetched_at": newest.fetched_at,
             "age_s": age_s, "repeat_for_org": repeat,

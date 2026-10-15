@@ -86,11 +86,13 @@ fi
 # MCP server into every supported agent, header-authed. Both are best-effort — a failure here never
 # fails the install, since the CLI + skill are already in place.
 if [ -n "$TOKEN" ]; then
-  if treg login --token "$TOKEN" >/dev/null 2>&1; then
+  # Show login's own error: it can fail after the token was accepted.
+  if LOGIN_ERR=$(treg login --token "$TOKEN" 2>&1 >/dev/null); then
     printf '\033[32m✓\033[0m Signed in.\n'
     treg mcp install 2>/dev/null || true
   else
-    printf '\033[33m!\033[0m That token did not verify — run \033[1mtreg login\033[0m to sign in.\n'
+    printf '\033[33m!\033[0m Sign-in with that token failed: %s\n' "$(printf '%s\n' "$LOGIN_ERR" | tail -n 1)"
+    printf '  Run \033[1mtreg login\033[0m to sign in.\n'
   fi
   printf '\n\033[32m✓\033[0m treg is set up. Docs & tutorial:  %s/tutorial\n\n' "$BASE"
 else

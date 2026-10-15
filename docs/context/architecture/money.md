@@ -438,7 +438,10 @@ validated ceiling. Both the normal response path and the async worker
 use it. Provider differences remain in catalog YAML; there are no provider billing adapters.
 An async row settles at the terminal answer when its price is a table, a `usage` meter, or a plain
 `per_call` price (`observed` amount, the fixed price as fallback): a provider that bills every
-finished answer is charged for each one, a finished answer with no result included. Async
+finished answer is charged for each one, a finished answer with no result included. A provider
+that bills on submission has the reported charge frozen into the basis
+(`submission_charge_micro`), and an `observed` settle uses it when the terminal answer reports
+none, `billed_failure` included: the task bills what the provider charged, not the estimate. Async
 `per_success` rows without a table keep settling on the submission response.
 
 A submission whose own status is already a success word, on a descriptor with
@@ -508,7 +511,8 @@ owned by the original task and may close on this poll's terminal evidence. This 
 billed OAuth, or a zero estimate on a paid endpoint.
 A 2xx that is not an accepted submission (not JSON, fails the endpoint's `expect` rule, or carries
 no task id / an off-allow-list poll URL: `application.call.service._submission_rejected`) never
-becomes a row: it settles at zero on the request path and the caller sees the body and `$0`. The
+becomes a row: it settles on the request path at the charge the provider reported, else zero (a
+batch whose first task was refused may still carry accepted, billed tasks the caller owns). The
 worker never lets one row abort a tick (`_process` catches everything, `settle_due` gathers with
 `return_exceptions`), because an unset platform key for one provider must not stall every other
 provider's settlements. Each tick loads the catalog once, in a thread, before any poll starts

@@ -398,13 +398,16 @@ requires its successful status as described below. Results are `found`,
 LeadMagic needs person identity fields, not an email address; SE Ranking needs boolean
 `is_data_found` and a valid nonnegative volume for found rows. Zero volume is useful data. A
 mixed SE Ranking batch is useful if at least one row has data and every row has a valid shape.
-Explicit empty arrays/no-data flags are empty. HTTP errors and explicit provider error envelopes
-are errors; invalid JSON, predicate failures and unsupported shapes are unknown. Generic adapter
+Explicit empty arrays/no-data flags are empty. A 2xx body that fails the endpoint's own `expect`
+success rule (`results.fails_expect`; a DataForSEO task status other than 20000 under a 20000
+envelope) is an error with reason `expect_failed`, before any adapter reads it. HTTP errors and
+explicit provider error envelopes are errors; invalid JSON, predicate failures and unsupported shapes are unknown. Generic adapter
 rules retain their existing semantics, including their limitations on missing fields; verification
 against a fixture does not imply full response-schema validation.
 
 Endpoints without enabled hit/miss rules retain their original latest-snapshot serving, TTL
-learning, and refresh behavior. Their unknown business-result metric does not reject caching.
+learning, and refresh behavior, with one exception on every endpoint: a body failing the `expect`
+rule is never recorded, and one already stored is never served (lookup reports `result_error`). Their unknown business-result metric does not reject caching.
 The mode, serving allowlist, cohort and retention gates remain authoritative for every endpoint.
 This policy does not enable cache serving for additional endpoints.
 
@@ -532,9 +535,12 @@ later for the timers; it complements `/admin/reconcile/repeats`, which prices wh
 Hooked in `call_tool` immediately after `_buffer_response` — the one line where "metered platform
 call, body already in memory" is a fact, which IS eligibility gate 3. Metered 2xx only, and never a 2xx the capacity
 signature table reads as our own account running dry (Icypeas' 200 "insufficient credits"), nor a
-"still working" submission on an async row whose first answer may be finished
-(`terminal_on_submission`): that is a task id, not an answer to replay; the
-serve path already emits `X-Treg-Cache: hit`. The call context also carries `cached` from
+submission (`_unfinished_submission`): on a row that creates an owned resource
+(`resource_ownership.produces`) or is async, any answer but a finished one. That is a job or task
+id, not an answer to replay: a replay would sell the asking team another team's id instead of a
+resource of its own. For the same reason the serve path never looks up such a row (`_only_submits`)
+unless it is `terminal_on_submission`, which stores and serves finished answers only.
+The serve path already emits `X-Treg-Cache: hit`. The call context also carries `cached` from
 `served_hit`, so review invitations can exclude archive hits independently of response headers. `archive.record()` is fire-and-forget with
 audit's discipline: bounded pending set (512), failures swallowed but logged at **ERROR** (a lost
 recording has to clear `FaultCaptureHandler`'s threshold to be reportable at all; degradations that

@@ -78,6 +78,47 @@ def verdict(endpoint_id: str, status: int, body: bytes) -> str | None:
     return word
 
 
+def _dotted(document: object, dotted: str) -> object:
+    """The `expect` rule's path reader, the same reading settle and the async rules give it:
+    `tasks.0.status_code` walks dict keys and list indexes; anything absent is None."""
+    current = document
+    for part in dotted.split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
+            return None
+    return current
+
+
+def _expect_failure(endpoint_id: str, doc: object) -> str | None:
+    from .store import load
+
+    rule = (load().by_id.get(endpoint_id) or {}).get("expect")
+    if not isinstance(rule, dict) or not rule.get("json_path"):
+        return None
+    path = str(rule["json_path"])
+    actual = _dotted(doc, path)
+    if actual == rule.get("equals"):
+        return None
+    return f"{path}={json.dumps(actual, ensure_ascii=True, default=str)[:80]}"
+
+
+def fails_expect(endpoint_id: str, body: bytes) -> str | None:
+    """`path=value` when a 2xx body fails the endpoint's own `expect` success rule, else None.
+
+    The provider said, inside a 2xx, that this request failed (a DataForSEO task status other than
+    20000 under a 20000 envelope). The caller is told, the answer is never archived or called
+    found, and the charge is untouched: settle still bills what the provider reported. An endpoint
+    without a rule, or a body that is not JSON, is not judged here."""
+    try:
+        doc = json.loads(body)
+    except (ValueError, RecursionError, UnicodeDecodeError, TypeError):
+        return None
+    return _expect_failure(endpoint_id, doc)
+
+
 def classify(endpoint_id: str, status: int, body: bytes) -> Result:
     if not 200 <= status < 300:
         return Result("error", "http_error")
@@ -87,6 +128,10 @@ def classify(endpoint_id: str, status: int, body: bytes) -> Result:
         doc = json.loads(body)
     except (ValueError, RecursionError):
         return Result("unknown", "invalid_json")
+    if _expect_failure(endpoint_id, doc) is not None:
+        # The provider's own success rule failed: whatever the adapter reads off the remains, this
+        # is not an answer to the question, found or empty. Neither cached nor counted.
+        return Result("error", "expect_failed")
     if isinstance(doc, dict) and (doc.get("error") or doc.get("errors")):
         empty = False
         if endpoint_id not in STRICT_ENDPOINTS:

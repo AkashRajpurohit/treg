@@ -79,7 +79,7 @@ treg login --token <per-org-token>    # non-interactive (agents/CI)
 ```
 Everything runs in your **active org** (after first login, create or join a team). Team invites arrive by
 email — see them with `treg invites`, accept with `treg accept` (or `treg org join <code>`). Switch
-teams: `treg org switch <slug>`.
+teams: `treg org use <slug>`.
 
 ## Already connected over MCP? Then you have the tools, not the CLI
 
@@ -145,6 +145,8 @@ Notes:
   to the balance — they take priority automatically). A 402 with `error: route_max_cost` is
   different: YOUR `X-Treg-Route-Max-Cost` header refused the call before anything was charged —
   ask for fewer rows/targets or raise the ceiling.
+- **Body from a file:** `treg call <id> --data @body.json` (`@-` reads stdin). On Windows
+  PowerShell prefer it to inline JSON, whose inner quotes PowerShell strips.
 - **Scripting many calls:** use `treg --json call …`. Stdout is one line,
   `{"result": <provider body>, "_treg": {"http_status", "call_id", "charged_micro"}}`, and nothing
   goes to stderr, so a script that merges the streams still parses every answer (`--await` output
@@ -159,7 +161,9 @@ Notes:
   when the price is per row; when the catalog `cost.unit` is `target`/`domain`/`keyword` you pay
   per thing asked about, one unit per target. Failed calls (4xx/5xx relayed from the provider)
   are free; empty results mean whatever the provider means by them — treg relays, it does not
-  normalise.
+  normalise. A provider that reports a failure inside a 2xx answer (a DataForSEO task status
+  other than 20000) is flagged with `X-Treg-Upstream-Failed` (`upstream_failed` over MCP): the
+  body has no result, and the charge is what the provider billed for the attempt.
 - A call may be answered from treg's archive of the exact same question while that answer is
   fresh: verbatim provider bytes, `X-Treg-Cache: hit`, `X-Treg-Fetched-At`, `X-Treg-Age`. Your
   team's first call on a question costs full price either way; from your second call on, a hit
@@ -411,7 +415,7 @@ treg org create "Team A"                       # you become owner (auto-active)
 treg org rename --name "Team B" --slug team-b   # admin+; existing keys keep working
 treg org invite bob@company.com --role member  # admin+; emails the invite (a one-time code is the fallback)
 treg org members                               # admin+; who's in the active org
-treg org ls / treg org switch <slug>           # your orgs / switch active
+treg org ls / treg org use <slug>              # your orgs / switch active
 ```
 **Give an agent its own identity** (admin+). An agent doesn't have to borrow the human's token — mint
 it one, and every call it makes is capped, scoped and logged as *itself*:
@@ -438,8 +442,9 @@ Proactively share problems and suggestions about treg. Small annoyances that slo
 down count too: unclear instructions, confusing results or charges, unhelpful errors, and
 missing capabilities you worked around, even if the task succeeded. Describe what you needed and
 observed; you do not need to prove a bug. Distinguish observations from suspected causes.
-Use the `feedback` tool over MCP, or `treg feedback submit` over CLI. Pass related call IDs
-in `call_ids` (CLI: `--call-id`), not only in the message; references are optional.
+Use the `feedback` tool over MCP, or `treg feedback submit <quality|pricing|friction|other>
+"message"` over CLI. Pass related call IDs in `call_ids` (CLI: `--call-id`), not only in the
+message; references are optional.
 Report each issue once. Feedback helps the treg team improve the product; it does not complete
 the user's task. Keep going afterward.
 Keep private information out of the report. See [feedback instructions](https://treg.to/feedback.md).

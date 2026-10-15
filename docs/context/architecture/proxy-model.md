@@ -632,7 +632,8 @@ A catalog endpoint carrying an `async` descriptor resolves like any other (`reso
 the `MarketplaceCall`). In `service._execute_call`, a metered 2xx from such an endpoint is
 **deferred** (`application.asynctasks.defer_submission` writes the pending row and leaves the hold
 open) unless `_submission_rejected` says the body is not an accepted submission (not JSON, `expect`
-rule failed, no task id), in which case it settles at zero at once, or the descriptor's
+rule failed, no task id), in which case it settles at once at the provider's reported charge, else
+zero, or the descriptor's
 `terminal_on_submission` finds a success word in the submission itself, in which case it settles on
 the response like a synchronous call; a persistence failure releases the hold with an alert. The
 body the caller receives is the provider's either way. On such a row a "still working" submission
@@ -756,3 +757,12 @@ relay. BYOK and raw own-tool access keep their existing credential ACLs. The sha
 cannot receive one upstream job through provider deduplication. Unpinned digests are unchanged.
 `intake.prepare_call_intake` includes the same full pin in Treg's membership replay namespace. See
 [multi-tenancy](multi-tenancy.md#caller-tags-and-pinned-read-scopes) for the history and ledger scopes.
+
+## Optional root pause admission
+
+The shared `run_call_surface` checks [published Org pauses](org-flow-control.md) after identity
+and context creation, before concurrency or financial admission. It can refuse new root calls
+with 429 for an active valid pause. Redis failures allow calls; missing keys clear cached rules,
+and malformed or conflicting publications retain the previous valid rule's original expiry.
+Existing accepted work and its financial cleanup continue. This optional default-off check does not cover direct hub,
+provider-resource or background execution outside the shared surface.

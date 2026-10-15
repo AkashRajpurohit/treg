@@ -58,6 +58,12 @@ jobs:
       - name: Install dependencies
         if: steps.docs.outputs.only != 'true'
         run: uv sync --locked
+      - name: Verify pause context documentation
+        if: steps.docs.outputs.only != 'true'
+        run: |
+          python3 .agents/skills/tools-registry-context/scripts/build-map.py
+          git diff --exit-code -- docs/context/README.md .agents/skills/tools-registry-context/MAP.md
+          bash .agents/skills/tools-registry-context/scripts/drift.sh HEAD^..HEAD
       - name: Enforce import boundaries
         if: steps.docs.outputs.only != 'true'
         run: uv run --locked lint-imports
@@ -138,6 +144,9 @@ jobs:
           tests/test_kv_lease_diagnostics.py
           tests/test_org_concurrency.py
           tests/test_org_concurrency_redis.py
+          tests/test_org_flow_control.py
+          tests/test_org_flow_control_reader.py
+          tests/test_org_flow_control_redis.py
           tests/test_money_trace.py
           tests/test_money_trace_postgres.py
           tests/test_money_trace_runner.py

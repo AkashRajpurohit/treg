@@ -125,3 +125,32 @@ def test_ingest_carries_added_by_id_even_when_the_route_moved(tmp_path, monkeypa
     assert by_id["example.core"]["added"] == "2026-08-01"
     assert by_id["example.x.fresh"]["added"] == datetime.now(UTC).date().isoformat()
     assert list(by_id["example.x.fresh"])[:2] == ["id", "added"]
+
+
+def test_ingest_carries_reviewed_prices_rules_and_status_but_not_a_superseded_block(
+    tmp_path, monkeypatch,
+):
+    """A re-ingest regenerates rows from the spec; the per-row facts a human or the verifier
+    added (price, success rule, observed charge, status) must survive it. A legacy block yields to
+    ownership the fresh row now declares."""
+    monkeypatch.setattr(ingest, "CATALOG", tmp_path)
+    (tmp_path / "example.extended.yaml").write_text(
+        "provider: example\nendpoints:\n"
+        "- id: example.x.priced\n  method: POST\n  path: /priced\n  added: '2026-08-02'\n"
+        "  cost: {type: per_call, value: 0.6, currency: USD, unit: call}\n"
+        "  observed_cost: 0.5\n  expect: {json_path: ok, equals: true}\n  status: retired\n"
+        "  untestable: needs a crawl\n  platform_blocked: no owner\n"
+        "- id: example.x.reader\n  method: GET\n  path: /reader\n  added: '2026-08-02'\n"
+        "  platform_blocked: no owner\n")
+    endpoints = [
+        {"id": "example.x.priced", "method": "POST", "path": "/priced", "summary": "p"},
+        {"id": "example.x.reader", "method": "GET", "path": "/reader", "summary": "r",
+         "resource_ownership": {"requires": {"kind": "task", "param": "id"}}},
+    ]
+    ingest.carry_verification("example", endpoints)
+    priced, reader = endpoints
+    assert priced["cost"]["value"] == 0.6 and priced["observed_cost"] == 0.5
+    assert priced["expect"] == {"json_path": "ok", "equals": True}
+    assert priced["status"] == "retired" and priced["untestable"] == "needs a crawl"
+    assert priced["platform_blocked"] == "no owner"
+    assert "platform_blocked" not in reader

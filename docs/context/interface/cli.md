@@ -98,9 +98,14 @@ re-runs the server's `install.sh` to upgrade the CLI in place. A global **`--jso
 `main` like `--org`; both last one `main()` call, reset on entry and exit) makes the human-table commands (`org ls`, `agents ls`, `catalog` in all its forms)
 emit raw JSON instead — one stable contract for agents. On `call` (not `--await`) it prints one
 compact envelope, `{"result": <body>, "_treg": {http_status, call_id, charged_micro | reserved_micro,
-replay?, async?, hint?}}` (`_call_envelope`; text as a string, binary as base64), and suppresses the
-charge, hint and failure-diagnostic stderr lines: a script that merged the streams once discarded
-every result it had paid for. Exit status is unchanged (1 on HTTP >= 400).
+replay?, async?, hint?, treg_saturated?, retry_after_seconds?}}` (`_call_envelope`; text as a
+string, binary as base64), and suppresses the charge, hint and failure-diagnostic stderr lines: a
+script that merged the streams once discarded every result it had paid for. Exit status is
+unchanged (1 on HTTP >= 400).
+The failure-diagnostic line names whose answer a 4xx/5xx is from `X-Treg-Error`. treg's
+saturation 503 carries no `X-Treg-Error` (see [api](api.md)), so the CLI reads its typed
+`treg_saturated` body instead; a client that only checks the header blames the provider.
+Output and the CLI's own text files are UTF-8 on every console.
 **`TREG_CONFIG`** points the CLI at an alternate config file (CI/agents/tests; default
 `~/.treg/config.json`). `org use` validates the slug against `/orgs`, then gets that membership's
 active Default key before it saves either value. If that exchange fails, the previous team and token
@@ -150,7 +155,7 @@ provider answered and treg relayed it unchanged), the `X-Treg-Call-Id` to quote 
 `X-Treg-Cost-Micro` charge when the header is present. stdout stays the exact body — a runner that
 saved only stdout filed 115 relayed Moz quota 403s as a bare "cli_error" with no status or id. A
 metered 2xx gets the matching line (`_show_charge_line`: `treg: charged $0.006667 · call id …`,
-replay-aware). An async submission instead says `reserved up to $… for async settlement`, because
+replay-aware), plus a provider-failure line for `X-Treg-Upstream-Failed` ([api](api.md)). An async submission instead says `reserved up to $… for async settlement`, because
 its header is the open hold ceiling rather than the final charge. No cost header (own key,
 non-call response) → nothing extra.
 
@@ -307,8 +312,9 @@ Bare **`treg connections`** now lists (the subparser is `required=False` with a 
   catalog (prompts for its key env var + API base_url) and prints a catalog-entry snippet to share; an
   unknown bin isn't server-allow-listed, so it runs locally until an admin allow-lists it. Brains in
   `providers.py` + `skills.py`; see [env-import](env-import.md).
-- **`call`** (`target`, optional `path`; `--method`, `--query K=V` repeatable, `--data`, `--file`,
-  `--content-type`, `--header 'K: V'` repeatable) → three shapes: named `call <tool> <path>`, agent-native
+- **`call`** (`target`, optional `path`; `--method`, `--query K=V` repeatable, `--data` (also
+  `@PATH`, `@-`; body rules in USAGE.md), `--file`, `--content-type`, `--header 'K: V'`
+  repeatable) → three shapes: named `call <tool> <path>`, agent-native
   single URL `call https://host/full/path` (path omitted), or a **catalog endpoint id**
   `call tikhub.tiktok.video.comments` — all hit `/call/<rest>`. **`--header`** adds an
   extra request header the binding can't know (e.g. Google Ads' per-call `login-customer-id`); an
