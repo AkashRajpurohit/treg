@@ -228,6 +228,17 @@ and the exhausted provider, and `GET /catalog/endpoints/{id}` / `catalog_get` ca
 `overflow_price_usd`, `overflow_price_unit` and `overflow_via` on a platform-eligible endpoint the
 deployment can relay - the price a "free" endpoint may actually bill, stated before the call.
 
+## `X-Treg-Upstream-Failed` - the provider said this 2xx failed
+
+`<json_path>=<value>` on a metered 2xx whose body fails the endpoint's own `expect` success rule,
+for example `tasks.0.status_code=40101` when a DataForSEO task failed under a 20000 envelope. The
+body is relayed untouched and `X-Treg-Cost-Micro` is what the provider reported for the attempt
+(settlement is unchanged). Such an answer is never archived or replayed and never counts as found.
+The MCP `call` result carries it as `upstream_failed` with a `hint`, `treg call` prints a stderr
+line, and `treg --json call` puts it in `_treg.upstream_failed`. A routed child that fails this way
+is a `miss` whose `detail` names the failed value. Absent on an overflow answer, an idempotent
+replay, and every unmetered call.
+
 ## `X-Treg-Smoothed` - the call waited for treg's own rate limit
 
 On platform calls, including owned free polling: `wait=<ms>` when the call was spaced behind other callers on the

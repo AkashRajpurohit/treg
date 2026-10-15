@@ -396,7 +396,11 @@ Money notes for agents:
   success, `treg: charged $<usd> · call id <id>` (stdout is always the exact body). **A script that
   parses the output uses `treg --json call …`**: stdout is then one line,
   `{"result": <body>, "_treg": {"http_status", "call_id", "charged_micro"}}`, and stderr is silent,
-  so merging the two streams cannot break the parse (`--await` output is unchanged). Before a loop
+  so merging the two streams cannot break the parse (`--await` output is unchanged). A 2xx in
+  which the provider itself reports a failure (a DataForSEO task status other than 20000) carries
+  `X-Treg-Upstream-Failed: <path>=<value>` (`upstream_failed` over MCP, `_treg.upstream_failed`
+  with `--json`): the body has no result, and the charge is what the provider billed for the
+  attempt. Before a loop
   over many inputs, run a few and check the parsed results: a parse bug discards answers already
   paid for. A `/call/`
   may be answered from treg's archive of earlier answers to the exact same question while that

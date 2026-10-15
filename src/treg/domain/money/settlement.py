@@ -245,7 +245,9 @@ def settle(basis: dict, evidence: dict[str, Any]) -> int:
         # rate-card estimate), not the ceiling. The worker marks the row for review.
         return max(0, int(basis.get("reserve_micro") or 0))
     if kind == "observed":
-        observed = evidence.get("observed_micro")
-        if isinstance(observed, int) and not isinstance(observed, bool) and observed >= 0:
-            return observed
+        # The provider's report on the answer itself, else its report on the submission (an
+        # async task that is billed when submitted, frozen by `defer_submission`).
+        for observed in (evidence.get("observed_micro"), basis.get("submission_charge_micro")):
+            if isinstance(observed, int) and not isinstance(observed, bool) and observed >= 0:
+                return observed
     return max(0, int(basis.get("fallback_micro") or 0))

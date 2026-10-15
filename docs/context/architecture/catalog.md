@@ -639,6 +639,9 @@ the provider's `source.curated` day.
 - **Ingest.** `carry_verification` carries `added` by id from every catalog file BEFORE its
   method/path check: a tool whose route moved is still the tool that reached main that day. Only
   an id the catalog has never had gets today's UTC date, so a re-import never re-dates a tool.
+  For a row whose route still matches it also carries the reviewed facts no spec holds (`cost`,
+  `observed_cost`, `expect`, `untestable`, `status`), but not `platform_blocked` once the fresh row
+  declares `resource_ownership.requires`: declared ownership is what the block stood in for.
 - **Backfill.** `scripts/catalog_backfill_added.py` dated the existing rows once from the
   first-parent history of main: the first merge day on which each id was present in any catalog
   file. A branch that merged main into itself and was then fast-forwarded onto main puts its own
@@ -819,7 +822,13 @@ required id but omit this metadata, so new legacy-style pairs cannot rely on a r
 boundary by hand.
 Generated legacy task consumers for which no trustworthy producer→id chain is represented are
 explicitly `platform_blocked` instead: Akta request status, TikHub's captions-result route, and the
-DataForSEO on-page/SERP task consumers remain callable with BYOK but never receive treg's shared key.
+DataForSEO SERP task consumers (`serp/ai_summary`, `serp/screenshot`) remain callable with BYOK but
+never receive treg's shared key.
+
+A provider's task queue is ingested as owned async pairs (`catalog_ingest.dfs_submission`): the
+submission's `produces` may take every list item (`tasks.*.id`), so a batch owns each of its tasks,
+and its free reader declares the matching `requires`. A reader of the account-wide queue is never
+the poll target. Every shared-key submission must have an owned reader (`tests/test_dataforseo_async.py`).
 `carry_verification` preserves that reviewed block across re-ingestion just like a verification
 stamp; silently regenerating it away would reopen the tenant boundary.
 
@@ -1798,6 +1807,9 @@ Five rules worth keeping:
   declaration), charging nothing and asking no one else. `endpoint_view` shows `status` and
   `means` on the tools that declare it. Each scrape adapter's `miss` predicate reads that
   provider's own text field, so an empty page is a miss for every provider, not a hit.
+- **A failed `expect` rule is a miss.** A routed child's 2xx whose body fails the endpoint's own
+  `expect` success rule is a `miss` whatever the adapter reads off it, and keeps the charge the
+  provider reported.
 - **`miss` semantics ride on the endpoint.** Some providers answer "asked and answered: no result"
   with an error status (PDL 404s a person it has no record of; Hunter's combined-find does the
   same). Endpoints with evidenced miss behaviour carry a `miss: {status, means}` block in their
@@ -2245,6 +2257,10 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   still decides among candidates that ignore equally much. `limit` never counts: it is a page size,
   not a narrowing filter, and the contract defaults it, so counting it demoted every limit-less
   child (a free-on-miss role finder fell behind a search that bills its empty pages).
+  Only a filter the caller SENT counts (`ignored_filters(given=…)`): a contract default is not a
+  question anyone asked, and counting it made the call-time ranking disagree with the quote. A
+  filter sent through a one-argument transform with no value for it (an unmappable country) counts
+  as ignored, never becomes another value.
   **Coverage caveat**: of 16 `people.search` children, only icypeas maps geo today, so the rule
   currently floats one provider. lusha, crustdata, companyenrich and leadmagic all filter on
   location upstream — their adapters just do not map it. Until they do, the rule is doing more work
@@ -2301,11 +2317,13 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   bracket-safe target), crustdata/diffbot people.enrich (truncated examples), the `*.bulk` jobs
   (async), hunter multi-domain (masked rows).
 - **Filters reach providers, or say they did not (2026-08-29)**: `country` (ISO code) becomes a name
-  through `country_name` (`catalog/countries.json`, 249 rows generated from pycountry) for providers
+  through `country_name` (`catalog/countries.json`, generated from pycountry) for providers
   that filter on a location NAME (icypeas); `location` is a free-text pass-through ("London, United
   Kingdom", "Europe") for the same providers; a filter the caller sent that an adapter never mentions
   is listed on the attempt as `ignored_filters` — silently unapplied was the worst outcome (the bench
-  had post-filtered in the agent because of it). Bench re-run, recruiting 30: same icypeas rows as the
+  had post-filtered in the agent because of it). `dfs_location` maps any ISO country to its location
+  code (`catalog/country_numeric.json`) and returns nothing for a value that names no country: a
+  country must never silently become a default one. Bench re-run, recruiting 30: same icypeas rows as the
   hand-written policy, one automatic fall-through, region briefs rescued by the pass-through.
 - **Routed DISCOVERY is a runtime switch (2026-08-29)**: `TREG_ROUTED_DISCOVERY=off` (default `on`)
   stops search leading with `treg.<capability>` and stops a routed parent riding in when a child

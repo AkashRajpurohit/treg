@@ -47,9 +47,19 @@ def _json_value(value: object) -> object:
     return json.loads(json.dumps(value, default=lambda item: item.isoformat()))
 
 
-async def defer_submission(mk, body: bytes, org_id: int, *, tags: dict | None = None) -> int:
-    """Persist the pending task before allowing the request path to leave its hold open."""
+async def defer_submission(mk, body: bytes, org_id: int, *, tags: dict | None = None,
+                           submission_charge_micro: int | None = None) -> int:
+    """Persist the pending task before allowing the request path to leave its hold open.
+
+    `submission_charge_micro` is what the provider reported charging for the submission itself
+    (DataForSEO bills at task_post and its task_get answers report no cost). An `observed` basis
+    freezes it, so the terminal settle bills what the provider charged rather than the estimate."""
     now = utcnow_naive()
+    basis = dict(mk.settlement_basis)
+    if ((basis.get("amount") or {}).get("kind") == "observed"
+            and isinstance(submission_charge_micro, int)
+            and not isinstance(submission_charge_micro, bool) and submission_charge_micro >= 0):
+        basis["submission_charge_micro"] = submission_charge_micro
     # The request path has already established that this body is JSON and carries the task id
     # (`_submission_accepted`); a failure here is a programming error and surfaces as one.
     extracted = asynctasks.extract_submission(mk.async_descriptor or {}, json.loads(body))
@@ -64,7 +74,7 @@ async def defer_submission(mk, body: bytes, org_id: int, *, tags: dict | None = 
             tags=dict(tags) if tags else None,
             endpoint_id=mk.endpoint_id, task_id=task_id, poll_url=poll_url,
             reserved_micro=hold.amount_micro, descriptor=_json_value(mk.async_descriptor or {}),
-            settlement_basis=_json_value(mk.settlement_basis),
+            settlement_basis=_json_value(basis),
             created_at=now, next_check_at=due, error=error, key_slot=mk.key_slot,
         )
         db.add(row)
@@ -87,13 +97,21 @@ def _result_id(descriptor: dict, document: object) -> str | None:
     return str(fetch["value"]) if fetch and fetch.get("value") not in (None, "") else None
 
 
-def _dotted(document: object, path: str) -> object:
-    value = document
+def _dotted(document: object, path: str) -> list[object]:
+    """Every value a `produces` path names. A numeric part indexes a list and `*` takes each
+    item, so one DataForSEO submission of several tasks (`tasks.*.id`) owns every task it made."""
+    values = [document]
     for part in path.split("."):
-        if not isinstance(value, dict) or part not in value:
-            return None
-        value = value[part]
-    return value
+        found: list[object] = []
+        for value in values:
+            if isinstance(value, dict) and part in value:
+                found.append(value[part])
+            elif isinstance(value, list) and part == "*":
+                found.extend(value)
+            elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+                found.append(value[int(part)])
+        values = found
+    return values
 
 
 async def _remember_resource(db, row: AsyncTaskRecord, kind: str, resource_id: str) -> None:
@@ -124,7 +142,8 @@ async def remember_platform_resources(
         (str(item.get("kind") or ""), str(value))
         for item in rule.get("produces") or []
         if isinstance(item, dict)
-        and (value := _dotted(document, str(item.get("path") or ""))) not in (None, "")
+        for value in _dotted(document, str(item.get("path") or ""))
+        if isinstance(value, (str, int)) and not isinstance(value, bool) and value != ""
     }
     if not resources:
         return 0

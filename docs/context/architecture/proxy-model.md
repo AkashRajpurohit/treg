@@ -632,7 +632,8 @@ A catalog endpoint carrying an `async` descriptor resolves like any other (`reso
 the `MarketplaceCall`). In `service._execute_call`, a metered 2xx from such an endpoint is
 **deferred** (`application.asynctasks.defer_submission` writes the pending row and leaves the hold
 open) unless `_submission_rejected` says the body is not an accepted submission (not JSON, `expect`
-rule failed, no task id), in which case it settles at zero at once, or the descriptor's
+rule failed, no task id), in which case it settles at once at the provider's reported charge, else
+zero, or the descriptor's
 `terminal_on_submission` finds a success word in the submission itself, in which case it settles on
 the response like a synchronous call; a persistence failure releases the hold with an alert. The
 body the caller receives is the provider's either way. On such a row a "still working" submission
