@@ -127,11 +127,15 @@ async def _repair_bucket(session_factory, endpoint_id: str, day: str, at: dateti
                 CallRecord.created_at >= start, CallRecord.created_at < start + timedelta(days=1),
                 CallRecord.id <= state.cursor_id).execution_options(yield_per=BATCH_ROWS))
         try:
-            async for row in rows:
-                tally.fold(status_code=row.status_code, created_at=row.created_at,
-                           duration_ms=row.duration_ms, hit=row.hit,
-                           cost_observed_micro=row.cost_observed_micro, refused_by=row.refused_by,
-                           verdict=row.verdict, empty_fails=empty_fails)
+            # Cross the async result boundary once per bounded batch, then unpack rows locally.
+            # The query still reads the complete folded day from one source snapshot.
+            async for batch in rows.partitions(BATCH_ROWS):
+                for status_code, created_at, duration_ms, hit, cost, refused_by, verdict in batch:
+                    tally.fold(status_code=status_code, created_at=created_at,
+                               duration_ms=duration_ms, hit=hit, cost_observed_micro=cost,
+                               refused_by=refused_by, verdict=verdict, empty_fails=empty_fails)
+                # Buffered rows need no I/O await; let timeout/cancellation run between batches.
+                await asyncio.sleep(0)
         finally:
             await rows.close()
         await _store_tally(db, endpoint_id, day, tally, at, terminal_reconciled=True)
