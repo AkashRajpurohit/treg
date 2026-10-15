@@ -851,6 +851,67 @@ DFS_PLUMBING = {
     "models", "versions", "user_data", "force_stop", "task_get",
 }
 DFS_DOCS = re.compile(r"https://docs\.dataforseo\.com/[^'\s\"]+")
+# A /task_post-only family's result reader, in order of preference: one per family, never html
+# (a raw page, not data) and never the account-wide tasks_ready (it lists every team's tasks on
+# treg's shared account).
+DFS_TASK_GET = ("task_get/advanced/{id}", "task_get/{id}", "task_get/regular/{id}")
+# DataForSEO's per-task status codes (docs.dataforseo.com/v3/appendix/errors) as a task_get reads
+# them. 20100/40601/40602 mean created, handed to the engine, in the queue. DataForSEO bills a task
+# when it is POSTED, so an error the finished task reports is still a billed answer: the descriptor
+# settles it at the charge the submission reported, never at zero (the provider decides).
+DFS_TASK_PROGRESS = [20100, 40601, 40602]
+DFS_TASK_FAILED = [40101, 40102, 40103, 40106, 40400, 40401, 40402, 40403, 40404, 40405, 40408,
+                   50000, 50001, 50301, 50302, 50303, 50304, 50401, 50402]
+# The on-page crawl's readers take the crawl's task id: in the path (summary) or in a one-element
+# task array. The submitting team owns the id; a reader on treg's key checks it.
+DFS_ON_PAGE_TASK = "on_page_task"
+DFS_ON_PAGE_READERS = frozenset(f"/on_page/{name}" for name in (
+    "content_parsing", "duplicate_content", "duplicate_tags", "keyword_density", "links",
+    "microdata", "non_indexable", "pages", "pages_by_resource", "raw_html", "redirect_chains",
+    "resources", "summary/{id}", "uncrawlable_resources", "waterfall"))
+
+
+def dfs_task_get_row(post: dict, get_path: str, op: dict) -> dict:
+    """The reader of one submission-only family: free, owned by the team that submitted the task."""
+    path = get_path.removeprefix("/v3")
+    endpoint_id = slug_id("dataforseo", path.removesuffix("/{id}"))
+    desc = clean(op.get("description") or "")
+    docs = DFS_DOCS.search(desc)
+    row = {
+        "id": endpoint_id,
+        "tier": "extended",
+        "platform": post["platform"],
+        "kind": "utility",
+        "method": "GET",
+        "path": path,
+        "name": f"Result of: {post.get('name') or post['id']}"[:60],
+        "summary": ("Read the result of a task submitted with " + post["id"] + ". Free; only the "
+                    "team that submitted the task can read it, for 30 days."),
+        "input": {"pathParams": {"id": {
+            "type": "string", "required": True,
+            "note": "tasks[].id from the submission's answer",
+            "example": "00000000-0000-0000-0000-000000000000"}}},
+        "cost": {"type": "free", "value": 0, "currency": "USD", "unit": "call",
+                 "note": "DataForSEO does not bill task_get; the submission paid for the task"},
+        "resource_ownership": {"requires": {"kind": f"poll:{endpoint_id}", "param": "id"}},
+    }
+    if docs:
+        row["docs_url"] = docs.group(0).rstrip("',.").split("?")[0]
+    return row
+
+
+def dfs_submission(post: dict, reader_id: str) -> None:
+    """Make a /task_post row an async submission whose tasks the submitting team owns."""
+    post["expect"] = {"json_path": "tasks.0.status_code", "equals": 20100}
+    post["resource_ownership"] = {"produces": [{"kind": f"poll:{reader_id}", "path": "tasks.*.id"}]}
+    post["async"] = {
+        "id_from": "tasks.0.id",
+        "poll": {"endpoint": reader_id, "param": {"in": "pathParams", "name": "id"}},
+        "status": {"path": "tasks.0.status_code", "progress": DFS_TASK_PROGRESS,
+                   "success": [20000], "failure": [], "billed_failure": DFS_TASK_FAILED},
+        "result": {"path": "tasks.0.result", "ttl_note": "30 days"},
+        "interval": 20,
+    }
 
 
 def ingest_dataforseo(refresh: bool) -> tuple[Path, dict]:
@@ -913,6 +974,32 @@ def ingest_dataforseo(refresh: bool) -> tuple[Path, dict]:
         if docs:
             entry["docs_url"] = docs.group(0).rstrip("',.").split("?")[0]
         endpoints.append(entry)
+
+    # A submission-only family needs its reader on the same key, or a paid task is unreadable.
+    readers = []
+    for post in endpoints:
+        if not post["path"].endswith("/task_post"):
+            continue
+        stem = "/v3" + post["path"].removesuffix("task_post")
+        get_path = next((stem + tail for tail in DFS_TASK_GET if stem + tail in ops), None)
+        if get_path is not None:
+            reader = dfs_task_get_row(post, get_path, ops[get_path][1])
+            dfs_submission(post, reader["id"])
+            readers.append(reader)
+        elif post["path"] == "/on_page/task_post":
+            post["expect"] = {"json_path": "tasks.0.status_code", "equals": 20100}
+            post["resource_ownership"] = {
+                "produces": [{"kind": DFS_ON_PAGE_TASK, "path": "tasks.*.id"}]}
+    endpoints += readers
+    for entry in endpoints:
+        if entry["path"] in DFS_ON_PAGE_READERS:
+            if "{id}" in entry["path"]:
+                entry.setdefault("input", {"pathParams": {"id": {
+                    "type": "string", "required": True,
+                    "note": "tasks[].id from dataforseo.x.on-page-task-post"}}})
+            entry["resource_ownership"] = {"requires": {
+                "kind": DFS_ON_PAGE_TASK, "param": "id",
+                **({"in": "body"} if entry["method"] == "POST" else {})}}
 
     source = {
         "method": "openapi",

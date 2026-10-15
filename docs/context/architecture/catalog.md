@@ -823,7 +823,17 @@ required id but omit this metadata, so new legacy-style pairs cannot rely on a r
 boundary by hand.
 Generated legacy task consumers for which no trustworthy producer→id chain is represented are
 explicitly `platform_blocked` instead: Akta request status, TikHub's captions-result route, and the
-DataForSEO on-page/SERP task consumers remain callable with BYOK but never receive treg's shared key.
+DataForSEO SERP task consumers (`serp/ai_summary`, `serp/screenshot`) remain callable with BYOK but
+never receive treg's shared key.
+
+DataForSEO's Standard queue is ingested as owned async pairs (`scripts/catalog_ingest.py`,
+`dfs_submission`): every `/task_post` without a live twin is an async submission (`expect`
+20100 Task Created, `id_from: tasks.0.id`) whose `produces: tasks.*.id` gives the submitting team
+every task of a batch, and the family's free `task_get` (advanced, else plain, else regular; never
+html, never the account-wide `tasks_ready`) is its poll target and declares the matching
+`requires`. The first task drives settlement; the others are read on the same ownership. The on-page
+crawl is the one family with no task_get: `on-page-task-post` produces `on_page_task` and each
+reader of the crawl requires it (`DFS_ON_PAGE_READERS`).
 `carry_verification` preserves that reviewed block across re-ingestion just like a verification
 stamp; silently regenerating it away would reopen the tenant boundary.
 
