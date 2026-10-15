@@ -93,6 +93,7 @@ export default {
         await this.scLoad()
       } catch (e) { this.scErr = e.detail || 'Could not withdraw (' + e.status + ').' }
     },
+    scClose() { if (!this.scSaving) { this.scForm = null; this.scFormErr = '' } },
     scPick(ref) { const input = this.$refs[ref]; if (input) input.click() },
     async scUpload(kind, event) {
       const input = event.target, file = input.files && input.files[0]
@@ -161,73 +162,102 @@ export default {
       </li>
     </ul>
 
-    <form v-if="scForm" class="card sc-form" :aria-label="scForm.id===null?'Apply with an app':'Edit showcase entry'" @submit.prevent="scSave">
-      <h3 style="margin:0 0 4px;font-size:15px">{{scForm.id===null ? 'Apply with an app' : 'Edit ' + (scForm.draft.name || 'entry')}}</h3>
-      <p v-if="scForm.live" class="sub" style="margin:0 0 8px;font-size:12px">This app is live. Your change is reviewed before it replaces the live version.</p>
-      <div class="sc-grid">
-        <label class="sc-field"><span class="lbl">App name</span><input v-model="scForm.draft.name" maxlength="60" required></label>
-        <label class="sc-field"><span class="lbl">Link (https)</span><input v-model="scForm.draft.url" type="url" placeholder="https://" required></label>
-        <label class="sc-field sc-wide"><span class="lbl">Tagline</span><input v-model="scForm.draft.tagline" maxlength="80" required placeholder="What it does, in one line"></label>
-        <label class="sc-field sc-wide"><span class="lbl">Description <span class="muted">(optional, up to 500 characters)</span></span>
-          <textarea v-model="scForm.draft.description" maxlength="500" rows="4"></textarea></label>
-        <label class="sc-field"><span class="lbl">Category</span>
-          <select v-model="scForm.draft.category" class="msel" required>
-            <option value="" disabled>Pick a category</option>
-            <option v-for="[v,l] in CATEGORIES" :key="v" :value="v">{{l}}</option>
-          </select></label>
-        <label class="sc-field"><span class="lbl">Maker name <span class="muted">(optional)</span></span><input v-model="scForm.draft.maker_name" maxlength="60"></label>
-        <label class="sc-field"><span class="lbl">X handle <span class="muted">(optional)</span></span><input v-model="scForm.draft.x_handle" maxlength="16" placeholder="@handle"></label>
-        <label class="sc-field"><span class="lbl">Launch post <span class="muted">(optional)</span></span><input v-model="scForm.draft.launch_post_url" type="url" placeholder="https://"></label>
-      </div>
+    <div v-if="scForm" class="scrim" role="dialog" aria-modal="true" aria-labelledby="sc-form-title" v-dialog="scClose" @click.self="scClose">
+      <div class="modal sc-modal">
+        <div class="hd"><b id="sc-form-title">{{scForm.id===null ? 'Apply with an app' : 'Edit ' + (scForm.draft.name || 'entry')}}</b>
+          <button type="button" class="btn sm" aria-label="Close" @click="scClose">✕</button></div>
+        <form class="sc-form" :aria-label="scForm.id===null?'Apply with an app':'Edit showcase entry'" @submit.prevent="scSave">
+          <div class="sc-body">
+            <p class="explain">{{scForm.live
+              ? 'This app is live. Your change is reviewed before it replaces the live version.'
+              : 'Nothing is public until treg approves it. You can edit it while it waits.'}}</p>
 
-      <div class="lbl" style="margin-top:14px">Pictures</div>
-      <p v-if="!scCanUpload" class="sub sc-off" role="status" style="font-size:12px">Picture uploads are not enabled on this registry. You can apply without pictures.</p>
-      <template v-else>
-        <div class="sc-pics">
-          <div>
-            <div class="sub" style="margin:0 0 6px;font-size:12px">Icon. {{IMAGE_RULES.showcase_icon.hint}}</div>
-            <div style="display:flex;gap:10px;align-items:center">
-              <img v-if="scForm.draft.icon" class="sc-icon" :src="scForm.draft.icon.url" alt="App icon">
-              <input ref="scIconInput" type="file" accept="image/png,image/jpeg,image/webp" style="display:none" @change="scUpload('showcase_icon',$event)">
-              <button type="button" class="btn sm" :disabled="!!scUpBusy" @click="scPick('scIconInput')">{{scUpBusy==='showcase_icon'?'Uploading…':(scForm.draft.icon?'Replace icon':'Upload icon')}}</button>
-              <button v-if="scForm.draft.icon" type="button" class="btn sm" @click="scForm.draft.icon=null">Remove icon</button>
-            </div>
+            <section class="sc-section" aria-labelledby="sc-about">
+              <h3 id="sc-about" class="lbl">About the app</h3>
+              <div class="sc-grid">
+                <label class="sc-field"><span>App name</span><input v-model="scForm.draft.name" maxlength="60" required placeholder="Lead scout"></label>
+                <label class="sc-field"><span>Link (https)</span><input v-model="scForm.draft.url" type="url" placeholder="https://" required></label>
+                <label class="sc-field sc-wide"><span>Tagline</span><input v-model="scForm.draft.tagline" maxlength="80" required placeholder="What it does, in one line"></label>
+                <label class="sc-field sc-wide"><span>Description <i>optional, up to 500 characters</i></span>
+                  <textarea v-model="scForm.draft.description" maxlength="500" rows="3"></textarea></label>
+                <label class="sc-field"><span>Category</span>
+                  <select v-model="scForm.draft.category" required>
+                    <option value="" disabled>Pick a category</option>
+                    <option v-for="[v,l] in CATEGORIES" :key="v" :value="v">{{l}}</option>
+                  </select></label>
+              </div>
+            </section>
+
+            <section class="sc-section" aria-labelledby="sc-maker">
+              <h3 id="sc-maker" class="lbl">Maker <i>optional</i></h3>
+              <div class="sc-grid">
+                <label class="sc-field"><span>Maker name</span><input v-model="scForm.draft.maker_name" maxlength="60" placeholder="Your name"></label>
+                <label class="sc-field"><span>X handle</span><input v-model="scForm.draft.x_handle" maxlength="16" placeholder="@handle"></label>
+                <label class="sc-field sc-wide"><span>Launch post</span><input v-model="scForm.draft.launch_post_url" type="url" placeholder="https://x.com/…"></label>
+              </div>
+            </section>
+
+            <section class="sc-section" aria-labelledby="sc-pictures">
+              <h3 id="sc-pictures" class="lbl">Pictures</h3>
+              <p v-if="!scCanUpload" class="sub sc-off" role="status">Picture uploads are not enabled on this registry. You can apply without pictures.</p>
+              <template v-else>
+                <div class="sc-iconrow">
+                  <div class="sc-iconbox">
+                    <img v-if="scForm.draft.icon" class="sc-icon" :src="scForm.draft.icon.url" alt="App icon">
+                    <span v-else class="sc-icon sc-icon-empty" aria-hidden="true">{{(scForm.draft.name||'?').charAt(0).toUpperCase()}}</span>
+                  </div>
+                  <div>
+                    <b class="sc-pic-title">Icon</b>
+                    <p class="sub sc-hint">{{IMAGE_RULES.showcase_icon.hint}}</p>
+                    <input ref="scIconInput" type="file" accept="image/png,image/jpeg,image/webp" style="display:none" @change="scUpload('showcase_icon',$event)">
+                    <div class="sc-btns">
+                      <button type="button" class="btn sm" :disabled="!!scUpBusy" @click="scPick('scIconInput')">{{scUpBusy==='showcase_icon'?'Uploading…':(scForm.draft.icon?'Replace icon':'Upload icon')}}</button>
+                      <button v-if="scForm.draft.icon" type="button" class="btn sm" @click="scForm.draft.icon=null">Remove icon</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="sc-shot-head"><b class="sc-pic-title">Screenshots</b>
+                  <span class="sub sc-hint">Up to {{MAX_SHOTS}}; the first is the cover. {{IMAGE_RULES.showcase_shot.hint}}</span></div>
+                <ol class="sc-shots" aria-label="Screenshots">
+                  <li v-for="(s,i) in scForm.draft.shots" :key="s.key" class="sc-shot">
+                    <img :src="s.url" :alt="'Screenshot '+(i+1)">
+                    <span v-if="i===0" class="chip sc-cover">Cover</span>
+                    <span class="sc-shot-tools">
+                      <button type="button" class="btn sm ico" :disabled="i===0" :aria-label="'Move screenshot '+(i+1)+' up'" @click="scMove(i,-1)">←</button>
+                      <button type="button" class="btn sm ico" :disabled="i===scForm.draft.shots.length-1" :aria-label="'Move screenshot '+(i+1)+' down'" @click="scMove(i,1)">→</button>
+                      <button type="button" class="btn sm ico" :aria-label="'Remove screenshot '+(i+1)" @click="scDropShot(i)">✕</button>
+                    </span>
+                  </li>
+                  <li v-if="scForm.draft.shots.length<MAX_SHOTS" class="sc-shot sc-shot-add">
+                    <input ref="scShotInput" type="file" accept="image/png,image/jpeg,image/webp" style="display:none" @change="scUpload('showcase_shot',$event)">
+                    <button type="button" class="btn sm" :disabled="!!scUpBusy" @click="scPick('scShotInput')">{{scUpBusy==='showcase_shot'?'Uploading…':'Add screenshot'}}</button>
+                  </li>
+                </ol>
+                <p v-if="scUpErr" class="banner" role="alert" style="margin:8px 0 0">{{scUpErr}}</p>
+              </template>
+            </section>
+
+            <section class="sc-section" aria-labelledby="sc-consent-title">
+              <h3 id="sc-consent-title" class="lbl">What the showcase may show</h3>
+              <p class="sub sc-hint" style="margin:0 0 8px">Votes always show. Each item below is off until you turn it on. Only rounded figures are shown, never exact counts, spend or your team's name.</p>
+              <div class="sc-consent">
+                <label v-for="[k,title,text] in CONSENTS" :key="k" class="sc-check">
+                  <input v-model="scForm.draft[k]" type="checkbox">
+                  <span><b>{{title}}</b><span class="sub">{{text}}</span></span>
+                </label>
+              </div>
+            </section>
+
+            <div v-if="scFormErr" class="banner" role="alert">{{scFormErr}}
+              <button v-if="scStale" type="button" class="btn sm" style="margin-left:8px" @click="scReloadForm">Reload this app</button></div>
           </div>
-          <div>
-            <div class="sub" style="margin:0 0 6px;font-size:12px">Screenshots, up to {{MAX_SHOTS}}. The first is the cover. {{IMAGE_RULES.showcase_shot.hint}}</div>
-            <ol class="sc-shots" aria-label="Screenshots">
-              <li v-for="(s,i) in scForm.draft.shots" :key="s.key">
-                <img :src="s.url" :alt="'Screenshot '+(i+1)">
-                <span v-if="i===0" class="chip">Cover</span>
-                <span class="row-actions">
-                  <button type="button" class="btn sm" :disabled="i===0" :aria-label="'Move screenshot '+(i+1)+' up'" @click="scMove(i,-1)">↑</button>
-                  <button type="button" class="btn sm" :disabled="i===scForm.draft.shots.length-1" :aria-label="'Move screenshot '+(i+1)+' down'" @click="scMove(i,1)">↓</button>
-                  <button type="button" class="btn sm" :aria-label="'Remove screenshot '+(i+1)" @click="scDropShot(i)">Remove</button>
-                </span>
-              </li>
-            </ol>
-            <input ref="scShotInput" type="file" accept="image/png,image/jpeg,image/webp" style="display:none" @change="scUpload('showcase_shot',$event)">
-            <button v-if="scForm.draft.shots.length<MAX_SHOTS" type="button" class="btn sm" :disabled="!!scUpBusy" @click="scPick('scShotInput')">{{scUpBusy==='showcase_shot'?'Uploading…':'Add screenshot'}}</button>
+          <div class="sc-foot">
+            <button type="button" class="btn" @click="scClose">Cancel</button>
+            <button type="submit" class="btn primary" :disabled="scSaving || !!scUpBusy">{{scSaving ? 'Sending…' : 'Send for review'}}</button>
           </div>
-        </div>
-        <p v-if="scUpErr" class="banner" role="alert" style="margin:8px 0 0">{{scUpErr}}</p>
-      </template>
-
-      <fieldset class="sc-consent">
-        <legend class="lbl">What the showcase may show</legend>
-        <p class="sub" style="margin:0 0 6px;font-size:12px">Each one is off until you turn it on. Only rounded figures are shown, never exact counts, spend or your team's name.</p>
-        <label v-for="[k,title,text] in CONSENTS" :key="k" class="sc-check">
-          <input v-model="scForm.draft[k]" type="checkbox"> <span><b>{{title}}</b> <span class="muted">{{text}}</span></span>
-        </label>
-      </fieldset>
-
-      <div v-if="scFormErr" class="banner" role="alert" style="margin-top:10px">{{scFormErr}}
-        <button v-if="scStale" type="button" class="btn sm" style="margin-left:8px" @click="scReloadForm">Reload this app</button></div>
-      <div style="display:flex;gap:10px;margin-top:14px">
-        <button type="submit" class="btn primary" :disabled="scSaving || !!scUpBusy">{{scSaving ? 'Sending…' : 'Send for review'}}</button>
-        <button type="button" class="btn" @click="scForm=null">Cancel</button>
+        </form>
       </div>
-    </form>
+    </div>
   </template>
 </section>
 </template>
@@ -244,19 +274,43 @@ export default {
 .sc-chip.review { color:var(--amber); border-color:color-mix(in srgb,var(--amber) 30%,transparent); background:none; }
 .sc-chip.bad { color:var(--red); border-color:color-mix(in srgb,var(--red) 30%,transparent); background:none; white-space:normal; }
 .sc-chip.off { color:var(--muted); border-color:var(--line2); background:none; }
-.sc-form { margin-top:14px; padding:16px 18px; }
-.sc-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px 14px; }
-.sc-field { display:flex; flex-direction:column; gap:4px; min-width:0; }
-.sc-field .lbl { margin:0; }
-.sc-field input, .sc-field textarea, .sc-field select { width:100%; box-sizing:border-box; }
-.sc-field textarea { background:var(--bg); border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:8px 10px; font:inherit; resize:vertical; }
+.sc-modal { width:min(720px,95vw); max-height:90vh; display:flex; flex-direction:column; overflow:hidden; }
+.sc-form { display:flex; flex-direction:column; min-height:0; flex:1; }
+.sc-body { padding:16px 20px 8px; overflow:auto; }
+.sc-section { padding:14px 0; border-top:1px solid var(--line); }
+.sc-section:first-of-type { border-top:0; padding-top:4px; }
+.sc-section > .lbl { margin:0 0 10px; }
+.sc-section > .lbl i, .sc-field span i { font-style:normal; text-transform:none; letter-spacing:0; color:var(--muted2); font-weight:400; margin-left:4px; }
+.sc-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px 14px; }
+.sc-field { display:flex; flex-direction:column; gap:6px; min-width:0; font-size:12.5px; color:var(--ink); font-weight:500; }
+.sc-field input, .sc-field textarea, .sc-field select {
+  width:100%; box-sizing:border-box; background:var(--surface); border:1px solid var(--line2); color:var(--ink);
+  border-radius:10px; padding:9px 11px; font:400 13.5px var(--sans); }
+.sc-field input, .sc-field select { height:40px; }
+.sc-field textarea { resize:vertical; min-height:76px; line-height:1.45; }
+.sc-field input:focus, .sc-field textarea:focus, .sc-field select:focus { outline:none; border-color:var(--ink); }
+.sc-field input::placeholder, .sc-field textarea::placeholder { color:var(--muted2); }
 .sc-wide { grid-column:1 / -1; }
-.sc-pics { display:grid; gap:14px; }
-.sc-icon { width:64px; height:64px; border-radius:12px; object-fit:cover; border:1px solid var(--line); }
-.sc-shots { list-style:none; padding:0; margin:0 0 8px; display:grid; gap:8px; }
-.sc-shots li { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.sc-shots img { width:160px; height:auto; aspect-ratio:1280/800; object-fit:cover; border-radius:8px; border:1px solid var(--line); }
-.sc-consent { border:0; padding:0; margin:14px 0 0; }
-.sc-check { display:flex; gap:8px; align-items:flex-start; margin:6px 0; font-size:13px; }
-@media (max-width:700px) { .sc-grid { grid-template-columns:1fr; } .sc-app { flex-wrap:wrap; } }
+.sc-hint { font-size:12px; margin:2px 0 8px; }
+.sc-pic-title { font-size:13px; }
+.sc-btns { display:flex; gap:8px; flex-wrap:wrap; }
+.sc-iconrow { display:flex; gap:14px; align-items:flex-start; margin-bottom:14px; }
+.sc-icon { display:grid; place-items:center; width:72px; height:72px; border-radius:16px; object-fit:cover; border:1px solid var(--line); flex:none; }
+.sc-icon-empty { background:var(--panel2,var(--bg)); color:var(--muted); font:600 26px var(--sans); }
+.sc-shot-head { display:flex; flex-direction:column; gap:2px; }
+.sc-shots { list-style:none; padding:0; margin:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+.sc-shot { position:relative; border:1px solid var(--line); border-radius:10px; overflow:hidden; aspect-ratio:16/10; background:var(--panel2,var(--bg)); }
+.sc-shot img { width:100%; height:100%; object-fit:cover; display:block; }
+.sc-shot-add { display:grid; place-items:center; border-style:dashed; }
+.sc-cover { position:absolute; left:6px; top:6px; background:var(--surface); }
+.sc-shot-tools { position:absolute; right:6px; bottom:6px; display:flex; gap:4px; }
+.sc-shot-tools .btn { background:var(--surface); min-width:26px; padding:2px 6px; }
+.sc-consent { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.sc-check { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line); border-radius:10px; cursor:pointer; font-size:13px; }
+.sc-check:has(input:checked) { border-color:var(--ink); }
+.sc-check input { margin-top:2px; }
+.sc-check .sub { display:block; margin:2px 0 0; font-size:12px; }
+.sc-off { font-size:12px; margin:0; }
+.sc-foot { display:flex; justify-content:flex-end; gap:10px; padding:12px 20px; border-top:1px solid var(--line); background:var(--surface); }
+@media (max-width:700px) { .sc-grid, .sc-consent { grid-template-columns:1fr; } .sc-app { flex-wrap:wrap; } .sc-body { padding:14px 14px 6px; } }
 </style>
