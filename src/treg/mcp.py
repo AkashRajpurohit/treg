@@ -1215,8 +1215,9 @@ async def _catalog_get_impl(
 @mcp.tool(
     description=(
         "Call something through treg. `params` is the request body for a POST (an object, or an "
-        "ARRAY of task objects for providers like DataForSEO that expect one) and the query string "
-        "for a GET. Either a CATALOG endpoint by its id (from catalog_search), or "
+        "ARRAY when the endpoint's body is one: DataForSEO live routes take a one-element array, "
+        "`[{...task...}]`, and reject any extra element instead of batching it) and the query "
+        "string for a GET. Either a CATALOG endpoint by its id (from catalog_search), or "
         "one of THIS TEAM'S own tools as '<tool-name>/<path>' (from my_tools) — e.g. "
         "'render/v1/services' — or a HUB tool by its id '<team-slug>.<name>' (a maker's tool made of "
         "tools; `params` are its inputs, see catalog_get for them). treg injects the credential "
