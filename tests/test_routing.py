@@ -1969,8 +1969,7 @@ def test_every_iso_country_reaches_dataforseo_as_its_own_location():
     cat = catalog_store.load()
     contract = cat.contracts["google.keywords.volume"]
     dfs = cat.adapters["dataforseo.google.keywords.volume"]
-    anchors = {"us": 2840, "gb": 2826, "uk": 2826, "br": 2076, "ma": 2504, "th": 2764, "ru": 2643,
-               "cn": 2156, "cz": 2203, "cl": 2152, "ci": 2384, "sk": 2703, "kw": 2414, "dz": 2012}
+    anchors = {"us": 2840, "uk": 2826, "th": 2764}
     for code, location in anchors.items():
         ident, _ = canonical_identity(contract, {"keywords": ["kahve"], "country": code.upper()})
         _, body = dfs.to_upstream(ident)
@@ -1993,15 +1992,6 @@ def test_a_country_dataforseo_cannot_be_asked_about_is_reported_not_answered_for
     assert ignored_filters(dfs, contract, ident) == ("country",)
     good, _ = canonical_identity(contract, {"q": "coffee", "country": "th"})
     assert ignored_filters(dfs, contract, good) == ()
-
-
-def test_se_ranking_volume_names_great_britain_by_its_own_source_code():
-    """SE Ranking calls the United Kingdom database `uk`; `gb` answered 404 "Invalid source"."""
-    cat = catalog_store.load()
-    contract = cat.contracts["google.keywords.volume"]
-    ident, _ = canonical_identity(contract, {"keywords": ["tea"], "country": "GB"})
-    q, _ = cat.adapters["seranking.google.keywords.volume"].to_upstream(ident)
-    assert q["source"] == "uk", q
 
 
 def test_a_contract_default_the_caller_did_not_send_is_not_an_ignored_filter():

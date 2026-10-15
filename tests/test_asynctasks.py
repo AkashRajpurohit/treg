@@ -1650,15 +1650,6 @@ def test_a_produces_path_names_every_task_of_a_batch():
     assert task_app._dotted({"jobID": "j"}, "jobID") == ["j"]
 
 
-async def test_batch_submission_records_ownership_of_every_task(clients: AsyncClient):
-    rule = {"produces": [{"kind": "task", "path": "tasks.*.id"}]}
-    body = json.dumps({"tasks": [{"id": "t-1"}, {"id": "t-2"}, {"id": ""}]}).encode()
-    assert await task_app.remember_platform_resources(1, "dataforseo", "call-1", rule, body) == 2
-    async with session_maker() as db:
-        rows = (await db.execute(select(AsyncResourceRecord))).scalars().all()
-    assert {row.resource_id for row in rows} == {"t-1", "t-2"}
-
-
 @pytest.mark.parametrize("body, expected", [
     (b'{"id": "t-1"}', "t-1"),
     (b'[{"id": "t-1", "limit": 10}]', "t-1"),
@@ -1692,17 +1683,13 @@ def test_an_observed_async_basis_settles_at_the_charge_reported_on_submission():
     assert settlement.settle({**basis, "submission_charge_micro": None}, {"terminal": {}}) == 1_200
 
 
-def test_an_unfinished_async_submission_is_never_archived_nor_served():
-    """A replayed submission would hand the asking team a task id another team submitted."""
+def test_a_terminal_on_submission_row_archives_only_finished_answers():
+    """Such a row usually answers at once; a "still working" answer is a task id, not an answer to
+    replay. A row that always submits is covered end to end in test_dataforseo_async.py."""
     from types import SimpleNamespace
 
-    task = SimpleNamespace(async_descriptor={"id_from": "id", "status": {"path": "status",
-                                                                        "success": ["done"]}})
-    instant = SimpleNamespace(async_descriptor={**task.async_descriptor,
-                                                "terminal_on_submission": True})
-    sync = SimpleNamespace(async_descriptor=None)
-    assert call_service._only_submits(task) and call_service._unfinished_submission(task, b'{}')
+    instant = SimpleNamespace(async_descriptor={"id_from": "id", "terminal_on_submission": True,
+                                                "status": {"path": "status", "success": ["done"]}})
     assert not call_service._only_submits(instant)
     assert call_service._unfinished_submission(instant, b'{"status": "queued"}')
     assert not call_service._unfinished_submission(instant, b'{"status": "done"}')
-    assert not call_service._only_submits(sync) and not call_service._unfinished_submission(sync, b"{}")

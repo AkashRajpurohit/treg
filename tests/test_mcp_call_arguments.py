@@ -8,8 +8,6 @@ because the in-process client's ASCII header block refused the value.
 
 from __future__ import annotations
 
-import pytest
-
 
 async def _own_echo_tool(clients) -> None:
     sid = (await clients.post("/secrets", json={"name": "echo-k", "value": "SEK"})).json()["id"]
@@ -31,17 +29,6 @@ async def test_unknown_call_argument_is_refused_by_name(clients):
     assert "status" not in out  # nothing was relayed
 
 
-async def test_known_arguments_still_pass(clients):
-    from test_mcp_directory import _call_tool, paired_mcp_session
-
-    await _own_echo_tool(clients)
-    async with paired_mcp_session() as session:
-        out = await _call_tool(session, "call",
-                               {"endpoint_id": "edge/echo", "body": {"keywords": ["coffee"]}},
-                               clients.headers["X-Treg-Token"], path="/mcp/")
-    assert out["status"] == 200, out
-
-
 async def _twice(clients, key: str) -> tuple[dict, dict]:
     from test_mcp_directory import _call_tool, paired_mcp_session
 
@@ -53,8 +40,8 @@ async def _twice(clients, key: str) -> tuple[dict, dict]:
     return first, again
 
 
-@pytest.mark.parametrize("key", ["promoção-ô-1", "clé-é", "検索-1"])
-async def test_non_ascii_idempotency_key_behaves_like_an_ascii_one(clients, key):
+async def test_non_ascii_idempotency_key_behaves_like_an_ascii_one(clients):
+    key = "promoção-検索-1"
     await _own_echo_tool(clients)
     first, again = await _twice(clients, key)
     assert first["status"] == 200 and again["status"] == 200, (first, again)

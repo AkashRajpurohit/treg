@@ -100,10 +100,7 @@ async def test_the_router_treats_a_task_failure_as_a_miss_and_asks_the_next_prov
     assert r.json()["_treg"]["provider"] == "anyapi"
 
 
-async def test_mcp_and_cli_say_the_provider_reported_a_failure(clients, dfs_platform, monkeypatch, capsys):
-    import httpx
-
-    from treg import cli
+async def test_mcp_says_the_provider_reported_a_failure(clients, dfs_platform, monkeypatch):
     from test_mcp import _call_tool, mcp_session
 
     monkeypatch.setattr(call_service, "relay", _relay_by_provider({"dataforseo": [(200, FAILED)]}, []))
@@ -114,8 +111,35 @@ async def test_mcp_and_cli_say_the_provider_reported_a_failure(clients, dfs_plat
     assert out["upstream_failed"] == "tasks.0.status_code=40101"
     assert "reported this request as failed" in out["hint"]
 
+
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_treg_call_says_the_provider_reported_a_failure(monkeypatch, capsys, json_mode):
+    from types import SimpleNamespace
+
+    import httpx
+
+    from treg import cli
+
     response = httpx.Response(200, json=FAILED, headers={
         "X-Treg-Cost-Micro": "2000", "X-Treg-Call-Id": "abc", "X-Treg-Upstream-Failed": "tasks.0.status_code=40101"})
-    assert cli._call_envelope(response, "application/json")["_treg"]["upstream_failed"] == "tasks.0.status_code=40101"
-    cli._show_charge_line(response)
-    assert "reported this request as failed (tasks.0.status_code=40101)" in capsys.readouterr().err
+
+    class FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def request(self, *args, **kwargs):
+            return response
+
+    monkeypatch.setattr(cli, "_client", lambda cfg, **k: FakeClient())
+    monkeypatch.setattr(cli, "_JSON_OVERRIDE", json_mode)
+    cli.cmd_call(SimpleNamespace(target=EP, path="", method="POST", query=[], data=None, file=None,
+                                 content_type=None, header=[], upload=[]), {})
+    out = capsys.readouterr()
+    if json_mode:
+        assert json.loads(out.out)["_treg"]["upstream_failed"] == "tasks.0.status_code=40101"
+    else:
+        assert json.loads(out.out) == FAILED, "stdout stays the exact body"
+        assert "reported this request as failed (tasks.0.status_code=40101)" in out.err

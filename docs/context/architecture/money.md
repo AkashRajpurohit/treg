@@ -439,11 +439,9 @@ use it. Provider differences remain in catalog YAML; there are no provider billi
 An async row settles at the terminal answer when its price is a table, a `usage` meter, or a plain
 `per_call` price (`observed` amount, the fixed price as fallback): a provider that bills every
 finished answer is charged for each one, a finished answer with no result included. A provider
-that reports its charge on the submission itself (DataForSEO bills a Standard task when it is
-posted; its task_get answers report no cost) has that figure frozen into the basis as
-`submission_charge_micro` by `defer_submission`, and an `observed` settle uses it when the terminal
-answer reports none: the task bills what the provider charged, including a terminal failure the
-descriptor lists as `billed_failure`, never the catalog estimate. Async
+that bills on submission has the reported charge frozen into the basis
+(`submission_charge_micro`), and an `observed` settle uses it when the terminal answer reports
+none, `billed_failure` included: the task bills what the provider charged, not the estimate. Async
 `per_success` rows without a table keep settling on the submission response.
 
 A submission whose own status is already a success word, on a descriptor with

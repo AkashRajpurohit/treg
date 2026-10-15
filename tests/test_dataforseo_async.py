@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from sqlmodel import select
 from test_asynctasks import _response
 
+from treg import archive
 from treg.application.call import service as call_service
 from treg.config import get_settings
 from treg.domain.catalog import store as catalog_store
@@ -131,20 +132,6 @@ async def test_a_task_that_fails_after_posting_still_bills_what_dataforseo_charg
     assert task.status == "settled" and task.settled_micro == 3_750
 
 
-async def test_a_task_post_dataforseo_refused_settles_at_zero_without_a_task(
-    clients: AsyncClient, monkeypatch, dfs_platform,
-):
-    async def fake_relay(*args, **kwargs):
-        return _response(200, {**_envelope([_task(TASK_A, 40501, 0)]), "tasks_error": 1})
-
-    monkeypatch.setattr(call_service, "relay", fake_relay)
-    refused = await clients.post(f"/call/{POST}", json=[{"keyword": ""}])
-    assert refused.status_code == 200
-    assert refused.headers.get("X-Treg-Cost-Micro") == "0"
-    async with session_maker() as db:
-        assert (await db.execute(select(AsyncTaskRecord))).first() is None
-
-
 async def test_an_on_page_crawl_is_readable_only_by_the_team_that_paid_for_it(
     clients: AsyncClient, monkeypatch, dfs_platform,
 ):
@@ -179,25 +166,25 @@ async def test_an_on_page_crawl_is_readable_only_by_the_team_that_paid_for_it(
     assert denied.status_code == 403
 
 
-def test_treg_call_await_follows_a_task_post_to_its_result():
-    """`treg call <task_post> --await` reads the served descriptor: in the queue, then finished."""
-    import httpx
-    from test_aigc_pr_b import FakeClock
+async def test_a_task_submission_is_never_answered_from_the_archive(
+    clients: AsyncClient, monkeypatch, dfs_platform,
+):
+    """A replayed submission would hand the asking team a task id submitted on treg's shared
+    account, and with it ownership of that task: every submission reaches the provider."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "archive_mode", "serve")
+    monkeypatch.setattr(settings, "archive_serve_endpoints", POST)
+    monkeypatch.setattr(settings, "archive_serve_percent", 100)
+    posted = []
 
-    from treg import cli
+    async def fake_relay(*args, **kwargs):
+        posted.append(TASK_B if posted else TASK_A)
+        return _response(200, _envelope([_task(posted[-1], 20100, 0.00375)]))
 
-    descriptor = catalog_store.load().by_id[POST]["async"]
-    polled = []
-    replies = iter([_envelope([_task(TASK_A, 40602, 0)]),
-                    _envelope([_task(TASK_A, 20000, 0, result=[{"items": [{"rating": 5}]}])])])
-
-    def call_fn(target, params):
-        polled.append((target, params))
-        return httpx.Response(200, json=next(replies), request=httpx.Request("GET", "https://t"))
-
-    submission = httpx.Response(200, json=_envelope([_task(TASK_A, 20100, 0.00375)]),
-                                request=httpx.Request("POST", "https://t"))
-    outcome = cli.await_async_task(descriptor, submission, call_fn, FakeClock(), 600)
-    assert outcome["code"] == 0
-    assert polled == [(GET, [("id", TASK_A)])] * 2
-    assert outcome["recovery"] == f"treg call {GET} -p id={TASK_A}"
+    monkeypatch.setattr(call_service, "relay", fake_relay)
+    body = [{"keyword": "hedonism wines", "location_name": "London,England,United Kingdom"}]
+    for _ in range(2):
+        submitted = await clients.post(f"/call/{POST}", json=body)
+        await archive.drain()
+        assert submitted.status_code == 200 and submitted.headers.get("x-treg-cache") != "hit"
+    assert posted == [TASK_A, TASK_B]

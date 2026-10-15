@@ -638,11 +638,9 @@ the provider's `source.curated` day.
 - **Ingest.** `carry_verification` carries `added` by id from every catalog file BEFORE its
   method/path check: a tool whose route moved is still the tool that reached main that day. Only
   an id the catalog has never had gets today's UTC date, so a re-import never re-dates a tool.
-  For a row whose route still matches it also carries the reviewed per-row facts no spec holds:
-  `cost`, `observed_cost`, `expect`, `untestable` and `status`, beside the verification stamp. A
-  re-ingest that dropped them un-priced the DataForSEO rows priced from the provider's own bill.
-  `platform_blocked` is not carried onto a row whose fresh ingest declares `resource_ownership.requires`:
-  declared ownership is what the block stood in for.
+  For a row whose route still matches it also carries the reviewed facts no spec holds (`cost`,
+  `observed_cost`, `expect`, `untestable`, `status`), but not `platform_blocked` once the fresh row
+  declares `resource_ownership.requires`: declared ownership is what the block stood in for.
 - **Backfill.** `scripts/catalog_backfill_added.py` dated the existing rows once from the
   first-parent history of main: the first merge day on which each id was present in any catalog
   file. A branch that merged main into itself and was then fast-forwarded onto main puts its own
@@ -826,14 +824,10 @@ explicitly `platform_blocked` instead: Akta request status, TikHub's captions-re
 DataForSEO SERP task consumers (`serp/ai_summary`, `serp/screenshot`) remain callable with BYOK but
 never receive treg's shared key.
 
-DataForSEO's Standard queue is ingested as owned async pairs (`scripts/catalog_ingest.py`,
-`dfs_submission`): every `/task_post` without a live twin is an async submission (`expect`
-20100 Task Created, `id_from: tasks.0.id`) whose `produces: tasks.*.id` gives the submitting team
-every task of a batch, and the family's free `task_get` (advanced, else plain, else regular; never
-html, never the account-wide `tasks_ready`) is its poll target and declares the matching
-`requires`. The first task drives settlement; the others are read on the same ownership. The on-page
-crawl is the one family with no task_get: `on-page-task-post` produces `on_page_task` and each
-reader of the crawl requires it (`DFS_ON_PAGE_READERS`).
+A provider's task queue is ingested as owned async pairs (`catalog_ingest.dfs_submission`): the
+submission's `produces` may take every list item (`tasks.*.id`), so a batch owns each of its tasks,
+and its free reader declares the matching `requires`. A reader of the account-wide queue is never
+the poll target. Every shared-key submission must have an owned reader (`tests/test_dataforseo_async.py`).
 `carry_verification` preserves that reviewed block across re-ingestion just like a verification
 stamp; silently regenerating it away would reopen the tenant boundary.
 
@@ -1779,10 +1773,8 @@ Five rules worth keeping:
   `means` on the tools that declare it. Each scrape adapter's `miss` predicate reads that
   provider's own text field, so an empty page is a miss for every provider, not a hit.
 - **A failed `expect` rule is a miss.** A routed child's 2xx whose body fails the endpoint's own
-  `expect` success rule (a DataForSEO task status other than 20000) is a `miss`, whatever the
-  adapter reads off the remains; its `detail` names the failed value
-  (`provider reported failure: tasks.0.status_code=40101`). The waterfall treats it like any other
-  miss, and the child keeps the charge the provider reported.
+  `expect` success rule is a `miss` whatever the adapter reads off it, and keeps the charge the
+  provider reported.
 - **`miss` semantics ride on the endpoint.** Some providers answer "asked and answered: no result"
   with an error status (PDL 404s a person it has no record of; Hunter's combined-find does the
   same). Endpoints with evidenced miss behaviour carry a `miss: {status, means}` block in their
@@ -2228,13 +2220,10 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   still decides among candidates that ignore equally much. `limit` never counts: it is a page size,
   not a narrowing filter, and the contract defaults it, so counting it demoted every limit-less
   child (a free-on-miss role finder fell behind a search that bills its empty pages).
-  Only a filter the caller SENT counts (`ignored_filters(given=…)`): a contract default
-  (`language: en` on `google.keywords.volume`) is not a question anyone asked, and counting it
-  ranked SE Ranking, which has no language field, behind a child fifty times its price on every
-  call while the catalog quote, which ranks without defaults, named SE Ranking first. A filter the
-  adapter sends only through a one-argument transform (`dfs_location(country)`) counts as ignored
-  when the transform has no value for what was sent, so an unmappable country is reported and
-  ranked down like a missing geo field instead of becoming another country.
+  Only a filter the caller SENT counts (`ignored_filters(given=…)`): a contract default is not a
+  question anyone asked, and counting it made the call-time ranking disagree with the quote. A
+  filter sent through a one-argument transform with no value for it (an unmappable country) counts
+  as ignored, never becomes another value.
   **Coverage caveat**: of 16 `people.search` children, only icypeas maps geo today, so the rule
   currently floats one provider. lusha, crustdata, companyenrich and leadmagic all filter on
   location upstream — their adapters just do not map it. Until they do, the rule is doing more work
@@ -2295,12 +2284,9 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   that filter on a location NAME (icypeas); `location` is a free-text pass-through ("London, United
   Kingdom", "Europe") for the same providers; a filter the caller sent that an adapter never mentions
   is listed on the attempt as `ignored_filters` — silently unapplied was the worst outcome (the bench
-  had post-filtered in the agent because of it). DataForSEO takes a location code: `dfs_location`
-  maps any ISO country (alpha-2, `uk` or a name) to its Google Ads geo target id, 2000 + the ISO
-  3166-1 numeric code (`catalog/country_numeric.json`, generated from pycountry), and returns
-  nothing for a value that names no country. It once knew a short list and sent the United States
-  for every other country, which answered a Thai volume question with US volumes, billed, with no
-  signal. SE Ranking takes its own database names (`seranking_source`: `gb` is `uk`). Bench re-run, recruiting 30: same icypeas rows as the
+  had post-filtered in the agent because of it). `dfs_location` maps any ISO country to its location
+  code (`catalog/country_numeric.json`) and returns nothing for a value that names no country: a
+  country must never silently become a default one. Bench re-run, recruiting 30: same icypeas rows as the
   hand-written policy, one automatic fall-through, region briefs rescued by the pass-through.
 - **Routed DISCOVERY is a runtime switch (2026-08-29)**: `TREG_ROUTED_DISCOVERY=off` (default `on`)
   stops search leading with `treg.<capability>` and stops a routed parent riding in when a child
