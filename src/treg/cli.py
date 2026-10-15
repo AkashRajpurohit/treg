@@ -66,7 +66,7 @@ PRODUCTION_BASE_URL = "https://treg.to"
 
 def _load_config() -> dict:
     try:
-        raw = json.loads(CONFIG_PATH.read_text()) if CONFIG_PATH.exists() else {}
+        raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
     except (json.JSONDecodeError, OSError):
         raw = {}  # a corrupt/half-written config must not brick every command (incl. login/logout)
     base = raw.get("base_url", PRODUCTION_BASE_URL)
@@ -89,7 +89,7 @@ def _save_config(cfg: dict) -> None:
     # Write-then-rename so an interrupted save (kill / full disk) can't leave a truncated,
     # unparseable config that bricks every subsequent command.
     tmp = CONFIG_PATH.with_name(CONFIG_PATH.name + ".tmp")
-    tmp.write_text(json.dumps(cfg, indent=2))
+    tmp.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     tmp.chmod(0o600)
     os.replace(tmp, CONFIG_PATH)
     CONFIG_PATH.chmod(0o600)
@@ -393,6 +393,17 @@ def _show_hint_line(resp: httpx.Response) -> None:
               file=sys.stderr)
 
 
+def _treg_saturated(resp: httpx.Response) -> bool:
+    """treg's own 503 when its database pool is exhausted: typed by `treg_saturated` in the body."""
+    if resp.status_code != 503:
+        return False
+    try:
+        body = resp.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("treg_saturated") is True
+
+
 def _show_failure_diagnostics(resp: httpx.Response) -> None:
     """One stderr line an agent can file a failure under: the HTTP status, WHOSE answer it is, and the
     call id support can look up. The body above is printed verbatim, so for a relayed upstream error it
@@ -407,9 +418,16 @@ def _show_failure_diagnostics(resp: httpx.Response) -> None:
         path = resp.request.url.path
     except (AttributeError, RuntimeError):
         path = "/call/"
-    relayed = path.startswith("/call/") and not headers.get("X-Treg-Error")
+    saturated = _treg_saturated(resp)
+    relayed = path.startswith("/call/") and not headers.get("X-Treg-Error") and not saturated
     whose = "the provider answered; treg relayed it unchanged" if relayed else (
         "treg refused the call" if path.startswith("/call/") else "treg answered")
+    if saturated:
+        # treg's own capacity, answered without X-Treg-Error (bootstrap_handlers._pool_saturated).
+        # Called "the provider answered", agents dropped a healthy provider instead of waiting.
+        wait = headers.get("Retry-After")
+        whose = ("treg is overloaded, not the provider; retry "
+                 + (f"in {wait}s" if wait else "in a moment"))
     line = f"treg: HTTP {resp.status_code} — {whose}"
     if call_id := headers.get("X-Treg-Call-Id"):
         line += f"; call id {call_id} (quote it to support; `treg calls` shows the record)"
@@ -1513,9 +1531,9 @@ def cmd_secret_add(args, cfg) -> None:
         except (FileNotFoundError, ValueError) as exc:  # "no X secret" / "ambiguous — use --file"
             sys.exit(str(exc))
         print(f"[using {src_file}]", file=sys.stderr)
-        value = src_file.read_text().strip()  # a trailing newline would become an illegal header value
+        value = src_file.read_text(encoding="utf-8").strip()  # a trailing newline would become an illegal header value
     elif args.file:
-        value = Path(args.file).read_text().strip()
+        value = Path(args.file).read_text(encoding="utf-8").strip()
     elif args.value is not None:
         value = args.value
     else:
@@ -1535,7 +1553,7 @@ def _sync_contract_secret(skill_dir, src_file, name: str, kind: str) -> None:
     if not path.exists() or src_file is None:
         return
     try:
-        contract = json.loads(path.read_text())
+        contract = json.loads(path.read_text(encoding="utf-8"))
         rel = str(Path(src_file).resolve().relative_to(Path(skill_dir).resolve()))
         secrets = contract.setdefault("secrets", [])
         entry = next((s for s in secrets if s.get("file") == rel), None)
@@ -1543,7 +1561,7 @@ def _sync_contract_secret(skill_dir, src_file, name: str, kind: str) -> None:
             secrets.append({"file": rel, "name": name, "kind": kind})
         else:
             entry["name"], entry["kind"] = name, kind
-        path.write_text(json.dumps(contract, indent=2))
+        path.write_text(json.dumps(contract, indent=2), encoding="utf-8")
         print(f"[synced {CONTRACT_FILE}]", file=sys.stderr)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"[warning: could not sync {CONTRACT_FILE}: {exc}]", file=sys.stderr)
@@ -1605,7 +1623,7 @@ def _load_catalog(cfg) -> list:
         if body.get("providers"):
             try:
                 cache.parent.mkdir(parents=True, exist_ok=True)
-                cache.write_text(r.text)
+                cache.write_text(r.text, encoding="utf-8")
             except OSError:
                 pass
             # Prefer the NEWER catalog: a CLI updated ahead of its server (mid-deploy) must NOT regress to
@@ -1617,7 +1635,7 @@ def _load_catalog(cfg) -> list:
         pass
     try:
         if cache.exists():
-            cached = json.loads(cache.read_text())
+            cached = json.loads(cache.read_text(encoding="utf-8"))
             if cached.get("providers") and int(cached.get("version") or 0) >= prov.CATALOG_VERSION:
                 return cached["providers"]
     except (OSError, json.JSONDecodeError):
@@ -2540,6 +2558,10 @@ def _call_envelope(response: httpx.Response, content_type: str) -> dict:
         import base64
         result = {"base64": base64.b64encode(response.content).decode("ascii"), "content_type": content_type}
     meta: dict = {"http_status": response.status_code}
+    if _treg_saturated(response):
+        meta["treg_saturated"] = True
+        if (wait := headers.get("Retry-After", "")).isdigit():
+            meta["retry_after_seconds"] = int(wait)
     if call_id := headers.get("X-Treg-Call-Id"):
         meta["call_id"] = call_id
     if (cost := headers.get("X-Treg-Cost-Micro")) is not None:
@@ -2577,6 +2599,22 @@ def _show_call_response(response: httpx.Response) -> None:
     _show(response)
 
 
+def _data_body(data: str | None) -> bytes | None:
+    """The `--data` body. `@path` reads the file and `@-` reads stdin, as in curl: `--data @req.json`
+    used to send the literal text `@req.json`, and the provider's 4xx blamed the request."""
+    if not data:
+        return None
+    if not data.startswith("@"):
+        return data.encode()
+    if data == "@-":
+        return sys.stdin.buffer.read()
+    path = Path(data[1:]).expanduser()
+    if not path.is_file():
+        sys.exit(f"treg: --data {data}: no such file {str(path)!r} "
+                 "(--data @path reads a file; put a body that starts with '@' in a file and pass --file)")
+    return path.read_bytes()
+
+
 def cmd_call(args, cfg) -> None:
     for kv in args.query:  # a token without '=' would crash dict()/split with an opaque traceback
         if "=" not in kv:
@@ -2601,7 +2639,7 @@ def cmd_call(args, cfg) -> None:
             upload_files.append((name, (p.name, p.read_bytes())))
         else:
             upload_files.append((name, (None, val.encode())))  # a plain (non-file) form field
-    content = Path(args.file).read_bytes() if args.file else (args.data.encode() if args.data else None)
+    content = Path(args.file).read_bytes() if args.file else _data_body(args.data)
     upload_ctype = None
     if upload_files:
         # Encode the multipart body EAGERLY (not httpx's streaming files=): _RegistryClient's
@@ -2619,7 +2657,12 @@ def cmd_call(args, cfg) -> None:
             json.loads(content)
             ctype = "application/json"
         except ValueError:
-            pass
+            # PowerShell strips the inner quotes of '{"a":1}' before treg sees it, so the upstream
+            # got `{a:1}` with no content type and answered with a 4xx that blamed the request.
+            if not args.file and not _JSON_OVERRIDE and content.lstrip()[:1] in (b"{", b"["):
+                print("treg: warning: --data looks like JSON but does not parse, so it is sent as-is "
+                      "with no content type (a shell may have stripped its quotes; "
+                      "--data @body.json reads it from a file instead)", file=sys.stderr)
     headers = {"content-type": ctype} if ctype else {}
     if authorization_method := getattr(args, "authorization_method", None):
         headers["X-Treg-Authorization-Method"] = authorization_method
@@ -3101,7 +3144,7 @@ def _member_registry_url(member: str) -> str | None:
     try:
         import pwd
         home = pwd.getpwnam(member).pw_dir
-        return json.loads((Path(home) / ".treg" / "config.json").read_text()).get("base_url")
+        return json.loads((Path(home) / ".treg" / "config.json").read_text(encoding="utf-8")).get("base_url")
     except Exception:  # noqa: BLE001 — a missing/odd config just means no registry host is added
         return None
 
@@ -3508,7 +3551,7 @@ def cmd_serve_start(args, cfg) -> None:
         # The child died. Its reason is in the log and nowhere else — printing "see the log" and
         # making the user go read it is one step too many when we can just say what happened.
         try:
-            why = [ln for ln in log.read_text().splitlines() if ln.strip()][-1]
+            why = [ln for ln in log.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()][-1]
         except (OSError, IndexError):
             why = ""
         sys.exit(f"treg: the proxy did not come up.\n  {why}\n  (full log: {log})" if why
@@ -3667,7 +3710,7 @@ def cmd_skill_scaffold(args, cfg) -> None:
     except (NotADirectoryError, OSError) as exc:
         sys.exit(str(exc))
     if args.out:
-        Path(args.out).write_text(manifest)
+        Path(args.out).write_text(manifest, encoding="utf-8")
         print(f"wrote {args.out} (fill in base_url + bindings, then: treg skill push {args.out})")
     else:
         print(manifest)
@@ -3675,7 +3718,7 @@ def cmd_skill_scaffold(args, cfg) -> None:
 
 def cmd_skill_push(args, cfg) -> None:
     try:
-        body = json.loads(Path(args.file).read_text())
+        body = json.loads(Path(args.file).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         sys.exit(f"could not read skill file {args.file!r}: {exc}")
     with _client(cfg) as c:
@@ -3692,7 +3735,7 @@ def cmd_skill_init(args, cfg) -> None:
         sys.exit(str(exc))
     out = Path(args.out) if args.out else Path(args.dir) / CONTRACT_FILE
     fill = contract.pop("_fill", [])
-    out.write_text(json.dumps(contract, indent=2))
+    out.write_text(json.dumps(contract, indent=2), encoding="utf-8")
     print(f"wrote {out}")
     print(f"  auto: base_url={contract['base_url'] or '(none)'} | secrets={[s['name'] for s in contract['secrets']]}")
     if fill:
@@ -3791,7 +3834,7 @@ def cmd_skill_install(args, cfg) -> None:
                 if skill_md.exists() and not args.force:   # don't clobber a hand-edited local skill silently
                     kept_in.append(base); continue
                 dest.mkdir(parents=True, exist_ok=True)
-                skill_md.write_text(recipe)
+                skill_md.write_text(recipe, encoding="utf-8")
                 extra_files = _write_bundle_files(dest, bundle.get("files") or {})  # the rest of the folder
                 wrote_to.append(base)
             tools = bundle.get("tools") or []
@@ -3974,7 +4017,7 @@ def cmd_skill_bootstrap(args, cfg) -> None:
     for b in bases:
         dest = b / "treg"
         dest.mkdir(parents=True, exist_ok=True)
-        (dest / "SKILL.md").write_text(recipe)
+        (dest / "SKILL.md").write_text(recipe, encoding="utf-8")
         print(f"  ✓ treg → {dest / 'SKILL.md'}"); n += 1
         # the skill used to install as "tools-registry"; a leftover copy would load as a duplicate
         # skill and confuse agents, so retire it — but only if it's exactly ours (just a SKILL.md).
@@ -4004,7 +4047,7 @@ def cmd_skill_bootstrap(args, cfg) -> None:
     for name, text in extra:
         for b in bases:
             (b / name).mkdir(parents=True, exist_ok=True)
-            (b / name / "SKILL.md").write_text(text)
+            (b / name / "SKILL.md").write_text(text, encoding="utf-8")
         print(f"  ✓ {name} → {len(bases)} location(s)")
     detected = _agents.detect_installed()
     tail = f"detected: {', '.join(detected)}" if detected else "no agents detected — used sensible defaults"
@@ -5454,10 +5497,10 @@ def _hub_read_folder(path: str) -> dict:
     folder = Path(path)
     if not (folder / "recipe.json").is_file():
         sys.exit(f"treg hub: no recipe.json in {folder} (treg hub init <name> writes one)")
-    manifest = json.loads((folder / "recipe.json").read_text())
+    manifest = json.loads((folder / "recipe.json").read_text(encoding="utf-8"))
     body = {"manifest": manifest, "check": {}, "readme": ""}
     if (folder / "check.json").is_file():
-        body["check"] = json.loads((folder / "check.json").read_text())
+        body["check"] = json.loads((folder / "check.json").read_text(encoding="utf-8"))
     if (folder / "README.md").is_file():
         body["readme"] = (folder / "README.md").read_text()
     if (folder / "run.js").is_file():
@@ -6666,7 +6709,7 @@ def build_parser() -> argparse.ArgumentParser:
     cl.add_argument("-p", "--query", action="append", default=[], metavar="K=V", help="a query param (repeatable)")
     cl.add_argument("--authorization-method", metavar="METHOD",
                     help="select an authorization method declared by the catalog endpoint")
-    cl.add_argument("--data", help="request body (string)"); cl.add_argument("--file", help="request body from a file")
+    cl.add_argument("--data", help="request body (string; @path reads a file, @- reads stdin)"); cl.add_argument("--file", help="request body from a file")
     cl.add_argument("--content-type", dest="content_type", metavar="TYPE",
                     help="Content-Type for the body (default: sniffed — a body that parses as JSON sends application/json)")
     cl.add_argument("--header", action="append", default=[], metavar="'K: V'",
@@ -7211,11 +7254,27 @@ def _subcommands(parser) -> set[str]:
     return set()
 
 
+def _utf8_stdio() -> None:
+    """Write stdout and stderr as UTF-8 whatever the console's code page. A Windows pipe or a Git
+    Bash terminal reports cp1252 (or cp949, GBK), and the first `●` of `catalog search`, `✓` of
+    `login` or non-Latin character in a provider's answer raised UnicodeEncodeError — for `call`,
+    after the charge, so the paid answer was lost. A real Windows console is already UTF-8 (PEP 528)
+    and is left alone; `backslashreplace` keeps a lone surrogate from raising instead."""
+    for stream in (sys.stdout, sys.stderr):
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "").replace("_", "")
+        if encoding != "utf8" and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (ValueError, OSError):
+                pass
+
+
 def main(argv: list[str] | None = None) -> None:
     """One CLI invocation. `--org` and `--json` live in module globals for the length of this call
     only, so a second `main()` in the same process (tests, embedders) starts from the defaults."""
     global _ORG_OVERRIDE, _JSON_OVERRIDE
     _ORG_OVERRIDE, _JSON_OVERRIDE = None, False
+    _utf8_stdio()
     try:
         _main(list(sys.argv[1:] if argv is None else argv))
     finally:

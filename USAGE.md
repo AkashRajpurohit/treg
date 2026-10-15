@@ -136,7 +136,7 @@ treg tool add google-ads --base-url https://googleads.googleapis.com \
 |---|---|---|
 | `treg catalog search` | `"what you want to do"`, `--new [DAYS]`, `--sort newest` | find endpoints by capability; `--new` keeps tools added in the last DAYS days (30 when bare, max 365), `--sort newest` lists newest first; with either, the words are optional |
 | `treg catalog get` | `ENDPOINT_ID` | docs, parameters, **the price**, and how you would be served |
-| `treg call ENDPOINT_ID` | `--query K=V`, `--data STR` | call it |
+| `treg call ENDPOINT_ID` | `--query K=V`, `--data STR` or `--data @FILE` | call it |
 | `treg --json call ENDPOINT_ID` | same | for scripts: one JSON line `{"result": <body>, "_treg": {http_status, call_id, charged_micro}}` on stdout, nothing on stderr |
 | `treg call ENDPOINT_ID --await` | `--timeout N` (default 900) | a generation call (video/image): submit, poll the provider, print the final response |
 | `treg host FILE` | `--content-type T`, `--json` | host a reference image/audio/video at a public URL a vendor can fetch (30 MB, 7-day TTL, free); prints the URL for `image_urls` / `audio_urls` |
@@ -295,7 +295,7 @@ waterfall; it is not safe to start another billable provider while the first may
 
 | Command | Options | What it does |
 |---|---|---|
-| `treg call TOOL PATH` | `--method GET`, `--query K=V` (repeatable), `--data STR`, `--file PATH` | proxy a call (named form) |
+| `treg call TOOL PATH` | `--method GET`, `--query K=V` (repeatable), `--data STR` (`@FILE` reads a file, `@-` stdin), `--file PATH` | proxy a call (named form) |
 | `treg calls` | `--limit N` | audit log (who called which tool, when, status) |
 
 ```bash

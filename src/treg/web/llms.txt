@@ -396,7 +396,8 @@ Money notes for agents:
   success, `treg: charged $<usd> · call id <id>` (stdout is always the exact body). **A script that
   parses the output uses `treg --json call …`**: stdout is then one line,
   `{"result": <body>, "_treg": {"http_status", "call_id", "charged_micro"}}`, and stderr is silent,
-  so merging the two streams cannot break the parse (`--await` output is unchanged). Before a loop
+  so merging the two streams cannot break the parse (`--await` output is unchanged). `--data
+  @body.json` sends a file as the body (`@-` reads stdin); on PowerShell prefer it to inline JSON. Before a loop
   over many inputs, run a few and check the parsed results: a parse bug discards answers already
   paid for. A `/call/`
   may be answered from treg's archive of earlier answers to the exact same question while that
