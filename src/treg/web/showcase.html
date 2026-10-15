@@ -514,12 +514,12 @@
     <h2>Leaderboard</h2>
     <div class="board-actions">
       <div class="tabs" role="tablist" aria-label="Leaderboard" id="boardTabs" hidden><span class="mark" id="boardMark" aria-hidden="true"></span></div>
-      <button type="button" class="pill dark" id="applyOpen">Apply to the leaderboard</button>
+      <button type="button" class="pill dark" id="applyOpen"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.6"/><path d="M8 5v6M5 8h6" stroke-linecap="round"/></svg>Submit yours</button>
     </div>
   </div>
   <ol class="ranks" id="ranks"><li class="empty">Loading the leaderboard…</li></ol>
   <button type="button" class="pill more" id="moreRanks" hidden>Show 10 more</button>
-  <p class="board-note">Built something with treg? Apply, and it shows here once we approve it. Upvotes count live; activity updates weekly and shows only what each maker agreed to share.</p>
+  <p class="board-note">Built something with treg? Submit it, and it shows here once we approve it. Upvotes count live; activity updates weekly and shows only what each maker agreed to share.</p>
 </section>
 
 <section class="posts wrap" id="posts">
@@ -617,7 +617,7 @@
 <div class="scrim" id="apply-scrim">
   <div class="amodal" role="dialog" aria-modal="true" aria-labelledby="applyTitle">
     <button class="cls" id="applyClose" aria-label="Close">✕</button>
-    <h3 id="applyTitle">Apply to the leaderboard</h3>
+    <h3 id="applyTitle">Submit your app</h3>
     <p class="lede">Tell us about an app you built with treg. Nothing is public until we approve it.</p>
     <div id="applyBody"></div>
   </div>
@@ -904,7 +904,7 @@ var BOARD = (function () {
     var ids = slugs();
     list.classList.toggle('loved', board === 'most_loved');
     list.innerHTML = ids.length ? ids.slice(0, shown).map(function (id, i) { return row(id, i + 1, i); }).join('')
-      : '<li class="empty">' + (data.apps.length ? 'No app qualifies for this board yet.' : 'No apps yet. Built something with treg? Be the first to apply.') + '</li>';
+      : '<li class="empty">' + (data.apps.length ? 'No app qualifies for this board yet.' : 'No apps yet. Built something with treg? Be the first to submit it.') + '</li>';
     paintMore(ids.length);
   }
   more.addEventListener('click', function () {
@@ -989,7 +989,7 @@ var BOARD = (function () {
       var teams = res[0];
       state = { icon: null, shots: [], uploads: res[1].uploads !== false };
       if (!teams.length) {
-        message('<p>You need to be an owner or admin of a treg team to apply.</p><p><a class="pill dark" href="/app">Open the dashboard</a></p>');
+        message('<p>You need to be an owner or admin of a treg team to submit an app.</p><p><a class="pill dark" href="/app">Open the dashboard</a></p>');
         return;
       }
       form(teams);
