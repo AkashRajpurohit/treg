@@ -45,7 +45,8 @@ async def store_connection(request):
     async with db._engine.connect() as connection:
         sqlite = connection.dialect.name == "sqlite"
         if sqlite:
-            # The fast suite normally disables FKs. Exercise the actual storage boundary here.
+            # Enable other tables' foreign keys when testing application Org cleanup;
+            # the configuration table itself intentionally has no foreign key.
             await connection.execute(sa.text("PRAGMA foreign_keys=ON"))
             await connection.commit()
         transaction = await connection.begin()
