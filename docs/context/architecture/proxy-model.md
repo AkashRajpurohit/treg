@@ -757,3 +757,12 @@ relay. BYOK and raw own-tool access keep their existing credential ACLs. The sha
 cannot receive one upstream job through provider deduplication. Unpinned digests are unchanged.
 `intake.prepare_call_intake` includes the same full pin in Treg's membership replay namespace. See
 [multi-tenancy](multi-tenancy.md#caller-tags-and-pinned-read-scopes) for the history and ledger scopes.
+
+## Optional root pause admission
+
+The shared `run_call_surface` checks [published Org pauses](org-flow-control.md) after identity
+and context creation, before concurrency or financial admission. It can refuse new root calls
+with 429 for an active valid pause. Redis failures allow calls; missing keys clear cached rules,
+and malformed or conflicting publications retain the previous valid rule's original expiry.
+Existing accepted work and its financial cleanup continue. This optional default-off check does not cover direct hub,
+provider-resource or background execution outside the shared surface.

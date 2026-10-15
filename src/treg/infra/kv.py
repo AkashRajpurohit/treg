@@ -1,8 +1,9 @@
 """The shared key-value store: expiring counters and optional admission leases.
 
 Render Key Value (Redis protocol) in production, an in-process dictionary when `TREG_KV_URL` is
-unset (local development, tests, self-hosters without one). The store holds nothing that must
-survive: every key expires, and every caller treats "unavailable" as a safe answer. Socket I/O
+unset (local development, tests, self-hosters without one). Counters and leases expire; the optional
+flow-control reader also reads externally published
+snapshots without changing their contents or TTL. Each caller owns its unavailable policy. Socket I/O
 uses `_TIMEOUT_S`; optional counters and health probes have their own shorter outer deadline.
 
 Review-invitation budgets fail closed; money admission leases report unavailability explicitly
@@ -16,6 +17,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Literal, Protocol
 
 from ..config import get_settings
@@ -28,6 +30,13 @@ _OPTIONAL_TIMEOUT_S = 0.2
 _LEASE_ATTEMPT_TIMEOUT_S = 1.5
 _LEASE_RETRY_BUDGET_S = 2.5
 _LOCAL_MAX_KEYS = 10_000
+_FLOW_CONTROL_MAX_BYTES = 32768
+_READ_ORG_FLOW_CONTROL = """
+local kind = redis.call('TYPE', KEYS[1]).ok
+if kind == 'none' then return false end
+if kind ~= 'string' then return -1 end
+return redis.call('GETRANGE', KEYS[1], 0, 32768)
+"""
 log = logging.getLogger("treg.kv")
 _clock = time.monotonic
 _utcnow = lambda: datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -44,6 +53,15 @@ _LEASE_BUCKETS = (10, 50, 100, 200)
 AcquireResult = Literal["acquired", "busy", "unavailable"]
 RenewResult = Literal["renewed", "lost", "unavailable", "deadline_expired"]
 ReleaseResult = Literal["released", "lost", "not_owned", "unavailable"]
+
+
+class FlowControlReadFailure(Enum):
+    INVALID = "invalid"
+    UNAVAILABLE = "unavailable"
+
+
+FlowControlReadResult = str | None | FlowControlReadFailure
+
 _RENEW_LEASE = """
 if redis.call('get', KEYS[1]) == ARGV[1] then
     return redis.call('pexpire', KEYS[1], ARGV[2])
@@ -87,6 +105,9 @@ class Store(Protocol):
 
     async def ping(self) -> bool: ...
 
+    async def read_org_flow_control(self, org_id: int) -> FlowControlReadResult:
+        """Bounded JSON or missing (None), distinct from invalid data and transport failure."""
+
     async def acquire_lease(self, key: str, token: str, ttl_ms: int) -> AcquireResult: ...
 
     async def renew_lease(self, key: str, token: str, ttl_ms: int, *,
@@ -128,6 +149,10 @@ class LocalStore:
 
     async def ping(self) -> bool:
         return True
+
+    async def read_org_flow_control(self, org_id: int) -> FlowControlReadResult:
+        # Local state cannot stand in for published Redis configuration.
+        return FlowControlReadFailure.UNAVAILABLE
 
     async def acquire_lease(self, key: str, token: str, ttl_ms: int) -> AcquireResult:
         return "unavailable"  # Local counters cannot promise cross-process exclusion.
@@ -172,6 +197,24 @@ class RedisStore:
         except Exception as exc:  # noqa: BLE001 — a store fault is a spent budget, never a call fault
             _note_fault(exc)
             return False
+
+    async def read_org_flow_control(self, org_id: int) -> FlowControlReadResult:
+        if type(org_id) is not int or not 0 < org_id <= 2147483647:
+            return FlowControlReadFailure.INVALID
+        try:
+            async with asyncio.timeout(_OPTIONAL_TIMEOUT_S):
+                value = await self._client.eval(
+                    _READ_ORG_FLOW_CONTROL, 1, f"treg:traffic-control:org:{org_id}")
+            if value is None:
+                return None
+            if not isinstance(value, str) or len(value.encode("utf-8")) > _FLOW_CONTROL_MAX_BYTES:
+                return FlowControlReadFailure.INVALID
+            return value
+        except UnicodeError:
+            return FlowControlReadFailure.INVALID
+        except Exception:
+            # No URL, raw JSON, or exception text in the admission path.
+            return FlowControlReadFailure.UNAVAILABLE
 
     async def _slot_eval(self, script: str, key: str, *args) -> int | None:
         try:

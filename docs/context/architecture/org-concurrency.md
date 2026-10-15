@@ -46,6 +46,10 @@ Contention emits `org_concurrency rejected org_id=<trusted Caller.org_id> limit=
 status=429`. Logging failure does not change the refusal. Process-local
 [Org traffic logs](org-traffic.md) include this request in their arrival/completion counters.
 
+Published Org pauses have a separate default-disabled
+[admission check](org-flow-control.md) immediately before this concurrency gate. It does not
+replace these environment-configured limits or change accepted-slot ownership.
+
 ## Configuration and rollback
 
 All settings are environment variables, read at process startup. The defaults leave admission

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import math
 import os
 import time
@@ -18,6 +17,7 @@ from functools import wraps
 from heapq import nlargest
 
 from ..call_surface import split_call_path
+from .structured_logging import get_logger
 
 WINDOW_S = 60
 MAX_ORGS = 4096
@@ -25,13 +25,7 @@ MAX_ORGS = 4096
 BUCKETS = 33
 _HTTP_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT",
                            "OPTIONS", "TRACE", "PATCH"})
-log = logging.getLogger("treg.org_traffic")
-log.setLevel(logging.INFO)
-# MCP configures the root logger with RichHandler, which wraps JSON at console width. Keep
-# these machine-readable records on one physical line without changing any other logger.
-if not log.handlers:
-    log.addHandler(logging.StreamHandler())
-log.propagate = False
+log = get_logger("treg.org_traffic")
 _adapter: ContextVar[dict | None] = ContextVar("org_traffic_adapter", default=None)
 
 
