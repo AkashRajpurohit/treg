@@ -484,7 +484,10 @@ Catalog `platform_request` checks and provider-specific request guards run only 
 offer is selected and before reserve. Exact selectors require evidence such as Tavily Search's
 caller-supplied `include_usage: true`. Openmart requires its explicit bounded record count; Tavily
 Map and Crawl require an integer `limit` from 1 to 20. Missing, Boolean and out-of-range values are
-caller errors. BYOK is unchanged because the provider, not treg, bears that account's exposure.
+caller errors. A request option whose result or charge arrives later at a caller's webhook, outside
+the response settlement reads, is refused outright: Ocean.io's contact reveals, and Apollo person
+enrichment's phone reveal, waterfalls, `webhook_url` and `poll_only`. BYOK is unchanged because the
+provider, not treg, bears that account's exposure.
 
 Tier 4 spends treg's own vendor account, and that account can be empty. `_resolve_marketplace_call`
 asks, after `_platform_offer` says yes: is this call **exhausted** in the in-process capacity view

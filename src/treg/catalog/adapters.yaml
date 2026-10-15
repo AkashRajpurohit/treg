@@ -842,7 +842,8 @@ adapters:
     out: {full_name: person.name, first_name: person.first_name, last_name: person.last_name, title: person.title,
           company: person.organization.name, company_domain: person.organization.primary_domain,
           linkedin_url: person.linkedin_url, location: "join(person.city, person.country)"}
-    miss: "person == null"
+    # a no-match is a 200 stub echoing the input with match_confidence "none"; Apollo draws no credit
+    miss: "coalesce(null_if(person.match_confidence, 'none'), person.email, null) == null"
 
   # ---- Bright Data datasets: a URL-array body built from the identity (routing debt, 2026-08-28)
   brightdata.instagram.user.profile:

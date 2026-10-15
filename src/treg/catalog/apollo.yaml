@@ -57,10 +57,10 @@ endpoints:
         linkedin_url: {type: string, required: false, example: "http://www.linkedin.com/in/tim-cook"}
         id: {type: string, required: false, note: "Apollo person id from a previous search"}
         reveal_personal_emails: {type: boolean, required: false, note: "unlocks personal emails; default false", example: false}
-        reveal_phone_number: {type: boolean, required: false, note: "adds 8 CREDITS when a mobile is found. The number is returned ASYNCHRONOUSLY to webhook_url, not inline, so webhook_url becomes required; default false", example: false}
-        run_waterfall_email: {type: boolean, required: false, note: "fall through to third-party vendors when Apollo's own data misses; some vendors bill even on a miss; default false"}
-        run_waterfall_phone: {type: boolean, required: false, note: "as run_waterfall_email, for phone numbers; default false"}
-        webhook_url: {type: string, required: false, note: "REQUIRED when reveal_phone_number is true"}
+        reveal_phone_number: {type: boolean, required: false, note: "OWN KEY ONLY: refused on treg's shared key. Adds 8 CREDITS when a mobile is found. The number is returned ASYNCHRONOUSLY to webhook_url, not inline, so webhook_url becomes required; default false", example: false}
+        run_waterfall_email: {type: boolean, required: false, note: "OWN KEY ONLY: refused on treg's shared key. Fall through to third-party vendors when Apollo's own data misses; some vendors bill even on a miss; default false"}
+        run_waterfall_phone: {type: boolean, required: false, note: "OWN KEY ONLY: refused on treg's shared key. As run_waterfall_email, for phone numbers; default false"}
+        webhook_url: {type: string, required: false, note: "OWN KEY ONLY: refused on treg's shared key. REQUIRED when reveal_phone_number is true"}
       note: "POST, but every parameter rides in the QUERY STRING — there is no JSON body. Supply the strongest identifier you have: email > linkedin_url > name + domain. A request with none of them cannot match"
     cost:
       type: per_success
@@ -72,7 +72,7 @@ endpoints:
       source_url: https://www.apollo.io/pricing
       checked: '2026-08-13'
       confidence: documented
-      note: 'Metered at the 1-credit baseline treg calls with: reveal_phone_number and reveal_personal_emails both default false, so a default enrich consumes 1 credit for demographics or an email, charged only when credit-consuming data comes back (no match, no charge) — the same documented Basic-plan rate (fx.yaml credit_rates_usd.apollo) as apollo.companies.enrich. CAVEAT: a caller that sets reveal_phone_number=true consumes up to 9 credits (a mobile is +8, returned async to webhook_url) and is under-metered by the extra 8. Waterfall vendors may bill even on a miss.'
+      note: 'Metered at the 1-credit baseline treg calls with: reveal_phone_number and reveal_personal_emails both default false, so a default enrich consumes 1 credit for demographics or an email, charged only when credit-consuming data comes back (no match, no charge) — the same documented Basic-plan rate (fx.yaml credit_rates_usd.apollo) as apollo.companies.enrich. The phone reveal (+8 per mobile, returned async to webhook_url) and the waterfalls (whose vendors may bill even on a miss) are refused on treg''s shared key, so this rate covers every shared-key call. A no-match answers 200 with a person stub at match_confidence none; it is free unless it carries an email.'
     docs_url: https://docs.apollo.io/reference/people-enrichment
 
   - id: apollo.people.search
