@@ -1770,6 +1770,23 @@ summaries, changing fallback behavior and any associated cache policy require a 
 the background results have been validated. Async hit rates continue to use terminal evidence,
 never an inference from whether credits were charged.
 
+**Explicit requeue closes an earlier writer overlap.** After retiring writers that could change
+terminal evidence without marking its original day, `catalog_stats.requeue_async_stats` previews
+existing async/result-adapter buckets inside the current UTC window. An explicit apply selects
+and records its current target list under the fold cursor lock, setting `terminal_reconciled=False`
+and marking the same keys dirty in one transaction. Counts, samples and timestamps stay intact;
+existing marker age and retry backoff are preserved. The ordinary cron processes the queue with its existing budgets.
+Append folding keeps False, so a later True proves that a full repair happened after the reset.
+This works even when that repair's pass began earlier; `updated_at` is not completion evidence.
+
+The applied JSON manifest records the exact target keys. `catalog_stats.repair_status` reads their
+flags and markers in one statement snapshot. Missing, unreconciled or still-dirty targets remain
+incomplete; targets outside the current window are reported as `aged_out`, not as repaired. A
+preview manifest is rejected as completion evidence. Status applies to the same database and an
+unaltered applied manifest; it does not establish that all writers have been upgraded or that a
+reader cutover is ready. Reapplying deliberately requeues the targets again. The explicit command
+does not run automatically, scan source audit rows or change the observation reader.
+
 The folded observation covers buckets from the day of the
 window's start onward (`stats.window_days`, at most one day more evidence than the live cut,
 never less), published through the same `stats.publish` floors the live path uses; the fold and
