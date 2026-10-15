@@ -6345,7 +6345,7 @@ endpoints:
       keywords:
         type: array
         required: false
-        note: 'keywords required field The maximum number of keywords you can specify: 700 The maximum number of characters for each keyword: 80 The maximum number of words for each keyword phrase: 10 the specified keywords will be converted to lowercase format, data will be provided in a separate array note that '
+        note: 'keywords required field The maximum number of keywords you can specify: 700 The maximum number of characters for each keyword: 80 The maximum number of words for each keyword phrase: 10 the specified keywords will be converted to lowercase format, data will be provided in a separate array note that . Size: treg relays at most 8 MiB of response: a larger answer is refused with 502 response_buffer_limit and not charged; several hundred keywords can cross it, so split large batches'
         example:
         - iphone
       location_name:
@@ -7670,7 +7670,7 @@ endpoints:
       keywords:
         type: array
         required: false
-        note: 'keywords required field The maximum number of keywords you can specify: 20 The maximum number of characters for each keyword: 80 the keywords you specify will be converted to a lowercase format Note: Google Ads may return no data for certain groups of keywords visit our Help Center to learn more Als'
+        note: 'keywords required field The maximum number of keywords you can specify: 20 The maximum number of characters for each keyword: 80 the keywords you specify will be converted to a lowercase format Note: Google Ads may return no data for certain groups of keywords visit our Help Center to learn more Als. Size: treg relays at most 8 MiB of response: a larger answer is refused with 502 response_buffer_limit and not charged; broad seeds can cross it well below 20 seeds, so send fewer seeds per call or narrow date_from/date_to'
         example:
         - phone
         - cellphone
@@ -7748,7 +7748,7 @@ endpoints:
       target:
         type: string
         required: false
-        note: 'domain or page required field the domain name of the target website or the url of the target page; note: to obtain keywords for the target website, use the target_type parameter'
+        note: 'domain or page required field the domain name of the target website or the url of the target page; note: to obtain keywords for the target website, use the target_type parameter. Size: treg relays at most 8 MiB of response: a larger answer is refused with 502 response_buffer_limit and not charged; a large site can cross it, so narrow date_from/date_to or use target_type page'
         example: dataforseo.com
       target_type:
         type: string
@@ -7823,6 +7823,13 @@ endpoints:
   name: "Google Ads location codes by country"
   summary: We use Google Geographical Targeting.
   docs_url: https://docs.dataforseo.com/v3/keywords_data/google_ads/locations/
+  input:
+    pathParams:
+      country:
+        type: string
+        required: true
+        note: "ISO 3166-1 alpha-2 country code, lowercase (e.g. de). The list for a large country can be longer than treg's 8 MiB response limit; that call is refused with 502 response_buffer_limit and not charged. Most data routes also accept location_name (e.g. \"Germany\") instead of a code."
+        example: de
   untestable: the OpenAPI spec ships no example request body for this route, so no test request could be generated
 - id: dataforseo.x.keywords-data-google-trends-explore-live
   tier: extended
@@ -9689,6 +9696,13 @@ endpoints:
   name: "Google SERP location codes by country"
   summary: You will receive the list of locations by this API call.
   docs_url: https://docs.dataforseo.com/v3/serp/google/locations/
+  input:
+    pathParams:
+      country:
+        type: string
+        required: true
+        note: "ISO 3166-1 alpha-2 country code, lowercase (e.g. de). The list for a large country can be longer than treg's 8 MiB response limit; that call is refused with 502 response_buffer_limit and not charged. Most data routes also accept location_name (e.g. \"Germany\") instead of a code."
+        example: de
   untestable: the OpenAPI spec ships no example request body for this route, so no test request could be generated
 - id: dataforseo.x.serp-google-maps-live-advanced
   capability: google.serp.maps
@@ -13039,7 +13053,7 @@ endpoints:
       limit:
         type: integer
         required: false
-        note: '<em>the maximum number of returned businesses</em><br>optional field<br>default value: <code>100</code><br>maximum value: <code>1000</code>'
+        note: '<em>the maximum number of returned businesses</em><br>optional field<br>default value: <code>100</code><br>maximum value: <code>1000</code><br>Size: treg relays at most 8 MiB of response: a larger answer is refused with 502 response_buffer_limit and not charged; a large limit on a dense category can cross it, so page with offset or offset_token instead'
         example: 3
       offset:
         type: integer
