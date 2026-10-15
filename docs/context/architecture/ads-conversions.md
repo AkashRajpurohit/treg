@@ -75,8 +75,9 @@ read-side Ads catalog calls (`oauth_providers.GOOGLE_ADS`), a separate credentia
    now holding any supported click id), `ad_click_id_type`, `ad_landing` (the use-case page slug or
    `ref`/`utm_content`), `ad_click_at`. Once set, never overwritten — attribution is "first click that
    led to a signup," not "most recent."
-   `stash_ad_click` observes valid cookies after successful email-start, email-verify, Google and
-   GitHub callback operations. `AdClickStash` uses trimmed, lowercased email as its primary key
+   `stash_ad_click` observes valid cookies only once the email is proven: after a successful
+   email-verify, Google or GitHub callback. Email-start does not stash, since anyone can type any
+   address there and tie their own click to it. `AdClickStash` uses trimmed, lowercased email as its primary key
    (dots and aliases remain distinct), capped and percent-encoded cookie fields, and naive UTC
    creation/update timestamps. An atomic upsert replaces the prior observation. Capture and lookup
    are disabled with `adsconv.enabled()`. `_ad_cookie_for` falls back to this first-party stash

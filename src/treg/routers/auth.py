@@ -112,10 +112,8 @@ async def auth_email_start(
     brute-force counter at will. All this state is in the DB (survives restart, correct multi-instance)."""
     require_managed_cli(request)
     try:
-        result = await auth_use_cases.start_email_login(
+        return await auth_use_cases.start_email_login(
             body.email, _client_ip(request), captcha_token=body.captcha_token, client=_client(request))
-        await signup.stash_ad_click(body.email, request.cookies.get("treg_ad", ""))
-        return result
     except auth_use_cases.EmailAuthError as exc:
         raise _email_http_error(exc, _client(request)) from exc
 
@@ -133,6 +131,7 @@ async def auth_email_verify(
             entry_surface=request.cookies.get("treg_entry_surface", ""), client=_client(request))
     except auth_use_cases.EmailAuthError as exc:
         raise _email_http_error(exc) from exc
+    # Only a proven email: stashing at /start would let anyone tie their click to any address.
     await signup.stash_ad_click(verified.email, request.cookies.get("treg_ad", ""))
     resp = JSONResponse({"token": verified.token, "email": verified.email})
     resp.headers["Cache-Control"] = "no-store"

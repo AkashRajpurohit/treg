@@ -995,6 +995,8 @@ async def test_auth_stashes_click(clients, ads_enabled, monkeypatch, door, cooki
     assert response.status_code in (200, 302), response.text
     async with session_maker() as db:
         stash = await db.get(AdClickStash, email)
+        # /start has not proven the email yet, so it never stashes.
+        expected = expected and door != 'start'
         assert (stash is not None) == expected
         if expected:
             from treg.application.signup import _ad_attribution_from
@@ -1045,22 +1047,19 @@ async def test_stash_caps_fields_and_disabled_lookup(clients, ads_enabled, monke
         assert await _ad_cookie_for(db, 'a.b+tag@gmail.com', '') == ''
 
 
-@pytest.mark.parametrize('door', ['start', 'verify'])
-async def test_stash_failure_does_not_break_signin(clients, ads_enabled, monkeypatch, caplog, door):
+async def test_stash_failure_does_not_break_signin(clients, ads_enabled, monkeypatch, caplog):
     from treg.application import auth, signup
 
     async def succeeded(*args, **kwargs):
-        if door == 'start':
-            return {'ok': True}
         return SimpleNamespace(email='private@example.com', token='test', session_cookie='test')
 
     def broken_session():
         raise RuntimeError('SQL parameters: private@example.com PRIVATE_CLICK')
 
-    monkeypatch.setattr(auth, 'start_email_login' if door == 'start' else 'verify_email_login', succeeded)
+    monkeypatch.setattr(auth, 'verify_email_login', succeeded)
     monkeypatch.setattr(signup, 'session_maker', broken_session)
     clients.cookies.set('treg_ad', 'gclid|PRIVATE_CLICK|original')
-    response = await clients.post('/auth/email/' + door, json={'email': 'private@example.com', 'code': '123456'})
+    response = await clients.post('/auth/email/verify', json={'email': 'private@example.com', 'code': '123456'})
     assert response.status_code == 200, response.text
     assert 'ad click stash failed; sign-in continues' in caplog.text
     assert 'private@example.com' not in caplog.text
