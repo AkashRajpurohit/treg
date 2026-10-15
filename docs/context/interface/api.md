@@ -115,6 +115,17 @@ token, because the vendor's fetcher has none. 30 MB per file, 300 MB per org per
 `image/*` / `audio/*` / `video/*` only, refused in the sandbox. Refusals: 415 type, 413 size, 429
 quota, 403 sandbox. Not metered. See [media](../architecture/media.md).
 
+## Pictures and the showcase leaderboard
+
+`POST /images/{kind}` (signed-in, verified person; raw body) re-draws and stages a picture
+(`user_avatar`, `team_avatar`, `showcase_icon`, `showcase_shot`) and answers `{key, kind,
+preview_url}`. `PUT /me/avatar` and `PUT /orgs/{id}/avatar` (owner or admin) set or clear (`null`)
+a picture; `/auth/me`, `/orgs` and the member list answer `avatar_url` (null = initials).
+Refusals: 413 size, 415-like 422 type or dimensions, 429 rate, 503 when picture storage is not
+configured. The /showcase leaderboard (`/showcase/leaderboard`, `/showcase/vote`, makers'
+`/showcase/teams/{id}/apps`, staff `/admin/showcase/*`) is hosted only. See
+[showcase](../architecture/showcase.md).
+
 ## Provider resources
 
 `GET /orgs/{id}/provider-resources` is the unified HTTP/curl read for durable provider resources.

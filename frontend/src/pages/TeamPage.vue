@@ -2,12 +2,15 @@
 import { useDashboard } from '../state/context'
 import InfoTip from '../components/ui/InfoTip.vue'
 import Money from '../components/ui/Money.vue'
+import Avatar from '../components/ui/Avatar.vue'
+import TeamShowcase from './team/TeamShowcase.vue'
+import TeamAvatar from './team/TeamAvatar.vue'
 import { NO_KEY } from '../state/constants.js'
 import stripeSlate from '../assets/stripe-wordmark-slate.svg'
 import stripeWhite from '../assets/stripe-wordmark-white.svg'
 // The new agent's check-in poll lives as long as this page (state/agents.js).
 export default {
-  components: { InfoTip, Money },
+  components: { InfoTip, Money, Avatar, TeamShowcase, TeamAvatar },
   data: () => ({ NO_KEY, stripeSlate, stripeWhite }),
   setup: useDashboard,
   mounted() { this.resumeCredentialIssue(); this.resumeAgentPoll() },
@@ -18,6 +21,7 @@ export default {
 <template>
 
           <div class="tut-head">
+            <Avatar v-if="activeOrg && activeOrg.avatar_url" :src="activeOrg.avatar_url" :name="activeName" :size="40" />
             <div><h1>Team: {{activeName}}<span v-if="isPersonal(activeOrg)" class="chip" style="margin-left:8px;vertical-align:middle">personal</span></h1>
               <p class="sub" style="margin:0">You are <b>{{activeRole}}</b> here. <span class="muted">Switch, create or join a team from the picker at the top of the page.</span></p></div>
           </div>
@@ -29,6 +33,7 @@ export default {
               <button v-if="canAdmin" :class="{active:orgTab==='projects'}" @click="orgTab='projects'">Projects</button>
               <button v-if="canAdmin" :class="{active:orgTab==='policy'}" @click="orgTab='policy'">Policy</button>
               <button v-if="canAdmin" :class="{active:orgTab==='billing'}" @click="orgTab='billing'">Billing</button>
+              <button v-if="canAdmin" :class="{active:orgTab==='showcase'}" @click="orgTab='showcase'">Showcase</button>
               <button :class="{active:orgTab==='danger'}" @click="orgTab='danger'; resetRenameForm()">Team settings</button>
             </div>
             <p v-if="!canAdmin && !['keys','danger'].includes(orgTab)" class="sub" style="margin-bottom:12px">Members, projects and policy are visible to admins.</p>
@@ -101,7 +106,7 @@ export default {
                       <div class="muted" style="font-size:11px">{{m.created_by?('owned by '+short(m.created_by)):'machine identity'}}</div>
                       <div v-if="confirmAgent==='rotate-'+m.user_id" class="sub" style="font-size:11px;margin-top:5px;max-width:360px"><b>Its current key will stop immediately.</b> The next card shows the replacement once so you can update {{m.name}}.</div>
                       <div v-if="confirmAgent==='revoke-'+m.user_id" class="sub" style="font-size:11px;margin-top:5px;max-width:360px"><b>This removes the agent and revokes all its keys.</b> Activity stays for audit; restoring it means creating and configuring it again.</div></template>
-                    <template v-else>{{m.email}}</template>
+                    <span v-else style="display:inline-flex;gap:8px;align-items:center"><Avatar :src="m.avatar_url" :name="m.email" :size="22" round />{{m.email}}</span>
                   </td>
                   <td>
                     <select v-if="isOwner" class="msel" :value="m.role" @change="setRole(m,$event.target.value)">
@@ -531,6 +536,9 @@ export default {
               </template>
             </template>
 
+            <!-- SHOWCASE: the team's apps on the public showcase (apply, edit, withdraw) -->
+            <TeamShowcase v-if="canAdmin && orgTab==='showcase'" />
+
             <!-- TEAM SETTINGS: just the danger zone (new/join/switch team live in the sidebar
                  picker). Visible to every role — leaving a team is self-service, not admin. -->
             <template v-if="orgTab==='danger'">
@@ -639,6 +647,8 @@ export default {
                   </template>
                 </div>
 
+
+            <TeamAvatar v-if="canAdmin" />
 
             <!-- TEAM NAME + SLUG. Admin+. The old slug stays an alias server-side, so copied keys,
                  ~/.treg and MCP pins keep working; the CLI just needs `treg org use <new-slug>`. -->

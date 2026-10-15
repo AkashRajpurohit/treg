@@ -1002,3 +1002,12 @@ length-capped click fields, and `created_at`/`updated_at` use naive UTC. Authent
 submit observations of proven emails; cookie-less signup uses observations from the last 90 days.
 Signup deletes the row once its team holds the click, and `treg-worker admin purge-ad-clicks`
 deletes rows past 90 days. No analytics or audit emission is involved. See [ads conversions](ads-conversions.md).
+
+## Showcase leaderboard and pictures
+
+Additive revision `0076`: `showcaseapp` (an entry: status, live fields, consent flags, the pending
+proposal as JSON), `showcaseappevent` (append-only history, unique per entry and version),
+`showcaseweek` (one row per approved entry per UTC week) and `showcasevote` (unique per entry and
+person), all written only by `application.showcase`; the children cascade with their entry and
+team deletion removes entries explicitly. `org.avatar_key` and `user.avatar_key` name a picture in
+the public media bucket and are written only by `application.images`. See [showcase](showcase.md).

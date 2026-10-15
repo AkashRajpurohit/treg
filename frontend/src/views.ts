@@ -95,6 +95,7 @@ export const dialogs = {
   RunToolDialog: lazy(() => import('./dialogs/RunToolDialog.vue')),
   CallDetailsDialog: lazy(() => import('./dialogs/CallDetailsDialog.vue')),
   TryEndpointDialog: lazy(() => import('./dialogs/TryEndpointDialog.vue')),
+  UserAvatarDialog: lazy(() => import('./dialogs/UserAvatarDialog.vue')),
 }
 
 function prefetch(component: Lazy) {
