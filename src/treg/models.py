@@ -678,6 +678,16 @@ class Secret(SQLModel, table=True):
     created_at: NaiveUTC = Field(default_factory=_now)
 
 
+class AdClickStash(SQLModel, table=True):
+    """First-party click observed alongside an email, usable for 90 days."""
+
+    email: str = Field(primary_key=True)
+    # Percent-encoded kind + capped 255-character id + 64-character landing (12 bytes per Unicode char).
+    raw_cookie: str = Field(max_length=4096)
+    created_at: NaiveUTC = Field(default_factory=_now)
+    updated_at: NaiveUTC = Field(default_factory=_now)
+
+
 class AdConversion(SQLModel, table=True):
     """One conversion owed to Google Ads — an OUTBOX row, not a log line.
 

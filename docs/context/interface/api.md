@@ -346,8 +346,8 @@ shared HTTP client. `/auth/logout` remains an HTTP-only cookie action.
   made); old accounts cannot reclaim it.
   The dashboard/CLI login doors do NOT go
   through it (they create the user only, no auto org). Both this door and `create_org` read the
-  first-party `treg_ad` cookie (`_ad_attribution_from`) and, when conversion tracking is enabled,
-  stamp `Org.ad_gclid`/`ad_click_id_type`/`ad_landing`/`ad_click_at` on the new org when present - see
+  first-party `treg_ad` cookie (`_ad_attribution_from`), falling back to the email's `AdClickStash`
+  row when the request has no cookie, and, when conversion tracking is enabled, stamp `Org.ad_gclid`/`ad_click_id_type`/`ad_landing`/`ad_click_at` on the new org when present - see
   [ads-conversions](../architecture/ads-conversions.md).
   `create_org` (`POST /orgs`, `require_identity` so a
   zero-org user can make their first team; HTTP 403 when already owning 10 teams) + `list_orgs` (`GET /orgs`,

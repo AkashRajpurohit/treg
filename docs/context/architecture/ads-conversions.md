@@ -6,6 +6,8 @@ sources:
   - src/treg/application/signup.py
   - src/treg/web/adtrack.js
   - src/treg/web/gtag.js
+  - src/treg/routers/auth.py
+  - src/treg/alembic/versions/0075_ad_click_stash.py
 related:
   - architecture/money.md
   - architecture/multi-tenancy.md
@@ -56,12 +58,41 @@ read-side Ads catalog calls (`oauth_providers.GOOGLE_ADS`), a separate credentia
    `test_every_public_html_route_carries_the_capture_script`, which sweeps every flat GET route and
    requires the tag on anything answering `200 text/html`, so a new page is in scope the moment its
    route exists. See `interface/seo.md` for the page-by-page scope.
+   `adtrack.js` also restores an existing cookie when the URL has no click id, preserves the id
+   on the current URL with `history.replaceState`, and carries it on delegated same-origin link
+   clicks (including new links and middle clicks). During that visit it also wraps
+   `history.pushState`/`replaceState`, so the dashboard rewriting its own address (to `/app#start`,
+   for instance) keeps the id for an in-app browser's "open in browser". External links, mail links, fragment-only links
+   and links already carrying any click-id parameter are untouched. Carry runs only for a click
+   on the current URL or a matching `sessionStorage` marker from an earlier URL capture in that
+   tab; a cookie-only return visit does not rewrite URLs. Blocked session storage does not prevent
+   direct URL capture or carry. The existing `utm_content`
+   convention carries the original landing value, taking precedence over the destination's
+   `data-page`; it is only added or replaced when needed to preserve that value. A new URL click
+   wins over the cookie. A `|` inside the landing is kept, on both the script and the server
+   parser. Restoring a cookie alone does not renew its expiry. `/login` preserves its
+   query on the dashboard redirect, and the CLI login shell loads the capture script too.
 2. **Store** (`application.signup._ad_attribution_from`, read at both signup doors: `register_user` (`POST /users`)
    and `create_org` (`POST /orgs`), since a browser visitor who clicked an ad can land on either).
    The cookie is decoded and persisted onto the new `Org`: `ad_gclid` (the historical column name,
    now holding any supported click id), `ad_click_id_type`, `ad_landing` (the use-case page slug or
    `ref`/`utm_content`), `ad_click_at`. Once set, never overwritten — attribution is "first click that
    led to a signup," not "most recent."
+   `stash_ad_click` observes valid cookies only once the email is proven: after a successful
+   email-verify, Google or GitHub callback. Email-start does not stash, since anyone can type any
+   address there and tie their own click to it. `AdClickStash` uses trimmed, lowercased email as its primary key
+   (dots and aliases remain distinct), capped and percent-encoded cookie fields, and naive UTC
+   creation/update timestamps. An atomic upsert replaces the prior observation. Capture and lookup
+   are disabled with `adsconv.enabled()`. `_ad_cookie_for` falls back to this first-party stash
+   at both signup doors only when the request cookie is empty, and ignores observations older than
+   90 days. A signup that stores a click on its team deletes that email's row in the same
+   transaction, and `treg-worker admin purge-ad-clicks` (schedule it daily) deletes rows whose
+   `updated_at` is past the 90-day window, so expiry limits retention as well as lookup. This
+   association goes through neither audit nor analytics. Stash failures do not fail sign-in;
+   the warning omits the email, cookie, and exception text (which could contain SQL parameters). Revision `0075` adds the table without a
+   backfill or startup schema mutation. The privacy policy deliberately does not add a separate
+   paragraph for the URL carry or the email association (an owner decision); its existing
+   `treg_ad` section is the disclosure.
 3. **Fire** — three chokepoints call `adsconv.queue(db, org, action, ...)`, which writes an
    `AdConversion` outbox row inside a `SAVEPOINT` (a nested transaction, not a bare flush or a
    `db.rollback()` — this runs inside the CALLER's transaction, and a plain rollback on a duplicate
@@ -88,7 +119,7 @@ read-side Ads catalog calls (`oauth_providers.GOOGLE_ADS`), a separate credentia
 
 ## Enhanced Conversions for Leads: the hashed-email identifier (2026-09-21)
 
-A click id can only ever connect a conversion to a click **in the same browser**. The YouTube
+Without URL carry or an email-to-click association, a click id only connects a conversion to a click in the same browser. The YouTube
 in-stream campaign (24217105891) is 99.9% mobile clicks against a product whose first step needs a
 terminal, so the journey that matters — a pre-roll watched or tapped on a phone, the team created on
 a laptop hours later — has no click id at either end. Fourteen days and A$2,191 of that campaign

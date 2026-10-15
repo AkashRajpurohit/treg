@@ -961,3 +961,136 @@ def test_dashboard_loads_the_tag_conversion_only_and_fires_on_first_team():
     flow = (front / "src" / "onboarding" / "OnboardingFlow.vue").read_text()
     assert "tregSignupConversion?.(v.team?.slug)" in flow
     assert flow.index("'/onboarding/start'") < flow.index("tregSignupConversion")
+
+@pytest.mark.parametrize('door', ['start', 'verify', 'google', 'github'])
+@pytest.mark.parametrize('cookie,enabled,expected', [
+    ('wbraid|PHONE|landing', True, True), ('', True, False),
+    ('gclid||landing', True, False), ('junk', True, False),
+    ('gclid|PHONE|landing', False, False),
+])
+async def test_auth_stashes_click(clients, ads_enabled, monkeypatch, door, cookie, enabled, expected):
+    from treg.application import auth
+    from treg.models import AdClickStash
+    monkeypatch.setattr(adsconv, 'enabled', lambda: enabled)
+    email = 'stash@example.com'
+
+    async def start(*args, **kwargs):
+        return {'ok': True}
+
+    async def verify(*args, **kwargs):
+        return SimpleNamespace(email=email, token='test', session_cookie='test')
+
+    async def social(*args, **kwargs):
+        return SimpleNamespace(user=User(id=1, email=email), cli_state=None)
+
+    monkeypatch.setattr(auth, 'start_email_login', start)
+    monkeypatch.setattr(auth, 'verify_email_login', verify)
+    monkeypatch.setattr(auth, 'complete_google_login', social)
+    monkeypatch.setattr(auth, 'complete_github_login', social)
+    clients.cookies.set('treg_ad', cookie)
+    if door in ('start', 'verify'):
+        response = await clients.post('/auth/email/' + door, json={'email': ' STASH@example.com ', 'code': '123456'})
+    else:
+        response = await clients.get('/auth/' + door + '/callback')
+    assert response.status_code in (200, 302), response.text
+    async with session_maker() as db:
+        stash = await db.get(AdClickStash, email)
+        # /start has not proven the email yet, so it never stashes.
+        expected = expected and door != 'start'
+        assert (stash is not None) == expected
+        if expected:
+            from treg.application.signup import _ad_attribution_from
+            assert _ad_attribution_from(stash.raw_cookie) == ('wbraid', 'PHONE', 'landing')
+
+
+@pytest.mark.parametrize('door', ['users', 'orgs'])
+@pytest.mark.parametrize('cookie,age,expected', [('', 0, 'LATEST'), ('gclid|BROWSER|here', 0, 'BROWSER'), ('', 91, None)])
+async def test_signup_stash_fallback(clients, ads_enabled, door, cookie, age, expected):
+    from treg.application.signup import stash_ad_click
+    from treg.models import AdClickStash
+    email = 'cross-device@example.com' if door == 'users' else 'tim@superdesign.dev'
+    await stash_ad_click(email.upper(), 'gclid|OLD|original')
+    await stash_ad_click(' ' + email + ' ', 'gbraid|LATEST|original')
+    async with session_maker() as db:
+        stash = await db.get(AdClickStash, email)
+        stash.updated_at = utcnow_naive() - timedelta(days=age)
+        db.add(stash)
+        await db.commit()
+    clients.cookies.set('treg_ad', cookie)
+    response = await clients.post('/' + door, json={'email': email} if door == 'users' else {'name': 'cross device'})
+    assert response.status_code == 200, response.text
+    async with session_maker() as db:
+        org = await db.get(Org, response.json().get('org_id', response.json().get('id')))
+        assert org.ad_gclid == expected
+        if expected == 'LATEST':
+            assert org.ad_click_id_type == 'gbraid'
+            assert org.ad_landing == 'original'
+        # Once a team holds a click, the email association is deleted; an unused expired row
+        # waits for the purge.
+        assert (await db.get(AdClickStash, email) is None) == (expected is not None)
+
+
+async def test_login_redirect_preserves_click(clients):
+    response = await clients.get('/login?gclid=PHONE&utm_content=original')
+    assert response.headers['location'] == '/app?gclid=PHONE&utm_content=original'
+    from treg.routers.auth import _login_page_html
+    assert '<script src="/adtrack.js" defer></script>' in _login_page_html('a' * 32, session_email=None, github=True, google=True)
+
+
+async def test_stash_caps_fields_and_disabled_lookup(clients, ads_enabled, monkeypatch):
+    from treg.application.signup import _ad_attribution_from, _ad_cookie_for, stash_ad_click
+    from treg.models import AdClickStash
+    await stash_ad_click('a.b+tag@gmail.com', 'wbraid|' + 'x' * 400 + '|' + '😀' * 100)
+    async with session_maker() as db:
+        stash = await db.get(AdClickStash, 'a.b+tag@gmail.com')
+        assert _ad_attribution_from(stash.raw_cookie) == ('wbraid', 'x' * 255, '😀' * 64)
+        assert len(stash.raw_cookie) <= 4096
+        assert await _ad_cookie_for(db, 'ab@gmail.com', '') == ''
+        monkeypatch.setattr(adsconv, 'enabled', lambda: False)
+        assert await _ad_cookie_for(db, 'a.b+tag@gmail.com', '') == ''
+
+
+@pytest.mark.parametrize('cookie,parsed', [
+    ('gclid|ID|a|b', ('gclid', 'ID', 'a|b')),      # a "|" inside the landing keeps the click
+    ('ID|landing', ('gclid', 'ID', 'landing')),     # legacy two-part cookie
+    ('junk', ('', '', '')), ('x|ID|landing', ('', '', '')),
+])
+def test_ad_cookie_landing_may_contain_a_pipe(ads_enabled, cookie, parsed):
+    from treg.application.signup import _ad_attribution_from
+    assert _ad_attribution_from(cookie) == parsed
+
+
+async def test_purge_deletes_only_expired_stash_rows(clients, ads_enabled):
+    from treg.application.signup import purge_expired_ad_clicks, stash_ad_click
+    from treg.models import AdClickStash
+    for email, age in (('fresh@example.com', 89), ('old@example.com', 91)):
+        await stash_ad_click(email, 'gclid|CLICK|landing')
+        async with session_maker() as db:
+            stash = await db.get(AdClickStash, email)
+            stash.updated_at = utcnow_naive() - timedelta(days=age)
+            db.add(stash)
+            await db.commit()
+    assert await purge_expired_ad_clicks() == {'deleted': 1}
+    async with session_maker() as db:
+        assert await db.get(AdClickStash, 'fresh@example.com') is not None
+        assert await db.get(AdClickStash, 'old@example.com') is None
+    assert await purge_expired_ad_clicks() == {'deleted': 0}
+
+
+async def test_stash_failure_does_not_break_signin(clients, ads_enabled, monkeypatch, caplog):
+    from treg.application import auth, signup
+
+    async def succeeded(*args, **kwargs):
+        return SimpleNamespace(email='private@example.com', token='test', session_cookie='test')
+
+    def broken_session():
+        raise RuntimeError('SQL parameters: private@example.com PRIVATE_CLICK')
+
+    monkeypatch.setattr(auth, 'verify_email_login', succeeded)
+    monkeypatch.setattr(signup, 'session_maker', broken_session)
+    clients.cookies.set('treg_ad', 'gclid|PRIVATE_CLICK|original')
+    response = await clients.post('/auth/email/verify', json={'email': 'private@example.com', 'code': '123456'})
+    assert response.status_code == 200, response.text
+    assert 'ad click stash failed; sign-in continues' in caplog.text
+    assert 'private@example.com' not in caplog.text
+    assert 'PRIVATE_CLICK' not in caplog.text

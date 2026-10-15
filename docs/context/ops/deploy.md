@@ -558,6 +558,9 @@ without importing the heavy database stack into the light `treg` CLI.
   (`--batch-size`, default 5000, rows per transaction; schedule it daily). `GET /admin/errors` is
   read-only and already withholds evidence past the window, so an unscheduled purge keeps the old
   bytes in the database but never shows them.
+- `treg-worker admin purge-ad-clicks` deletes email-to-click stash rows whose `updated_at` is past
+  the 90-day window ([ads conversions](../architecture/ads-conversions.md)); schedule it daily.
+  Without it, expired rows stop being read but stay in the database.
 - `treg-worker hub check [--only <tool_id>] [--json]` runs every live [hub](../architecture/hub.md)
   tool's `check.json` once, as its maker (spends the maker's balance at step prices); a no-op with
   exit 0 when `hub_enabled` is off. Schedule it every 6 hours; health is derived from the last three
