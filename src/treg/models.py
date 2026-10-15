@@ -2276,8 +2276,9 @@ class ShowcaseAppEvent(SQLModel, table=True):
 
 class ShowcaseWeek(SQLModel, table=True):
     """One app's activity in one UTC week (Monday start), from its team's call records. Written only
-    by `application.showcase.refresh_weeks`. Rows add up exactly: the leaderboard sums the last four
-    for its monthly numbers and unions their provider lists for a distinct count."""
+    by `application.showcase.refresh_weeks`, which adds new calls to it as they arrive (the current
+    week's row grows until the week ends). Rows add up exactly: the leaderboard sums the last four
+    complete weeks for its monthly numbers and unions their provider lists for a distinct count."""
 
     __table_args__ = (
         CheckConstraint("calls >= 0", name="ck_showcaseweek_calls"),
@@ -2290,6 +2291,16 @@ class ShowcaseWeek(SQLModel, table=True):
     providers: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     categories: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))  # {domain: calls}
     computed_at: NaiveUTC = Field(default_factory=_now)
+
+
+class ShowcaseCursor(SQLModel, table=True):
+    """How far `application.showcase.refresh_weeks` has counted one approved app's team calls: the
+    last `callrecord.id` folded into its week rows. Each run reads only calls after it, over the
+    `(org_id, id)` index, so no run re-reads a team's history. Same only writer as `ShowcaseWeek`."""
+
+    app_id: int = Field(primary_key=True, foreign_key="showcaseapp.id", ondelete="CASCADE")
+    through_id: int = Field(default=0, sa_column=Column(BigInteger, nullable=False))
+    updated_at: NaiveUTC = Field(default_factory=_now)
 
 
 class ShowcaseVote(SQLModel, table=True):

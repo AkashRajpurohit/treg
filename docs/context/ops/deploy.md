@@ -522,10 +522,11 @@ without importing the heavy database stack into the light `treg` CLI.
   lifecycle as the web service, and flushes read analytics before exiting. The same scheduled
   command refreshes Web Arena's saved Battle totals when Web Arena is enabled and its reviewed
   benchmark is published; that full refresh is gated to once every 30 minutes.
-- `treg-worker showcase weeks` stores one /showcase leaderboard row per approved app per UTC week
-  (schedule it weekly, after a week ends; hosted only, so a self-hosted registry need not schedule it).
-  Each run reads only the weeks it has not stored, plus a recount of the newest, from `callrecord` on
-  its (org_id, created_at) index; its first run backfills four weeks.
+- `treg-worker showcase weeks` adds each approved app's new calls to its /showcase leaderboard rows,
+  one per UTC week (schedule it hourly: a newly approved app joins the activity boards at the next
+  run; hosted only, so a self-hosted registry need not schedule it). Each run reads only calls after
+  each app's cursor, over `callrecord`'s (org_id, id) index in small batches, up to a cap per run; a
+  busy team's first four weeks are counted over several runs.
 - Pictures (avatars, /showcase icons and screenshots) are off until `TREG_MEDIA_STORE_ENDPOINT`, its
   two keys, `TREG_MEDIA_STAGING_BUCKET` and `TREG_MEDIA_PUBLIC_BUCKET` are set (SECURITY.md, "Picture
   storage"); pages then show initials. `TREG_MEDIA_BASE_URL` names the public bucket's domain; empty,

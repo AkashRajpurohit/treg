@@ -18,7 +18,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from PIL import Image
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import func, select
 
 from fake_media_store import MemoryMediaStore
 from treg.api import app
@@ -27,9 +27,12 @@ from treg.config import get_settings
 from treg.domain import showcase as rules
 from treg.domain.identity import session
 from treg.infra.db import session_maker
-from treg.models import CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseVote, ShowcaseWeek, User
+from treg.models import (CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseCursor, ShowcaseVote,
+                         ShowcaseWeek, User)
+from treg.timeutil import utcnow_naive
 
-TODAY = date(2026, 10, 14)
+TODAY = utcnow_naive().date()
+NOW = datetime(TODAY.year, TODAY.month, TODAY.day, 12)
 NEWEST = rules.last_complete_week(TODAY)
 ADMIN = "showcase-staff-token-for-tests"
 
@@ -147,9 +150,8 @@ async def test_apply_review_approve_and_nothing_public_before(clients, store, st
     (pub,) = board["apps"]
     assert pub["name"] == "Example App" and pub["icon_url"] == f"/media-files/{icon}"
     assert pub["shots"][0]["small_url"].endswith("-640.webp")
-    async with session_maker() as db:   # its activity was counted on approval, not left for the weekly run
-        weeks = (await db.execute(select(ShowcaseWeek).where(ShowcaseWeek.app_id == entry["id"]))).scalars().all()
-    assert len(weeks) == rules.WINDOW_WEEKS
+    async with session_maker() as db:   # approval counts nothing; the worker's next run does
+        assert (await db.execute(select(ShowcaseWeek).where(ShowcaseWeek.app_id == entry["id"]))).scalars().all() == []
     # Once approved, nothing waits for review any more.
     assert (await clients.get("/admin/showcase/apps?status=review", headers=staff)).json() == []
     detail = (await clients.get(f"/admin/showcase/apps/{entry['id']}", headers=staff)).json()
@@ -240,20 +242,55 @@ async def _calls(org_id, at, n, *, provider="tikhub", endpoint="tikhub.tiktok.us
         await db.commit()
 
 
-async def test_weekly_fold_counts_only_upstream_calls_and_is_idempotent(clients):
+async def test_the_fold_counts_only_new_upstream_calls_in_small_batches(clients):
     _, org_id = await _tim()
     app_id = await _approved(org_id)
     monday = datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9)
+    await _calls(org_id, rules.window_start(TODAY) - timedelta(days=3), 7)          # before the window
     await _calls(org_id, monday, 3)
     await _calls(org_id, monday + timedelta(days=2), 2, provider="anyapi", endpoint="anyapi.x.search.posts")
     await _calls(org_id, monday + timedelta(days=2), 4, refused_by="policy")
-    await _calls(org_id, monday + timedelta(days=7), 50)
-    first = await showcase.refresh_weeks(today=TODAY)
-    assert first["rows_written"] == rules.WINDOW_WEEKS
+    first = await showcase.refresh_weeks(now=NOW, batch_rows=2)
+    assert first["caught_up"] and first["calls"] == 9      # refused calls move the cursor but are not activity
     async with session_maker() as db:
         row = await db.get(ShowcaseWeek, (app_id, NEWEST.isoformat()))
+        assert (await db.execute(select(func.count()).select_from(ShowcaseWeek))).scalar_one() == 1
     assert (row.calls, row.active_days, row.providers) == (5, 0b101, ["anyapi", "tikhub"])
-    assert (await showcase.refresh_weeks(today=TODAY))["rows_written"] == 1
+    assert sum(row.categories.values()) == 5
+
+    # A second run reads only what arrived since; a call younger than the lag waits for the next.
+    await _calls(org_id, monday + timedelta(days=3), 1)
+    await _calls(org_id, NOW - timedelta(minutes=1), 1)
+    again = await showcase.refresh_weeks(now=NOW)
+    assert again["calls"] == 1
+    async with session_maker() as db:
+        assert (await db.get(ShowcaseWeek, (app_id, NEWEST.isoformat()))).calls == 6
+    assert (await showcase.refresh_weeks(now=NOW))["calls"] == 0
+    assert (await showcase.refresh_weeks(now=NOW + timedelta(minutes=10)))["calls"] == 1
+
+
+async def test_a_capped_run_resumes_where_it_stopped(clients):
+    _, org_id = await _tim()
+    app_id = await _approved(org_id)
+    await _calls(org_id, datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9), 5)
+    first = await showcase.refresh_weeks(now=NOW, max_rows=3, batch_rows=2)
+    assert (first["calls"], first["caught_up"]) == (3, False)
+    second = await showcase.refresh_weeks(now=NOW, max_rows=3, batch_rows=2)
+    assert (second["calls"], second["caught_up"]) == (2, True)
+    async with session_maker() as db:
+        assert (await db.get(ShowcaseWeek, (app_id, NEWEST.isoformat()))).calls == 5
+
+
+async def test_weeks_that_leave_the_window_are_dropped(clients):
+    _, org_id = await _tim()
+    app_id = await _approved(org_id)
+    async with session_maker() as db:
+        old = (rules.window_start(TODAY) - timedelta(days=7)).isoformat()
+        db.add(ShowcaseWeek(app_id=app_id, week_start=old, calls=9, active_days=1))
+        await db.commit()
+    await showcase.refresh_weeks(now=NOW)
+    async with session_maker() as db:
+        assert await db.get(ShowcaseWeek, (app_id, old)) is None
 
 
 async def test_the_public_board_never_leaks_the_team_or_exact_numbers(clients):
@@ -261,7 +298,7 @@ async def test_the_public_board_never_leaks_the_team_or_exact_numbers(clients):
     open_id = await _approved(org_id, name="Open")
     await _approved(org_id, name="Quiet", show_calls=False, show_streak=False)
     await _calls(org_id, datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9), 1234)
-    await showcase.refresh_weeks(today=TODAY)
+    await showcase.refresh_weeks(now=NOW)
     r = await clients.get("/showcase/leaderboard")
     assert r.headers["cache-control"] == "no-cache" and "1234" not in r.text
     again = await clients.get("/showcase/leaderboard", headers={"If-None-Match": r.headers["etag"]})
@@ -310,13 +347,14 @@ async def test_deleting_a_team_removes_its_entries_and_everything_under_them(cli
     app_id = await _approved(org_id)
     async with session_maker() as db:
         db.add(ShowcaseWeek(app_id=app_id, week_start=NEWEST.isoformat(), calls=1, active_days=1))
+        db.add(ShowcaseCursor(app_id=app_id, through_id=1))
         db.add(ShowcaseVote(app_id=app_id, user_id=user.id, value=1))
         db.add(ShowcaseAppEvent(app_id=app_id, version=1, action="applied", actor="t", source="api"))
         await db.commit()
         await cascade_delete_org(await db.get(Org, org_id), db)
         await db.commit()
     async with session_maker() as db:
-        for model in (ShowcaseApp, ShowcaseWeek, ShowcaseVote, ShowcaseAppEvent):
+        for model in (ShowcaseApp, ShowcaseWeek, ShowcaseCursor, ShowcaseVote, ShowcaseAppEvent):
             assert (await db.execute(select(model))).scalars().all() == [], model.__name__
 
 

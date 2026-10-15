@@ -4,10 +4,11 @@ Revision ID: 0076
 Revises: 0075
 Create Date: 2026-10-15
 
-Additive: four new tables and two nullable columns. `showcaseapp` holds teams' applications to the
+Additive: five new tables and two nullable columns. `showcaseapp` holds teams' applications to the
 /showcase leaderboard and their review state; `showcaseappevent` its append-only history;
-`showcaseweek` one row per app per UTC week, written by `treg-worker showcase weeks`, which reads
-`callrecord` on its existing (org_id, created_at) index; `showcasevote` one upvote per person per app.
+`showcaseweek` one row per app per UTC week and `showcasecursor` the last call counted into them,
+both written by `treg-worker showcase weeks`, which reads only new `callrecord` rows on the existing
+(org_id, id) index; `showcasevote` one upvote per person per app.
 `org.avatar_key` and `user.avatar_key` name a picture in the media bucket, NULL for initials.
 """
 from collections.abc import Sequence
@@ -83,6 +84,12 @@ def upgrade() -> None:
         sa.CheckConstraint("active_days BETWEEN 0 AND 127", name="ck_showcaseweek_active_days"),
     )
     op.create_table(
+        "showcasecursor",
+        sa.Column("app_id", sa.Integer(), sa.ForeignKey("showcaseapp.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("through_id", sa.BigInteger(), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), nullable=False),
+    )
+    op.create_table(
         "showcasevote",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("app_id", sa.Integer(), sa.ForeignKey("showcaseapp.id", ondelete="CASCADE"), nullable=False),
@@ -96,6 +103,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("showcasevote")
+    op.drop_table("showcasecursor")
     op.drop_table("showcaseweek")
     op.drop_table("showcaseappevent")
     op.drop_table("showcaseapp")

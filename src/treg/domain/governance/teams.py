@@ -12,6 +12,7 @@ from sqlmodel import select
 from ...models import (
     ShowcaseApp,
     ShowcaseAppEvent,
+    ShowcaseCursor,
     ShowcaseVote,
     ShowcaseWeek,
     AdConversion,
@@ -404,11 +405,11 @@ async def cascade_delete_org(org: Org, db: AsyncSession) -> None:
     # by number: a caller's runs go with the caller; a maker's deletion leaves callers' traces.
     for run in (await db.execute(select(HubRun).where(HubRun.caller_org_id == org.id))).scalars().all():
         await db.delete(run)
-    # The team's /showcase entries go with it, with their weekly rows, history and votes (their
+    # The team's /showcase entries go with it, with their weekly rows, cursor, history and votes (their
     # keys point at the entry, not the team, so the walk below would not reach them). Their public
     # pictures become unreferenced files; nothing names them any more.
     for app in (await db.execute(select(ShowcaseApp).where(ShowcaseApp.org_id == org.id))).scalars().all():
-        for child in (ShowcaseVote, ShowcaseWeek, ShowcaseAppEvent):
+        for child in (ShowcaseVote, ShowcaseWeek, ShowcaseCursor, ShowcaseAppEvent):
             for r in (await db.execute(select(child).where(child.app_id == app.id))).scalars().all():
                 await db.delete(r)
         await db.flush()

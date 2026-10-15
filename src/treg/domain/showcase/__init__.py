@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import urlsplit
 
 # How many weekly rows make the "monthly" numbers (tier, active days, providers, categories).
@@ -70,6 +70,39 @@ def week_start(day: date) -> date:
 def last_complete_week(today: date) -> date:
     """The Monday of the last week that has fully ended before `today`."""
     return week_start(today) - timedelta(days=7)
+
+
+def window_start(today: date) -> date:
+    """The Monday of the oldest week the leaderboard reads, as of `today`."""
+    return last_complete_week(today) - timedelta(days=7 * (WINDOW_WEEKS - 1))
+
+
+def fold_calls(calls, category_of) -> dict[date, dict]:
+    """New calls, as `(created_at, provider, endpoint_id)`, added up per UTC week into the parts a
+    week row stores. Every part adds: counts sum, active-day bits OR, provider sets union."""
+    weeks: dict[date, dict] = {}
+    for at, provider, endpoint_id in calls:
+        day = at.date() if isinstance(at, datetime) else at
+        w = weeks.setdefault(week_start(day), {"calls": 0, "active_days": 0, "providers": set(), "categories": {}})
+        w["calls"] += 1
+        w["active_days"] |= 1 << day.weekday()
+        if provider:
+            w["providers"].add(provider)
+        if endpoint_id:
+            k = category_of(endpoint_id)
+            w["categories"][k] = w["categories"].get(k, 0) + 1
+    return weeks
+
+
+def add_to_week(row: dict, delta: dict) -> dict:
+    """A stored week row plus a `fold_calls` delta for the same week."""
+    mix = dict(row.get("categories") or {})
+    for k, n in delta["categories"].items():
+        mix[k] = mix.get(k, 0) + n
+    return {"calls": (row.get("calls") or 0) + delta["calls"],
+            "active_days": (row.get("active_days") or 0) | delta["active_days"],
+            "providers": sorted(set(row.get("providers") or []) | delta["providers"]),
+            "categories": mix}
 
 
 def call_tier(calls: int) -> str | None:

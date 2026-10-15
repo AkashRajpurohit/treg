@@ -560,7 +560,7 @@ def main(argv: list[str] | None = None) -> int:
     repair_status.set_defaults(fn=_catalog_repair_status)
     showcase = sub.add_parser("showcase", help="the /showcase leaderboard's read models")
     showcasesub = showcase.add_subparsers(dest="cmd", required=True)
-    weeks = showcasesub.add_parser("weeks", help="store each approved app's activity for the weeks not stored yet")
+    weeks = showcasesub.add_parser("weeks", help="add each approved app's new calls to its weekly activity rows")
     weeks.set_defaults(fn=_showcase_weeks)
     spend = sub.add_parser("spend", help="spend read models derived from the ledger")
     spendsub = spend.add_subparsers(dest="cmd", required=True)

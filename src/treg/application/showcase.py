@@ -8,8 +8,9 @@ treg is the only writer of every showcase table:
 - staff review through `approve`, `reject`, `set_hidden`, `staff_edit`, `staff_create` (the
   private admin calls them through the staff API). Approval publishes the revision's pictures
   first and only then points the row at them, so a page never names a missing file.
-- `refresh_weeks` (the `treg-worker showcase weeks` cron) folds each approved app's team calls
-  into one `ShowcaseWeek` row per UTC week, reading only weeks not stored yet plus the newest.
+- `refresh_weeks` (the `treg-worker showcase weeks` cron) adds each approved app's new team calls
+  to one `ShowcaseWeek` row per UTC week, reading only calls after its `ShowcaseCursor`, in small
+  batches. Approval counts nothing; a new app joins the activity boards at the next run.
 - `leaderboard` and `vote` are the public side; activity leaves only through
   `domain.showcase.public_entry`.
 
@@ -31,7 +32,8 @@ from ..domain.catalog import store as catalog_store
 from ..domain.identity.api_keys import is_machine_email
 from ..domain.images import ImageRejected, parse_key
 from ..infra.db import session_maker
-from ..models import CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseVote, ShowcaseWeek, User
+from ..models import (CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseCursor, ShowcaseVote,
+                      ShowcaseWeek, User)
 from ..timeutil import utcnow_naive
 from . import images
 
@@ -283,7 +285,6 @@ async def approve(app_id: int, expected_version: int, *, actor: str, source: str
     await _publish_revision(rev)                     # storage I/O with no session open
     async with session_maker() as db:
         app = await _versioned(db, app_id, expected_version)
-        first_approval = app.approved_at is None
         before = live_of(app) if app.approved_at else {}
         old_keys = [app.icon_key, *app.shot_keys] if app.approved_at else []
         _set_live(app, rev)
@@ -294,14 +295,6 @@ async def approve(app_id: int, expected_version: int, *, actor: str, source: str
         await db.commit()
         view = app_view(app)
     await images.retire([k for k in old_keys if k not in ([rev["icon_key"], *rev["shot_keys"]])])
-    if first_approval:
-        # Count its activity now (four weeks back) instead of at the next weekly run, so an app with
-        # real usage lands on the activity boards as soon as it is approved. Best effort: the
-        # weekly run catches up if this fails.
-        try:
-            await refresh_weeks(app_ids=[app_id])
-        except Exception:
-            log.exception("showcase weeks on approval failed app=%s", app_id)
     return view
 
 
@@ -390,64 +383,100 @@ async def staff_create(org_id: int, raw: dict, *, approve_now: bool, actor: str,
 
 
 # ---- weekly activity ----------------------------------------------------------------------------
+# Counted a little at a time: each run reads only a team's calls after the app's cursor, over the
+# (org_id, id) index, in batches of BATCH_ROWS, each its own short transaction holding the cursor
+# row locked, so overlapping runs never count a call twice. Ids are given as rows are inserted, so
+# a call that is written late still lands after the cursor. Calls younger than LAG wait for the
+# next run: a lower id still being committed by another writer is then already visible. A run reads
+# at most MAX_ROWS calls in all, so a busy team's first four weeks are counted over several runs.
+
+BATCH_ROWS = 5_000
+MAX_ROWS = 200_000
+LAG = timedelta(minutes=5)
+
 
 def _categories_by_endpoint() -> dict[str, str]:
     return {e["id"]: (e.get("domain") or "other") for e in catalog_store.load().endpoints}
 
 
-async def _week_row(db: AsyncSession, org_id: int, start: date, domains: dict[str, str]) -> dict:
-    """One team's calls in the UTC week starting `start`, grouped small: by day, provider and tool.
-    Refused calls never reached a provider, so they are not activity."""
-    begin = datetime(start.year, start.month, start.day)
+async def _start_after(db: AsyncSession, org_id: int, since: date) -> int:
+    """The cursor for an app counted for the first time: just before the team's first call of the
+    window, found on the (org_id, created_at) index; past the newest call when there is none."""
+    begin = datetime(since.year, since.month, since.day)
+    first = (await db.execute(select(CallRecord.id).where(
+        CallRecord.org_id == org_id, CallRecord.created_at >= begin)
+        .order_by(CallRecord.created_at).limit(1))).scalar_one_or_none()
+    if first is not None:
+        return first - 1
+    newest = (await db.execute(select(func.max(CallRecord.id)).where(CallRecord.org_id == org_id))).scalar_one()
+    return newest or 0
+
+
+async def _fold_batch(db: AsyncSession, app_id: int, org_id: int, *, since: date, young: datetime,
+                      limit: int, domains: dict[str, str]) -> tuple[int, bool]:
+    """Add the next `limit` calls after the app's cursor to its week rows and move the cursor, in
+    the caller's transaction. Returns (calls read, caught up)."""
+    cursor = (await db.execute(select(ShowcaseCursor).where(ShowcaseCursor.app_id == app_id)
+                               .with_for_update())).scalar_one_or_none()
+    if cursor is None:
+        cursor = ShowcaseCursor(app_id=app_id, through_id=await _start_after(db, org_id, since))
+        db.add(cursor)
     rows = (await db.execute(
-        select(func.date(CallRecord.created_at), CallRecord.provider, CallRecord.endpoint_id, func.count())
-        .where(CallRecord.org_id == org_id, CallRecord.created_at >= begin,
-               CallRecord.created_at < begin + timedelta(days=7), CallRecord.refused_by.is_(None))
-        .group_by(func.date(CallRecord.created_at), CallRecord.provider, CallRecord.endpoint_id))).all()
-    calls, active, providers, mix = 0, 0, set(), {}
-    for day, provider, endpoint_id, n in rows:
-        day = day if isinstance(day, date) else date.fromisoformat(str(day)[:10])
-        calls += n
-        active |= 1 << (day - start).days
-        if provider:
-            providers.add(provider)
-        if endpoint_id:
-            k = domains.get(endpoint_id, "other")
-            mix[k] = mix.get(k, 0) + n
-    return {"calls": calls, "active_days": active, "providers": sorted(providers), "categories": mix}
+        select(CallRecord.id, CallRecord.created_at, CallRecord.provider, CallRecord.endpoint_id,
+               CallRecord.refused_by)
+        .where(CallRecord.org_id == org_id, CallRecord.id > cursor.through_id)
+        .order_by(CallRecord.id).limit(limit))).all()
+    counted, through, read, waiting = [], cursor.through_id, 0, False
+    for call_id, at, provider, endpoint_id, refused_by in rows:
+        if at >= young:
+            waiting = True
+            break
+        through, read = call_id, read + 1
+        # Refused calls never reached a provider, so they are not activity.
+        if refused_by is None and at.date() >= since:
+            counted.append((at, provider, endpoint_id))
+    for start, delta in rules.fold_calls(counted, lambda e: domains.get(e, "other")).items():
+        key = start.isoformat()
+        week = await db.get(ShowcaseWeek, (app_id, key))
+        if week is None:
+            week = ShowcaseWeek(app_id=app_id, week_start=key)
+            db.add(week)
+        merged = rules.add_to_week({"calls": week.calls, "active_days": week.active_days,
+                                    "providers": week.providers, "categories": week.categories}, delta)
+        week.calls, week.active_days = merged["calls"], merged["active_days"]
+        week.providers, week.categories = merged["providers"], merged["categories"]
+        week.computed_at = utcnow_naive()
+    cursor.through_id, cursor.updated_at = through, utcnow_naive()
+    return read, waiting or len(rows) < limit
 
 
-async def refresh_weeks(session_factory: Callable = session_maker, *, today: date | None = None,
-                        app_ids: list[int] | None = None) -> dict:
-    """Store every missing week (up to the window) for every approved app - or only `app_ids` - and
-    recount the newest. Idempotent: re-running a week rewrites its row with the same numbers."""
-    today = today or utcnow_naive().date()
-    newest = rules.last_complete_week(today)
-    wanted = [newest - timedelta(days=7 * i) for i in range(rules.WINDOW_WEEKS)]
+async def refresh_weeks(session_factory: Callable = session_maker, *, now: datetime | None = None,
+                        max_rows: int = MAX_ROWS, batch_rows: int = BATCH_ROWS) -> dict:
+    """One scheduled pass: add every approved app's new team calls to its week rows, then drop
+    rows older than the window. Returns `{apps, calls, caught_up, newest_week}`."""
+    now = now or utcnow_naive()
+    since = rules.window_start(now.date())
+    young = now - LAG
     domains = _categories_by_endpoint()
-    written = 0
     async with session_factory() as db:
-        stmt = select(ShowcaseApp).where(ShowcaseApp.status == "approved")
-        if app_ids is not None:
-            stmt = stmt.where(ShowcaseApp.id.in_(app_ids))
-        targets = [(a.id, a.org_id) for a in (await db.execute(stmt)).scalars().all()]
+        targets = [(a.id, a.org_id) for a in (await db.execute(
+            select(ShowcaseApp).where(ShowcaseApp.status == "approved").order_by(ShowcaseApp.id))).scalars().all()]
+    read, caught_up = 0, True
     for app_id, org_id in targets:
-        async with session_factory() as db:
-            have = set((await db.execute(
-                select(ShowcaseWeek.week_start).where(ShowcaseWeek.app_id == app_id))).scalars().all())
-            for start in wanted:
-                key = start.isoformat()
-                if key in have and start != newest:
-                    continue
-                row = await _week_row(db, org_id, start, domains)
-                ins = _insert(db)(ShowcaseWeek).values(app_id=app_id, week_start=key, computed_at=utcnow_naive(), **row)
-                await db.execute(ins.on_conflict_do_update(
-                    index_elements=[ShowcaseWeek.app_id, ShowcaseWeek.week_start],
-                    set_={**row, "computed_at": ins.excluded.computed_at}))
-                written += 1
-            await db.commit()
-    log.info("showcase weeks: %d apps, %d rows written, newest week %s", len(targets), written, newest)
-    return {"apps": len(targets), "rows_written": written, "newest_week": newest.isoformat()}
+        done = False
+        while not done and read < max_rows:
+            async with session_factory() as db:
+                n, done = await _fold_batch(db, app_id, org_id, since=since, young=young,
+                                            limit=min(batch_rows, max_rows - read), domains=domains)
+                await db.commit()
+            read += n
+        caught_up = caught_up and done
+    async with session_factory() as db:
+        await db.execute(delete(ShowcaseWeek).where(ShowcaseWeek.week_start < since.isoformat()))
+        await db.commit()
+    newest = rules.last_complete_week(now.date())
+    log.info("showcase weeks: %d apps, %d calls read, caught up %s", len(targets), read, caught_up)
+    return {"apps": len(targets), "calls": read, "caught_up": caught_up, "newest_week": newest.isoformat()}
 
 
 # ---- the public board and votes -----------------------------------------------------------------
@@ -478,8 +507,7 @@ async def leaderboard(db: AsyncSession) -> dict:
     ids = [a.id for a in apps]
     weeks = (await db.execute(select(ShowcaseWeek).where(ShowcaseWeek.app_id.in_(ids)))).scalars().all() if ids else []
     upvotes = await _upvotes(db)
-    stored = [date.fromisoformat(w.week_start) for w in weeks]
-    ref = max(stored) if stored else rules.last_complete_week(utcnow_naive().date())
+    ref = rules.last_complete_week(utcnow_naive().date())   # the week still running never counts
     by_app: dict[int, list[rules.Week]] = {}
     for w in weeks:
         by_app.setdefault(w.app_id, []).append(rules.Week(
