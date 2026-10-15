@@ -14,6 +14,9 @@ from urllib.parse import urlsplit
 
 # How many weekly rows make the "monthly" numbers (tier, active days, providers, categories).
 WINDOW_WEEKS = 4
+# How many weekly rows are kept: enough for a streak to grow past the window. A team is counted
+# back WINDOW_WEEKS when it first lists an app; older weeks fill in only as time passes.
+KEEP_WEEKS = 13
 
 # Call tiers over the window, highest first. Below the last floor an app shows no tier at all.
 CALL_TIERS: tuple[tuple[int, str], ...] = (
@@ -73,8 +76,13 @@ def last_complete_week(today: date) -> date:
 
 
 def window_start(today: date) -> date:
-    """The Monday of the oldest week the leaderboard reads, as of `today`."""
+    """The Monday of the oldest week the monthly numbers read, as of `today`."""
     return last_complete_week(today) - timedelta(days=7 * (WINDOW_WEEKS - 1))
+
+
+def keep_from(today: date) -> date:
+    """The Monday of the oldest week row kept, as of `today`."""
+    return last_complete_week(today) - timedelta(days=7 * (KEEP_WEEKS - 1))
 
 
 def fold_calls(calls, category_of) -> dict[date, dict]:

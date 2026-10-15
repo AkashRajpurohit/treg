@@ -2275,16 +2275,17 @@ class ShowcaseAppEvent(SQLModel, table=True):
 
 
 class ShowcaseWeek(SQLModel, table=True):
-    """One app's activity in one UTC week (Monday start), from its team's call records. Written only
-    by `application.showcase.refresh_activity`, which adds new calls to it as they arrive (the current
-    week's row grows until the week ends). Rows add up exactly: the leaderboard sums the last four
-    complete weeks for its monthly numbers and unions their provider lists for a distinct count."""
+    """One team's activity in one UTC week (Monday start), from its call records, kept while the team
+    lists an approved /showcase app. Every app of the team shows it: the calls are the team's. Written
+    only by `application.showcase.refresh_activity`, which adds new calls as they arrive (the current
+    week's row grows until the week ends); team deletion removes it with the team. Rows add up
+    exactly: the leaderboard sums the last four complete weeks and unions their provider lists."""
 
     __table_args__ = (
         CheckConstraint("calls >= 0", name="ck_showcaseweek_calls"),
         CheckConstraint("active_days BETWEEN 0 AND 127", name="ck_showcaseweek_active_days"),
     )
-    app_id: int = Field(primary_key=True, foreign_key="showcaseapp.id", ondelete="CASCADE")
+    org_id: int = Field(primary_key=True, foreign_key="org.id", ondelete="CASCADE")
     week_start: str = Field(primary_key=True)  # YYYY-MM-DD, a Monday, UTC
     calls: int = Field(default=0)
     active_days: int = Field(default=0)  # bit d set = a call on day d of the week (0 = Monday)
@@ -2294,11 +2295,11 @@ class ShowcaseWeek(SQLModel, table=True):
 
 
 class ShowcaseCursor(SQLModel, table=True):
-    """How far `application.showcase.refresh_activity` has counted one approved app's team calls: the
-    last `callrecord.id` folded into its week rows. Each run reads only calls after it, over the
-    `(org_id, id)` index, so no run re-reads a team's history. Same only writer as `ShowcaseWeek`."""
+    """How far `application.showcase.refresh_activity` has counted one team's calls: the last
+    `callrecord.id` folded into its week rows. Each run reads only calls after it, over the
+    `(org_id, id)` index, so no run re-reads a team's history. Same writers as `ShowcaseWeek`."""
 
-    app_id: int = Field(primary_key=True, foreign_key="showcaseapp.id", ondelete="CASCADE")
+    org_id: int = Field(primary_key=True, foreign_key="org.id", ondelete="CASCADE")
     through_id: int = Field(default=0, sa_column=Column(BigInteger, nullable=False))
     updated_at: NaiveUTC = Field(default_factory=_now)
 

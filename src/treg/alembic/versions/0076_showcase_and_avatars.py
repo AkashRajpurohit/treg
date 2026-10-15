@@ -6,7 +6,7 @@ Create Date: 2026-10-15
 
 Additive: five new tables and two nullable columns. `showcaseapp` holds teams' applications to the
 /showcase leaderboard and their review state; `showcaseappevent` its append-only history;
-`showcaseweek` one row per app per UTC week and `showcasecursor` the last call counted into them,
+`showcaseweek` one row per listed team per UTC week and `showcasecursor` the last call counted into them,
 both written by `treg-worker showcase activity`, which reads only new `callrecord` rows on the existing
 (org_id, id) index; `showcasevote` one upvote per person per app.
 `org.avatar_key` and `user.avatar_key` name a picture in the media bucket, NULL for initials.
@@ -73,7 +73,7 @@ def upgrade() -> None:
     )
     op.create_table(
         "showcaseweek",
-        sa.Column("app_id", sa.Integer(), sa.ForeignKey("showcaseapp.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("org_id", sa.Integer(), sa.ForeignKey("org.id", ondelete="CASCADE"), primary_key=True),
         sa.Column("week_start", sa.String(), primary_key=True),
         sa.Column("calls", sa.Integer(), nullable=False),
         sa.Column("active_days", sa.Integer(), nullable=False),
@@ -85,7 +85,7 @@ def upgrade() -> None:
     )
     op.create_table(
         "showcasecursor",
-        sa.Column("app_id", sa.Integer(), sa.ForeignKey("showcaseapp.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("org_id", sa.Integer(), sa.ForeignKey("org.id", ondelete="CASCADE"), primary_key=True),
         sa.Column("through_id", sa.BigInteger(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
     )

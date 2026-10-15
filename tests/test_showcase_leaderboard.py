@@ -151,7 +151,7 @@ async def test_apply_review_approve_and_nothing_public_before(clients, store, st
     assert pub["name"] == "Example App" and pub["icon_url"] == f"/media-files/{icon}"
     assert pub["shots"][0]["small_url"].endswith("-640.webp")
     async with session_maker() as db:   # approval counts nothing; the worker's next run does
-        assert (await db.execute(select(ShowcaseWeek).where(ShowcaseWeek.app_id == entry["id"]))).scalars().all() == []
+        assert (await db.execute(select(ShowcaseWeek).where(ShowcaseWeek.org_id == org_id))).scalars().all() == []
     # Once approved, nothing waits for review any more.
     assert (await clients.get("/admin/showcase/apps?status=review", headers=staff)).json() == []
     detail = (await clients.get(f"/admin/showcase/apps/{entry['id']}", headers=staff)).json()
@@ -189,6 +189,38 @@ async def test_a_rejected_application_can_be_fixed_and_resubmitted(clients, staf
     again = await clients.patch(f"/showcase/apps/{entry['id']}", json={"expected_version": rejected["version"],
                                                                          "fields": fields(url="https://example.org")})
     assert again.json()["status"] == "pending" and again.json()["reject_reason"] == ""
+
+
+async def test_a_rejected_app_cannot_return_to_review_past_the_limit(clients, staff):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    first = (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 0"))).json()
+    rejected = (await clients.post(f"/admin/showcase/apps/{first['id']}/reject", headers=staff,
+                                   json={"expected_version": first["version"], "reason": "No"})).json()
+    for i in range(1, 6):
+        assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name=f"App {i}"))).status_code == 200
+    back = await clients.patch(f"/showcase/apps/{first['id']}", json={"expected_version": rejected["version"],
+                                                                        "fields": fields(name="App 0 again")})
+    assert back.status_code == 409
+    assert (await clients.post(f"/admin/showcase/apps/{first['id']}/approve", headers=staff,
+                               json={"expected_version": rejected["version"]})).status_code == 409
+
+
+async def test_an_edit_previews_kept_pictures_from_the_public_side(clients, store, staff):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    icon = await _upload(clients, "showcase_icon")
+    entry = (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(icon_key=icon))).json()
+    entry = (await clients.post(f"/admin/showcase/apps/{entry['id']}/approve", headers=staff,
+                                json={"expected_version": entry["version"]})).json()
+    for key in store.keys("staging"):
+        await store.delete("staging", key)          # the staging copy has expired
+    edited = (await clients.patch(f"/showcase/apps/{entry['id']}", json={
+        "expected_version": entry["version"], "fields": fields(icon_key=icon, name="Renamed")})).json()
+    assert edited["pending"]["icon_url"] == f"/media-files/{icon}"
+    approved = await clients.post(f"/admin/showcase/apps/{entry['id']}/approve", headers=staff,
+                                  json={"expected_version": edited["version"]})
+    assert approved.status_code == 200 and approved.json()["live"]["name"] == "Renamed"
 
 
 async def test_five_apps_per_team_and_only_owners_or_admins_apply(clients, staff):
@@ -253,7 +285,7 @@ async def test_the_fold_counts_only_new_upstream_calls_in_small_batches(clients)
     first = await showcase.refresh_activity(now=NOW, batch_rows=2)
     assert first["caught_up"] and first["calls"] == 9      # refused calls move the cursor but are not activity
     async with session_maker() as db:
-        row = await db.get(ShowcaseWeek, (app_id, NEWEST.isoformat()))
+        row = await db.get(ShowcaseWeek, (org_id, NEWEST.isoformat()))
         assert (await db.execute(select(func.count()).select_from(ShowcaseWeek))).scalar_one() == 1
     assert (row.calls, row.active_days, row.providers) == (5, 0b101, ["anyapi", "tikhub"])
     assert sum(row.categories.values()) == 5
@@ -264,7 +296,7 @@ async def test_the_fold_counts_only_new_upstream_calls_in_small_batches(clients)
     again = await showcase.refresh_activity(now=NOW)
     assert again["calls"] == 1
     async with session_maker() as db:
-        assert (await db.get(ShowcaseWeek, (app_id, NEWEST.isoformat()))).calls == 6
+        assert (await db.get(ShowcaseWeek, (org_id, NEWEST.isoformat()))).calls == 6
     assert (await showcase.refresh_activity(now=NOW))["calls"] == 0
     assert (await showcase.refresh_activity(now=NOW + timedelta(minutes=10)))["calls"] == 1
 
@@ -278,19 +310,71 @@ async def test_a_capped_run_resumes_where_it_stopped(clients):
     second = await showcase.refresh_activity(now=NOW, max_rows=3, batch_rows=2)
     assert (second["calls"], second["caught_up"]) == (2, True)
     async with session_maker() as db:
-        assert (await db.get(ShowcaseWeek, (app_id, NEWEST.isoformat()))).calls == 5
+        assert (await db.get(ShowcaseWeek, (org_id, NEWEST.isoformat()))).calls == 5
+
+
+async def test_teams_take_turns_and_a_team_is_read_once_for_all_its_apps(clients):
+    _, busy = await _tim()
+    first_app = await _approved(busy, name="Busy one")
+    await _approved(busy, name="Busy two")
+    async with session_maker() as db:
+        quiet_org = Org(name="Quiet", slug="quiet-team")
+        db.add(quiet_org)
+        await db.commit()
+        quiet = quiet_org.id
+    await _approved(quiet, name="Quiet app")
+    monday = datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9)
+    await _calls(busy, monday, 6)
+    await _calls(quiet, monday, 1)
+    run = await showcase.refresh_activity(now=NOW, max_rows=4, batch_rows=2)
+    assert (run["teams"], run["calls"], run["caught_up"]) == (2, 4, False)   # busy 2, quiet 1, busy 1: quiet never waited
+    async with session_maker() as db:
+        assert (await db.get(ShowcaseWeek, (quiet, NEWEST.isoformat()))).calls == 1
+    await showcase.refresh_activity(now=NOW)
+    board = {a["name"]: a for a in (await clients.get("/showcase/leaderboard")).json()["apps"]}
+    assert board["Busy one"]["calls_tier"] is None and board["Busy one"]["streak_days"] == 1
+    assert board["Busy two"]["streak_days"] == 1 and first_app
+
+
+async def test_a_team_no_longer_listed_loses_its_rows_and_starts_over(clients, staff):
+    _, org_id = await _tim()
+    app_id = await _approved(org_id)
+    await _calls(org_id, datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9), 2)
+    await showcase.refresh_activity(now=NOW)
+    async with session_maker() as db:
+        app_ = await db.get(ShowcaseApp, app_id)
+        app_.status = "hidden"
+        await db.commit()
+    await showcase.refresh_activity(now=NOW)
+    async with session_maker() as db:
+        assert await db.get(ShowcaseCursor, org_id) is None and await db.get(ShowcaseWeek, (org_id, NEWEST.isoformat())) is None
+        app_ = await db.get(ShowcaseApp, app_id)
+        app_.status = "approved"
+        await db.commit()
+    assert (await showcase.refresh_activity(now=NOW))["calls"] == 2
+
+
+async def test_a_cursor_is_created_once_even_when_two_runs_find_none(clients):
+    _, org_id = await _tim()
+    async with session_maker() as db:
+        await showcase._locked_cursor(db, org_id)
+        await db.commit()
+    async with session_maker() as db:
+        await showcase._locked_cursor(db, org_id)
+        await db.commit()
+        assert (await db.execute(select(func.count()).select_from(ShowcaseCursor))).scalar_one() == 1
 
 
 async def test_weeks_that_leave_the_window_are_dropped(clients):
     _, org_id = await _tim()
     app_id = await _approved(org_id)
     async with session_maker() as db:
-        old = (rules.window_start(TODAY) - timedelta(days=7)).isoformat()
-        db.add(ShowcaseWeek(app_id=app_id, week_start=old, calls=9, active_days=1))
+        old = (rules.keep_from(TODAY) - timedelta(days=7)).isoformat()
+        db.add(ShowcaseWeek(org_id=org_id, week_start=old, calls=9, active_days=1))
         await db.commit()
     await showcase.refresh_activity(now=NOW)
     async with session_maker() as db:
-        assert await db.get(ShowcaseWeek, (app_id, old)) is None
+        assert await db.get(ShowcaseWeek, (org_id, old)) is None
 
 
 async def test_the_public_board_never_leaks_the_team_or_exact_numbers(clients):
@@ -346,9 +430,9 @@ async def test_deleting_a_team_removes_its_entries_and_everything_under_them(cli
         await db.commit()
     app_id = await _approved(org_id)
     async with session_maker() as db:
-        db.add(ShowcaseWeek(app_id=app_id, week_start=NEWEST.isoformat(), calls=1, active_days=1))
-        db.add(ShowcaseCursor(app_id=app_id, through_id=1))
-        db.add(ShowcaseVote(app_id=app_id, user_id=user.id, value=1))
+        db.add(ShowcaseWeek(org_id=org_id, week_start=NEWEST.isoformat(), calls=1, active_days=1))
+        db.add(ShowcaseCursor(org_id=org_id, through_id=1))
+        db.add(ShowcaseVote(app_id=app_id, user_id=user.id))
         db.add(ShowcaseAppEvent(app_id=app_id, version=1, action="applied", actor="t", source="api"))
         await db.commit()
         await cascade_delete_org(await db.get(Org, org_id), db)

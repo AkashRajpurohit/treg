@@ -42,28 +42,37 @@ refused.
 |---|---|---|
 | `showcaseapp` | one entry: status, live fields, consent flags, the pending proposal | `application/showcase.py` |
 | `showcaseappevent` | append-only history | `application/showcase.py` |
-| `showcaseweek` | one row per approved app per UTC week | `refresh_activity` (`treg-worker showcase activity`) |
-| `showcasecursor` | the last call id counted into an app's weeks | `refresh_activity` |
+| `showcaseweek` | one row per listed team per UTC week | `refresh_activity` (`treg-worker showcase activity`) |
+| `showcasecursor` | the last call id counted into a team's weeks | `refresh_activity` |
+
+Team deletion removes all of these with the team (`domain/governance/teams.py`), as it does every
+team's rows.
 | `showcasevote` | one upvote per person per app (the row is the vote) | `vote` |
 
 ## Weekly rows, counted incrementally
 
 Monthly numbers cannot be updated from a single "last status" plus new days: the week leaving the
 window must be subtracted, and distinct provider counts do not add. The worker stores one row per
-app per week, which do add: the leaderboard sums the last four, unions their provider lists and
-walks their active-day bits for the streak, over the last four complete weeks (the week still
-running never counts). Refused calls never reached a provider and are not counted.
+team per week, which do add: the leaderboard sums the last four complete weeks (the week still
+running never counts), unions their provider lists, and walks the active-day bits back from the
+last complete week for the streak. Rows are kept for thirteen weeks so a streak can outgrow the
+window. Refused calls never reached a provider and are not counted. The calls are the team's, so
+activity is counted per team that lists an approved app, and every app of that team shows the same
+numbers.
 
-The worker counts a little at a time. Each app has a cursor, the last `callrecord.id` it has
+The worker counts a little at a time. Each team has a cursor, the last `callrecord.id` it has
 counted; a run reads only the team's calls after it, over the `(org_id, id)` index, in batches of a
 few thousand, each a short transaction that adds them to their week rows and moves the cursor with
-the cursor row locked, so overlapping runs never count a call twice. Calls younger than a few
-minutes wait for the next run, so a lower id still being committed is not skipped. A run reads a
-capped number of calls; a busy team's first four weeks are counted over several runs. Week rows
-older than the window are deleted. Approval counts nothing: a newly approved app joins the activity
-boards after the next run, so the run is scheduled often (hourly). A team's whole-week query is not
-an option: one busy team's week is hundreds of thousands of rows, each read from the table because
-the `(org_id, created_at)` index does not hold the provider or tool. Upvotes are live.
+the cursor row locked (the row is inserted if missing before it is locked, so two runs never both
+create it). Overlapping runs therefore never count a call twice. Calls younger than a few minutes
+wait for the next run, so a lower id still being committed is not skipped. Teams take turns a
+batch at a time until a run's cap, so one busy team never holds the others back; a busy team's
+first four weeks are counted over several runs. A team with no approved app left loses its rows and
+cursor and is counted afresh from the window if it lists again. Approval counts nothing: a newly
+approved app joins the activity boards after the next run, so the run is scheduled hourly. A
+team's whole-week query is not an option: one busy team's week is hundreds of thousands of rows,
+each read from the table because the `(org_id, created_at)` index does not hold the provider or
+tool. Upvotes are live.
 
 ## What leaves the server
 
