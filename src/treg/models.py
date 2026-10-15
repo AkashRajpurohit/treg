@@ -172,7 +172,7 @@ class OrgFlowControlVersion(SQLModel, table=True):
         ),
         Index("ix_orgflowcontrolversion_publish_status", "publish_status", "org_id", "version"),
     )
-    org_id: int = Field(primary_key=True, foreign_key="org.id", ondelete="CASCADE")
+    org_id: int = Field(primary_key=True)  # Org existence is validated by the management writer.
     version: int = Field(primary_key=True)
     # Required full snapshot. The management writer must validate its schema and append versions;
     # this storage model does not itself prevent updates to config or allocate version numbers.

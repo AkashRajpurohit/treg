@@ -175,7 +175,10 @@ The schema enforces unique positive versions and valid publication metadata. All
 increasing versions, JSON schema validation, and immutable snapshots are management-writer
 responsibilities; this migration does not grant that writer access or prohibit arbitrary
 SQL updates. No rows are backfilled and existing request admission is unchanged.
-`cascade_delete_org` removes this history with its Org, backed by an `ON DELETE CASCADE` FK.
+`org_id` has no foreign key, keeping this migration independent of locks on the balance table.
+`cascade_delete_org` explicitly removes this history with its Org. The management writer must
+validate Org existence and coordinate saves with Org deletion before its cleanup begins;
+direct SQL writes or deletes have no database-enforced referential integrity.
 An application rollback leaves the table in place; a schema downgrade deletes its saved history.
 
 ## Registry tables

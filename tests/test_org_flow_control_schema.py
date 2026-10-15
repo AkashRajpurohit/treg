@@ -103,7 +103,6 @@ async def test_upgrade_is_empty_and_versions_round_trip_per_org(store_connection
     {"publish_status": "published"},
     {"publish_status": "published", "published_by": "test-publisher"},
     {"publish_status": "published", "published_at": NOW},
-    {"org_id": 999},
 ])
 async def test_storage_rejects_invalid_version_or_publication(store_connection, invalid):
     with pytest.raises(sa.exc.IntegrityError):
@@ -128,18 +127,14 @@ async def test_publication_metadata_can_change_without_replacing_snapshot(store_
     assert row["reason"] == "Synthetic storage test" and row["created_at"] == NOW
 
 
-@pytest.mark.parametrize("delete_path", ["foreign_key", "application"])
-async def test_org_deletion_removes_only_its_configuration_history(store_connection, delete_path):
+async def test_application_org_deletion_removes_only_its_configuration_history(store_connection):
     connection = store_connection
     for values in (_row(), _row(version=2), _row(org_id=2)):
         await connection.execute(table.insert().values(**values))
-    if delete_path == "foreign_key":
-        await connection.execute(sa.delete(Org).where(Org.id == 1))
-    else:
-        async with AsyncSession(bind=connection, expire_on_commit=False) as session:
-            org = await session.get(Org, 1)
-            await cascade_delete_org(org, session)
-            await session.flush()
+    async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+        org = await session.get(Org, 1)
+        await cascade_delete_org(org, session)
+        await session.flush()
     assert (await connection.execute(
         sa.select(table.c.org_id, table.c.version)
     )).all() == [(2, 1)]
@@ -156,3 +151,36 @@ async def test_schema_downgrade_preserves_org_data_and_can_upgrade_again(store_c
     )).all() == [(1, 123), (2, 123)]
     await connection.run_sync(lambda sync: _apply(sync, "upgrade"))
     assert (await connection.execute(sa.select(sa.func.count()).select_from(table))).scalar_one() == 0
+
+
+async def test_postgres_migration_does_not_lock_org_while_balance_writer_is_open():
+    if db._engine.dialect.name != "postgresql":
+        pytest.skip("requires PostgreSQL relation locks")
+    await db.reset_db()
+    async with db._engine.begin() as connection:
+        await connection.run_sync(table.drop)
+        await connection.execute(Org.__table__.insert().values(
+            id=1, name="Migration lock test", slug="migration-lock-test", balance_micro=123,
+        ))
+    try:
+        async with db._engine.connect() as writer:
+            transaction = await writer.begin()
+            try:
+                # A live balance update holds ROW EXCLUSIVE until its transaction ends.
+                await writer.execute(sa.update(Org).where(Org.id == 1).values(balance_micro=124))
+                async with db._engine.begin() as connection:
+                    await connection.execute(sa.text("SET LOCAL lock_timeout = '1s'"))
+                    await connection.execute(sa.text("SET LOCAL statement_timeout = '5s'"))
+                    await connection.run_sync(lambda sync: _apply(sync, "upgrade"))
+                    # Creating an FK would wait on the writer above. This migration must not
+                    # acquire any relation lock on org, even when it can proceed immediately.
+                    assert (await connection.execute(sa.text(
+                        "SELECT count(*) FROM pg_locks "
+                        "WHERE pid = pg_backend_pid() AND relation = 'org'::regclass"
+                    ))).scalar_one() == 0
+                    assert await connection.run_sync(
+                        lambda sync: sa.inspect(sync).has_table(table.name))
+            finally:
+                await transaction.rollback()
+    finally:
+        await db.reset_db()

@@ -4,6 +4,7 @@ Revision ID: 0073
 Revises: 0072
 
 Additive only: no backfill, role grants, or changes to existing Org rows.
+No foreign key to org: creating configuration storage must not lock the balance table.
 """
 
 from alembic import op
@@ -19,7 +20,7 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "orgflowcontrolversion",
-        sa.Column("org_id", sa.Integer(), sa.ForeignKey("org.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("org_id", sa.Integer(), primary_key=True),
         sa.Column("version", sa.Integer(), primary_key=True),
         sa.Column("config", sa.JSON(none_as_null=True).with_variant(
             JSONB(none_as_null=True), "postgresql"), nullable=False),
