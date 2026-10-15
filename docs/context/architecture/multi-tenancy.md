@@ -347,8 +347,8 @@ bearer path refuses it once expired rather than reviving an expired cookie.
 - **Org management endpoints:** `register_user` (`POST /users`, legacy open-registration, used by the
   test fixture) still creates the user + an org + owner membership via `_make_org_membership` (mints the
   token) — NOT reached by the dashboard/CLI login doors, which no longer auto-make an org. Both this door
-  and `create_org` read the first-party ad-click cookie (`application.signup._ad_attribution_from`) and,
-  when enabled and present, stamp `Org.ad_gclid`/`ad_click_id_type`/`ad_landing`/`ad_click_at` on the
+  and `create_org` read the first-party ad-click cookie (`application.signup._ad_attribution_from`),
+  or the email's `AdClickStash` row when the request has no cookie, and, when enabled and present, stamp `Org.ad_gclid`/`ad_click_id_type`/`ad_landing`/`ad_click_at` on the
   new org — preserving whether the click was a GCLID, GBRAID or WBRAID — see
   [ads-conversions](ads-conversions.md). `create_org`
   (`POST /orgs`, `require_identity`),
