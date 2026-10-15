@@ -16,7 +16,7 @@ from treg.domain.catalog import stats as endpoint_stats
 from treg.api import app
 from treg.infra.db import session_maker
 from treg.infra.catalog_observations import CachedEndpointObservationReader
-from treg.models import CallRecord
+from treg.models import CallRecord, Org
 
 EP = "tikhub.tiktok.user.profile"
 
@@ -122,6 +122,9 @@ async def test_an_uncalled_endpoint_says_so_rather_than_vanishing(clients: Async
 
 
 async def test_aggregates_pool_across_orgs_but_carry_nothing_identifying(clients: AsyncClient):
+    async with session_maker() as db:
+        db.add(Org(id=2, name="Other synthetic team", slug="other-synthetic-team"))
+        await db.commit()
     for _ in range(3):
         await _record(EP, 200, org_id=1)
     for _ in range(3):
