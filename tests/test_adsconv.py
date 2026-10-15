@@ -1050,6 +1050,16 @@ async def test_stash_caps_fields_and_disabled_lookup(clients, ads_enabled, monke
         assert await _ad_cookie_for(db, 'a.b+tag@gmail.com', '') == ''
 
 
+@pytest.mark.parametrize('cookie,parsed', [
+    ('gclid|ID|a|b', ('gclid', 'ID', 'a|b')),      # a "|" inside the landing keeps the click
+    ('ID|landing', ('gclid', 'ID', 'landing')),     # legacy two-part cookie
+    ('junk', ('', '', '')), ('x|ID|landing', ('', '', '')),
+])
+def test_ad_cookie_landing_may_contain_a_pipe(ads_enabled, cookie, parsed):
+    from treg.application.signup import _ad_attribution_from
+    assert _ad_attribution_from(cookie) == parsed
+
+
 async def test_purge_deletes_only_expired_stash_rows(clients, ads_enabled):
     from treg.application.signup import purge_expired_ad_clicks, stash_ad_click
     from treg.models import AdClickStash

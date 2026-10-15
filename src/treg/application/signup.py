@@ -198,7 +198,8 @@ def _ad_attribution_from(raw_cookie: str) -> tuple[str, str, str]:
         return "", "", ""
     decoded = unquote(raw_cookie)
     parts = decoded.split("|")
-    if len(parts) not in (2, 3) or (len(parts) == 3 and parts[0] not in ("gclid", "gbraid", "wbraid")):
+    # The typed format keeps any "|" inside its landing; only the legacy format is exactly two parts.
+    if len(parts) < 2 or (len(parts) > 2 and parts[0] not in ("gclid", "gbraid", "wbraid")):
         return "", "", ""
     first, separator, rest = decoded.partition("|")
     if separator and first in ("gclid", "gbraid", "wbraid"):

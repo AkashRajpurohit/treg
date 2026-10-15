@@ -11,16 +11,18 @@ function page(url: string, cookie = '', slug = '', storage: any = new Map<string
     addEventListener: (name: string, fn: any) => { events[name] = fn },
   }
   let address = url
+  let lastState: any
   const state = { spa: true }
+  const record = (s: any, _: string, href: string) => { lastState = s; address = href }
   const window = { sessionStorage: {
     getItem: (key: string) => storage.get(key),
     setItem: (key: string, value: string) => storage.set(key, value),
-  }, location: new URL(url), history: {
-    state, replaceState: (s: any, _: string, href: string) => { expect(s).toBe(state); address = href },
-  } }
+  }, location: new URL(url), history: { state, replaceState: record, pushState: record } }
   runInNewContext(source, { window, document, URL })
   return {
-    document, address,
+    document, history: window.history, state,
+    get address() { return address },
+    get lastState() { return lastState },
     click(href: string, event = 'click') {
       const a = { href, getAttribute: () => href }
       events[event]?.({ target: { closest: () => a } })
@@ -70,6 +72,31 @@ describe('ad click carry', () => {
     }
     expect(p.click('/dynamic')).toContain('gclid=TEST')
     expect(p.address).not.toContain('utm_content')
+  })
+  it('keeps the id when the app rewrites its own address, but only same-origin and unclaimed', () => {
+    const p = page('https://treg.test/app?gclid=PHONE&utm_content=original')
+    expect(p.lastState).toBe(p.state)
+    const appState = { view: 'start' }
+    p.history.replaceState(appState, '', '/app#start')
+    expect(p.lastState).toBe(appState)
+    expect(new URL(p.address).searchParams.get('gclid')).toBe('PHONE')
+    expect(new URL(p.address).hash).toBe('#start')
+    p.history.pushState(null, '', '/app/tools/x')
+    expect(new URL(p.address).searchParams.get('utm_content')).toBe('original')
+    p.history.pushState(null, '', '/app?wbraid=OTHER')
+    expect(p.address).toBe('/app?wbraid=OTHER')
+    p.history.pushState(null, '', 'https://external.test/')
+    expect(p.address).toBe('https://external.test/')
+  })
+  it('leaves the app address alone on a cookie-only return visit', () => {
+    const p = page('https://treg.test/app', 'treg_ad=gclid%7CPHONE%7Coriginal')
+    p.history.replaceState(null, '', '/app#start')
+    expect(p.address).toBe('/app#start')
+  })
+  it('restores a cookie whose landing contains a pipe', () => {
+    const storage = new Map<string, string>([['treg_ad_visit', 'gclid|PHONE']])
+    const p = page('https://treg.test/login', 'treg_ad=' + encodeURIComponent('gclid|PHONE|a|b'), '', storage)
+    expect(new URL(p.address).searchParams.get('utm_content')).toBe('a|b')
   })
   it('ignores malformed cookies and stays inert without attribution', () => {
     for (const cookie of ['', 'treg_ad=%E0%A4%A', 'treg_ad=junk']) {

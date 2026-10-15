@@ -60,14 +60,17 @@ read-side Ads catalog calls (`oauth_providers.GOOGLE_ADS`), a separate credentia
    route exists. See `interface/seo.md` for the page-by-page scope.
    `adtrack.js` also restores an existing cookie when the URL has no click id, preserves the id
    on the current URL with `history.replaceState`, and carries it on delegated same-origin link
-   clicks (including new links and middle clicks). External links, mail links, fragment-only links
+   clicks (including new links and middle clicks). During that visit it also wraps
+   `history.pushState`/`replaceState`, so the dashboard rewriting its own address (to `/app#start`,
+   for instance) keeps the id for an in-app browser's "open in browser". External links, mail links, fragment-only links
    and links already carrying any click-id parameter are untouched. Carry runs only for a click
    on the current URL or a matching `sessionStorage` marker from an earlier URL capture in that
    tab; a cookie-only return visit does not rewrite URLs. Blocked session storage does not prevent
    direct URL capture or carry. The existing `utm_content`
    convention carries the original landing value, taking precedence over the destination's
    `data-page`; it is only added or replaced when needed to preserve that value. A new URL click
-   wins over the cookie. Restoring a cookie alone does not renew its expiry. `/login` preserves its
+   wins over the cookie. A `|` inside the landing is kept, on both the script and the server
+   parser. Restoring a cookie alone does not renew its expiry. `/login` preserves its
    query on the dashboard redirect, and the CLI login shell loads the capture script too.
 2. **Store** (`application.signup._ad_attribution_from`, read at both signup doors: `register_user` (`POST /users`)
    and `create_org` (`POST /orgs`), since a browser visitor who clicked an ad can land on either).

@@ -18,8 +18,8 @@
       var cookie = document.cookie.split(';').find(function (v) { return v.trim().indexOf('treg_ad=') === 0; });
       if (!cookie) return;
       var parts = decodeURIComponent(cookie.trim().slice(8)).split('|');
-      if (parts.length === 3 && kinds.indexOf(parts[0]) !== -1) {
-        kind = parts[0]; id = parts[1]; landing = parts[2];
+      if (parts.length >= 3 && kinds.indexOf(parts[0]) !== -1) {
+        kind = parts[0]; id = parts[1]; landing = parts.slice(2).join('|');
       } else if (parts.length === 2) {
         kind = 'gclid'; id = parts[0]; landing = parts[1];
       } else return;
@@ -43,6 +43,24 @@
     }
     carry(current);
     window.history.replaceState(window.history.state, '', current.href);
+    // The dashboard rewrites its own address (for example to /app#start) and would drop the id,
+    // which an in-app browser's "open in browser" then loses. Same-origin only, never another click.
+    ['pushState', 'replaceState'].forEach(function (name) {
+      var original = window.history[name];
+      if (typeof original !== 'function') return;
+      window.history[name] = function (state, title, url) {
+        try {
+          if (url != null) {
+            var next = new URL(url, window.location.href);
+            if (next.origin === current.origin && !kinds.some(function (k) { return next.searchParams.has(k); })) {
+              carry(next);
+              url = next.href;
+            }
+          }
+        } catch (e) { /* never break navigation for attribution */ }
+        return original.call(this, state, title, url);
+      };
+    });
     function rewrite(event) {
       try {
         var a = event.target.closest && event.target.closest('a[href]');
