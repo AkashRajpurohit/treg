@@ -4439,6 +4439,9 @@ endpoints:
     currency: USD
     per: 1
     unit: call
+    display:
+      unit: call
+      variable: true
     source: observed
     confidence: verified
     checked: '2026-10-02'
@@ -9069,6 +9072,8 @@ endpoints:
   example_response: examples/dataforseo.x.serp-google-dataset-search-live-advanced.json
   observed_cost: 0.002
 - id: dataforseo.x.serp-google-events-live-advanced
+  status: broken
+  status_note: "DataForSEO's Google Events live function answers an internal error or 'This function temporarily unavailable' (50000/50304) on every task, so no call returns events. Use dataforseo.google.serp.organic or another events source until it is restored."
   tier: extended
   platform: google
   method: POST
