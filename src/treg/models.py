@@ -2244,7 +2244,9 @@ class ShowcaseApp(SQLModel, table=True):
     show_streak: bool = Field(default=False)       # active-day streak
     show_providers: bool = Field(default=False)    # providers used
     show_categories: bool = Field(default=False)   # capability mix
-    pending: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # none_as_null: a cleared proposal is SQL NULL, not JSON null, so "pending IS NOT NULL" means
+    # "something waits for review".
+    pending: dict | None = Field(default=None, sa_column=Column(JSON(none_as_null=True), nullable=True))
     reject_reason: str = Field(default="")
     submitted_by: int | None = Field(default=None, foreign_key="user.id", ondelete="SET NULL")
     version: int = Field(default=0)

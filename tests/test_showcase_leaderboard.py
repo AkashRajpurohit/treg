@@ -148,6 +148,8 @@ async def test_apply_review_approve_and_nothing_public_before(clients, store, st
     (pub,) = board["apps"]
     assert pub["name"] == "Example App" and pub["icon_url"] == f"/media-files/{icon}"
     assert pub["shots"][0]["small_url"].endswith("-640.webp")
+    # Once approved, nothing waits for review any more.
+    assert (await clients.get("/admin/showcase/apps?status=review", headers=staff)).json() == []
     detail = (await clients.get(f"/admin/showcase/apps/{entry['id']}", headers=staff)).json()
     assert [h["action"] for h in detail["history"]] == ["approved", "applied"]
     assert detail["history"][0]["actor"] == "admin:ops@superdesign.dev"
