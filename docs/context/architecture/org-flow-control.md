@@ -1,5 +1,5 @@
 ---
-title: Published organization pause admission
+title: Published organization pause and concurrency admission
 status: shipped
 sources:
   - src/treg/infra/org_flow_control.py
@@ -18,7 +18,7 @@ related:
   - ops/deploy.md
 ---
 
-# Published organization pause admission
+# Published organization pause and concurrency admission
 
 `org_flow_control.check` reads operator-published Redis snapshots at
 `routers.call.run_call_surface`, after trusted Caller/context resolution and before the optional
@@ -27,10 +27,11 @@ root surfaces as [Org concurrency](org-concurrency.md): `/call/`, `/catalog/call
 and MCP adapters using them. Direct hub runs, provider-resource requests and application/background
 calls remain outside this gate. Authentication queries happen before it.
 
-This version enforces **pause only**. Rate and concurrency fields are validated for publication
-compatibility but do not change admission here. Existing environment-configured Org concurrency
-keeps its separate behavior. A snapshot observation is not confirmation that every control in
-that version is enforced.
+One reader check returns the effective snapshot for both **pause and concurrency**. An active
+pause rejects immediately; otherwise a non-null `concurrency_limit.max_in_flight` supplies the
+shared slot guard's limit. Null means no concurrency limit and has no static fallback. Rate
+fields remain validated for publication compatibility but do not change admission. A snapshot
+observation is not confirmation that every field is enforced or every worker has applied it.
 
 ## Configuration and publication contract
 
@@ -65,7 +66,13 @@ The key is `treg:traffic-control:org:<org_id>`, containing the complete JSON env
 All fields are required. Unknown fields, duplicate keys, wrong Org IDs, unsupported versions,
 coerced/bool numbers, invalid limits and non-UTC pause timestamps are rejected. The reader does
 not write, expire or delete published keys. A publisher must use a higher version to change or
-restore content; clearing a pause means publishing `pause_until: null` in a new version.
+restore content; clearing a pause means publishing `pause_until: null` in a new full version.
+Clearing concurrency means `concurrency_limit: null`; pausing expires at its absolute UTC time
+independently of the concurrency field. A configuration save alone does not publish or activate
+that version. Review existing non-null concurrency values before deploying workers that enforce
+them with this switch enabled. See [concurrency migration](org-concurrency.md#configuration-migration-and-rollback)
+for the removed environment settings and authorized rollout sequence.
+
 The synthetic fixtures in `tests/fixtures/org-flow-control/` capture the reference publisher's
 actual `publish` serialization, covering disabled controls, fractional-second UTC timestamps,
 populated limits and a resume. The consumer's strict validation is unchanged.
@@ -77,14 +84,16 @@ and `detail.error=org_traffic_paused` with `config_version`. UTC expiry is check
 request, independently of refresh timing. Normal call-ID, error-header and refusal-audit handling
 is retained; MCP call/media responses retain the retry guidance.
 
-Only a valid, unexpired pause rejects new roots. Refresh failures follow these policies:
+Only a valid, unexpired pause or contention under a valid published concurrency limit rejects
+new roots. Concurrency contention returns HTTP 429 `org_concurrency_limit`, `Retry-After: 1`
+and `config_version`; it never waits in a queue. Refresh failures follow these policies:
 
 | Refresh result | Admission behavior |
 | --- | --- |
-| Redis connectivity, initialization or timeout failure | Allow, bypassing any cached pause until a subsequent refresh. Retain the snapshot for recovery and version comparison. |
+| Redis connectivity, initialization or timeout failure | Allow, bypassing cached pause and concurrency until a subsequent refresh. Retain the snapshot for recovery and version comparison. |
 | Healthy missing key | Clear the local snapshot and treat the Org as unconfigured version zero. |
-| Invalid JSON, wrong type, oversized or undecodable data | Retain the previous valid snapshot and its original absolute expiry; allow if none exists. |
-| Lower version or changed content at the same version | Retain the previous valid snapshot and original expiry. |
+| Invalid JSON, wrong type, oversized or undecodable data | Retain the previous valid snapshot, including its concurrency limit and original pause expiry; allow if none exists. |
+| Lower version or changed content at the same version | Retain the previous valid snapshot, including its concurrency limit and original pause expiry. |
 
 `kv.FlowControlReadFailure` distinguishes invalid data from transport unavailability; `None`
 means missing and a string is a bounded payload. A cancelled read propagates cancellation without
@@ -93,9 +102,12 @@ can refresh immediately; cancellation never becomes an HTTP 503.
 
 Refreshes and Redis I/O have a 200 ms deadline. Per-Org single-flight and a 32-read semaphore
 bound refresh work; failures are cached until the next interval. The worker has at most 4096
-LRU entries, protecting active pauses and entries with active callers/waiters. If no entry can
-be evicted, the uncached Org is allowed without adding an entry or reading Redis, with a bounded
-capacity warning. No DB connection is held while Redis is read.
+LRU entries, protecting active pauses, configured concurrency limits and entries with active
+callers/waiters. If no entry can be evicted, the uncached Org is allowed without adding an entry
+or reading Redis, with a bounded
+capacity warning. No DB connection is held while Redis is read. Slot initialization, acquisition
+and timeout failures also allow new work without a confirmed concurrency slot; only an explicit
+busy result rejects. No Redis failure is converted into an HTTP 503 by these guards.
 
 Already accepted work is never checked again: streams, settlement, release and cancellation
 cleanup finish through their existing paths. Disabling the flag uses the normal deployment
@@ -105,7 +117,10 @@ process and does not cancel accepted work or erase Redis data.
 
 Single-line `org_flow_control_version_observed`, `org_flow_control_paused` and
 `org_flow_control_config_unavailable` records carry worker PID, trusted Org, call reference,
-version and `capability=pause`. They omit raw configuration, credentials and exception text.
+version, the compatibility field `capability=pause`, and `capabilities=["pause","concurrency"]`.
+Version observations include `max_in_flight`, or null when disabled. These capabilities describe
+the reader's supported admission checks, not successful slot acquisition or acknowledgment by
+all workers. Records omit raw configuration, credentials and exception text.
 They use the scoped plain handler described in [Org traffic logs](org-traffic.md), inherit
 existing logger levels and preserve explicitly configured named handlers. Root logging is not
 changed; root handler routing and filters do not apply to the default event sink.
