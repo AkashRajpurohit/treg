@@ -638,6 +638,11 @@ the provider's `source.curated` day.
 - **Ingest.** `carry_verification` carries `added` by id from every catalog file BEFORE its
   method/path check: a tool whose route moved is still the tool that reached main that day. Only
   an id the catalog has never had gets today's UTC date, so a re-import never re-dates a tool.
+  For a row whose route still matches it also carries the reviewed per-row facts no spec holds:
+  `cost`, `observed_cost`, `expect`, `untestable` and `status`, beside the verification stamp. A
+  re-ingest that dropped them un-priced the DataForSEO rows priced from the provider's own bill.
+  `platform_blocked` is not carried onto a row whose fresh ingest declares `resource_ownership.requires`:
+  declared ownership is what the block stood in for.
 - **Backfill.** `scripts/catalog_backfill_added.py` dated the existing rows once from the
   first-parent history of main: the first merge day on which each id was present in any catalog
   file. A branch that merged main into itself and was then fast-forwarded onto main puts its own

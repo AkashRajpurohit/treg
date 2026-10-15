@@ -61,6 +61,8 @@ class _TolerantLoader(yaml.SafeLoader):
 
 
 _TolerantLoader.add_constructor("tag:yaml.org,2002:value", lambda loader, node: node.value)
+# ...and an example date the spec writes as an impossible timestamp (month 13) stays a string.
+_TolerantLoader.add_constructor("tag:yaml.org,2002:timestamp", lambda loader, node: node.value)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -216,6 +218,11 @@ def carry_verification(provider: str, endpoints: list[dict], *, carry_capability
             continue
         carried_fields = [
             "verified", "example_response", "unverified", "name", "kind", "platform_blocked",
+            # Reviewed per-row facts no spec carries: a price read from the provider's own bill
+            # (`cost`, the verifier's `observed_cost`), the success rule (`expect`), why a row
+            # cannot be tested, and a retired/broken `status`. Dropping them on a re-ingest
+            # silently un-prices, un-checks and un-retires rows.
+            "cost", "observed_cost", "expect", "untestable", "status",
             # Meta publishes no machine-readable request schema or grant matrix. These contracts
             # are reviewed against its HTML docs and must survive the next deterministic ingest.
             "authorization_method", "authorization_methods", "authorization_paths",
@@ -226,6 +233,10 @@ def carry_verification(provider: str, endpoints: list[dict], *, carry_capability
         if carry_capability:
             carried_fields.append("capability")
         for field in carried_fields:
+            if field == "platform_blocked" and (ep.get("resource_ownership") or {}).get("requires"):
+                # The block stood in for ownership the row could not express; declared ownership
+                # supersedes it, and carrying it would keep a now-owned reader off the shared key.
+                continue
             if prev.get(field) is not None:
                 ep[field] = prev[field]
         if carry_capability and prev.get("capability") is not None and prev.get("platform"):

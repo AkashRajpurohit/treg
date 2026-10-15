@@ -75,6 +75,7 @@ from .settle import (
     _finish_cancelled_call as finish_cancelled_call,
     _note_capacity_recovery,
     _note_capacity_signal,
+    _observed_cost_micro,
     _peek_stream_head,
     _platform_settle,
     _read_whole_if_small,
@@ -1292,7 +1293,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
                     catalog_store.load().by_id.get(mk.endpoint_id), own_credential=own_credential)
             # A probe must reach the vendor: an archived answer proves nothing about capacity.
             if (mk is not None and mk.probe_lock_id is None and archive.serving()
-                    and not archive_opted_out
+                    and not archive_opted_out and not _only_submits(mk)
                     and ((mk.metered and not mk.streamable_free_result) or own_key_cacheable)):
                 lookup_started = time.monotonic()
                 try:
@@ -1549,7 +1550,9 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             if deferred:
                 try:
                     charged = await async_task_app.defer_submission(
-                        mk, body, caller.org_id, tags=meta.tags)
+                        mk, body, caller.org_id, tags=meta.tags,
+                        submission_charge_micro=_observed_cost_micro(
+                            mk, body, httpx.Headers(response.raw_headers)))
                     observed = None
                     request.context.finalization = FinalizationState.FINALIZED
                 except Exception as exc:  # noqa: BLE001 - an accepted task must never orphan a hold
@@ -1788,10 +1791,17 @@ def _finished_on_submission(mk, body: bytes) -> bool:
 
 
 def _unfinished_submission(mk, body: bytes) -> bool:
-    """A row whose first answer may already be finished answered "still working" instead: a task
-    id, not an answer, so the archive keeps nothing a later identical question could replay."""
-    return ((mk.async_descriptor or {}).get("terminal_on_submission") is True
-            and not _finished_on_submission(mk, body))
+    """An async submission answered with a task id, not an answer ("still working"). The archive
+    keeps nothing a later identical question could replay: a replayed id would hand the asking
+    team ownership of a task another team submitted on treg's shared account."""
+    return bool(mk.async_descriptor) and not _finished_on_submission(mk, body)
+
+
+def _only_submits(mk) -> bool:
+    """An async row whose answer is always a task id: never served from the archive. A row that
+    may answer at once (`terminal_on_submission`) archives only finished answers, so it may."""
+    return (bool(mk.async_descriptor)
+            and (mk.async_descriptor or {}).get("terminal_on_submission") is not True)
 
 
 def _submission_rejected(mk, body: bytes) -> str:
