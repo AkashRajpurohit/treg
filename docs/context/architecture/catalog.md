@@ -1672,8 +1672,7 @@ relays rather than models.
 
 What treg owes instead is the half only treg can supply, because only treg sees every call from every
 tenant: the observation reader publishes **success rate, p50/p95 latency, last-answered and
-sample size** per endpoint from `CallRecord`, using daily folds where the current reader supports
-them and `endpoint_stats.observed()` for live aggregation. It rides on
+sample size** per endpoint from folded `CallRecord` evidence. It rides on
 `/catalog/endpoints/{id}`, attached to the endpoint **and every sibling**, because the choice is made
 on that page and an agent will not make a second round-trip to compare reliability.
 
@@ -1697,22 +1696,25 @@ acceptable entry exists.
 
 Refresh is process-level singleflight. Concurrent misses join one shared Task, duplicate endpoint ids
 already in flight are not queued again, and the Task batches the requested ids. Its
-`PostgresEndpointObservationReader` opens an independent session for the background refresh,
-which may include live aggregation, and closes it as soon as that finishes. HTTP `/catalog/search`,
-both MCP catalog-search tools,
+`PostgresEndpointObservationReader` opens an independent session for bounded summary reads and
+closes it as soon as that finishes. On PostgreSQL, a short read-only repeatable-read transaction
+keeps the cursor, day buckets and overdue corrections in one snapshot, so a concurrent repair
+cannot make old bucket contents appear trustworthy by deleting their marker between reads.
+HTTP `/catalog/search`, both MCP catalog-search tools,
 routed planning in `application.call.route.build_plan`, and the prose pages that print observed stats
 (`/use-cases/*`, `/workflows` and `/workflows/*`) receive the same reader instance from bootstrap, so
 their request paths have no observation DB dependency, check out zero connections, and join the same
 refresh Task. A refresh failure keeps stale
-entries, backs off before retry, and never changes the Catalog response status; a failure with no
+entries without renewing their age, backs off for at least sixty seconds before retry, and never
+changes the Catalog response status; a failure with no
 cached entry is honest emptiness. The adapter exposes entry-level `fresh`, `stale`, and `miss`
 counters plus `refresh` and `refresh_failure` counts. Its invalidation story is the two TTLs: deploys
 and process restarts begin cold, and no cross-instance correctness depends on the cache.
 
-**Daily folds reduce repeated aggregation for endpoints without mutable terminal evidence**
-(`application/catalog_stats.py`, run by the `treg-worker catalog stats` cron). A live refresh
-re-aggregates thirty days of audit rows for an endpoint and its siblings whenever a web process's
-cache expires, and again from cold after each deploy. The worker
+**The evidence is folded once, off the request path** (`application/catalog_stats.py`, run by the
+`treg-worker catalog stats` cron). Refreshing straight from `callrecord` meant every web process
+re-aggregating thirty days of audit rows for an endpoint and its siblings whenever its cache
+expired, and again from cold after each deploy. The worker instead
 walks the audit table by primary key from a persisted cursor (`EndpointStatCursor`) and folds each
 row into one `EndpointDayStat` bucket per endpoint per UTC day: counts, the newest success, the
 `hit`/per-success tallies, the count of each verdict word (`verdicts`, a JSON object; NULL on a
@@ -1723,22 +1725,16 @@ not evidence and are not folded, exactly as the live query excludes them. An ent
 `observed_from: YYYY-MM-DD` when its provider replaced the service behind it: the folded reader
 (`PostgresEndpointObservationReader.get_many`) then drops that endpoint's day buckets before the
 date, so its published reliability describes only the current service. The YAML line carries the
-reason as a comment; the live fallback query does not apply it. The first run bisects the
+reason as a comment. The first run bisects the
 primary key to the first row inside the window rather than reading older pages, consumes at most
-`--max-rows` per run, and the reader keeps computing the live aggregate until a run reports it
-has caught up (`caught_up_at`). A deployment that never schedules the worker retains live reads.
-A cursor not updated for `STALE_AFTER_S` sends the reader back to the live aggregate with a warning.
-Once caught up, endpoints without mutable terminal evidence read their day buckets, including
-async endpoints without result adapters. Async endpoints with result adapters continue to read
-`CallRecord` live, even while the worker is healthy. The existing cache TTLs, refresh retry and
-reader source selection are unchanged by the background repair work below.
-Each append batch is one
+`--max-rows` per run, and the reader requires a recent `caught_up_at` and `updated_at`. Missing,
+incomplete or stale folds raise `EndpointObservationUnavailable`; no cache refresh falls back to
+`stats.observed` or scans `CallRecord`. A deployment without the worker publishes no observations.
+Each batch is one
 transaction under the cursor row's lock and re-reads every bucket it touches inside that lock;
 nothing about a bucket is carried between batches, so two overlapping runs (a slow backfill
 still going when the next schedule fires) serialize cleanly instead of one erasing the other's
 fold with the cursor already past the rows.
-
-**Stage one adds background terminal corrections; it does not reduce the remaining live SQL.**
 Late terminal evidence uses a persistent correction queue, `EndpointStatDirty`, keyed by endpoint
 and original UTC submission day. `audit._write_batch` updates the actual matching `CallRecord`
 rows with `RETURNING`, then calls `catalog_stat_dirty.mark_dirty` in the same transaction. Repeated
@@ -1763,12 +1759,11 @@ budget covers the repair loop, not the append pass or queue maintenance.
 Revision `0074` adds `EndpointDayStat.terminal_reconciled`, initially false for existing rows.
 `catalog_stats._seed_corrections` queues legacy async/result-adapter buckets from the small summary
 table, without scanning audit history. New buckets are reconciled by construction; appending to a
-legacy bucket cannot mark it reconciled. The current observation reader ignores this flag and the
-correction queue; async endpoints with result adapters still use their existing live path. The flag
-records background readiness for a later reader change. Switching those endpoints to corrected
-summaries, changing fallback behavior and any associated cache policy require a separate PR after
-the background results have been validated. Async hit rates continue to use terminal evidence,
-never an inference from whether credits were charged.
+legacy bucket cannot mark it reconciled. Async endpoints with adapters are published only when all
+applicable day rows are reconciled and no correction is older than `STALE_AFTER_S`. Unavailable
+endpoints retain their cache entries only for their original TTL; other complete endpoints in the
+same refresh can still be published. Async endpoints without adapters use ordinary folds. Async
+hit rates always use terminal evidence, never an inference from whether credits were charged.
 
 **Explicit requeue closes an earlier writer overlap.** After retiring writers that could change
 terminal evidence without marking its original day, `catalog_stats.requeue_async_stats` previews
@@ -1785,7 +1780,9 @@ incomplete; targets outside the current window are reported as `aged_out`, not a
 preview manifest is rejected as completion evidence. Status applies to the same database and an
 unaltered applied manifest; it does not establish that all writers have been upgraded or that a
 reader cutover is ready. Reapplying deliberately requeues the targets again. The explicit command
-does not run automatically, scan source audit rows or change the observation reader.
+does not run automatically or scan source audit rows. New terminal results can return an active
+day to `pending` after its initial repair. A true reconciliation flag proves that initial repair;
+the reader separately bounds how long further corrections may remain queued.
 
 The folded observation covers buckets from the day of the
 window's start onward (`stats.window_days`, at most one day more evidence than the live cut,
@@ -2236,18 +2233,14 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   worker folds its counts into `EndpointDayStat.verdicts` (calls per word, e.g. `{"valid": 31,
   "catch_all": 4, "unknown": 2}`; `unknown` is a word like the others, never folded into a miss),
   but `stats.publish` does not show them yet: the observation an agent reads carries no verdict
-  counts until the word mappings are proven. Showing them means publishing them under the hit
-  floor and, like `hit`, reading async endpoints live, since an async word can land after the
-  fold cursor has passed its submission.
-  Async endpoints with result adapters read their `CallRecord` observations live: the daily fold
-  may consume a submission before its terminal poll changes the hit, and its append cursor cannot
-  revise it on its own. Background dirty-day repairs now update those buckets, but switching the
-  reader to them is a separate change. Adapter presence selects the live path even when verification
-  is lost, preserving recorded
-  terminal evidence. Without an adapter, terminal classification never corrects `hit`, so the reader
-  uses the existing day buckets for all published observations. HTTP success and request latency
-  describe the submission, as on the live path; they do not claim to measure job completion.
-  `stats.observed` publishes `hit_rate`/`hit_samples` (floor 20) and, for synchronous
+  counts until the word mappings are proven. Publishing them later must retain the hit sample
+  floor and use corrected terminal evidence.
+  Async endpoints with result adapters read reconciled day buckets. A late terminal result marks
+  its original day dirty, and the worker replaces that bucket before acknowledging the marker.
+  Adapter presence requires reconciliation even when verification is lost. Without an adapter,
+  terminal classification never corrects `hit`, so ordinary day buckets suffice. HTTP success and
+  request latency describe the submission; they do not claim to measure job completion.
+  `stats.publish` publishes `hit_rate`/`hit_samples` (floor 20) and, for synchronous
   per-success endpoints, reads historical rows too (a 2xx with `cost_observed_micro == 0` is a miss).
   Async per-success endpoints use only the terminal verdict: a found result can cost zero credits.
   The plan, `catalog_get` and the CLI's HIT column read it; a registered tool (tier 1) or stored key

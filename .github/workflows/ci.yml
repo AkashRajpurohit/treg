@@ -173,6 +173,9 @@ jobs:
           tests/test_catalog_stats_requeue.py
           tests/test_catalog_stats_requeue_concurrency.py
           tests/test_catalog_stat_dirty_audit.py
+          tests/test_catalog_observation_folds.py
+          tests/test_catalog_observation_concurrency.py
+          tests/test_catalog_observation_arena.py
           tests/test_catalog_observation_cache.py
           tests/test_endpoint_stats.py
           tests/test_key_spend_rollup.py
