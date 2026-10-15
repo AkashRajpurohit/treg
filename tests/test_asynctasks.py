@@ -1473,8 +1473,8 @@ async def test_cancellation_at_the_pending_row_commit_boundary_leaves_a_coherent
     hold it still owns, and the worker must then record the row as released, not settle it at zero."""
     real_defer = task_app.defer_submission
 
-    async def defer_then_cancel(mk, body, org_id, *, tags=None):
-        await real_defer(mk, body, org_id, tags=tags)
+    async def defer_then_cancel(mk, body, org_id, **kwargs):
+        await real_defer(mk, body, org_id, **kwargs)
         mk.call_id = mk.call_id or None
         raise asyncio.CancelledError()
 
@@ -1639,3 +1639,58 @@ async def test_a_slow_first_catalog_load_does_not_time_out_a_poll(
         assert result.settled == 0 and result.backed_off == 1
     async with session_maker() as db:
         assert (await db.get(AsyncTaskRecord, call_id)).status == ("settled" if warm else "pending")
+
+
+def test_a_produces_path_names_every_task_of_a_batch():
+    """`tasks.*.id` owns each task one submission created; a numeric part indexes one."""
+    document = {"tasks": [{"id": "a"}, {"id": "b"}, {"id": None}, {"other": 1}]}
+    assert task_app._dotted(document, "tasks.*.id") == ["a", "b", None]
+    assert task_app._dotted(document, "tasks.1.id") == ["b"]
+    assert task_app._dotted(document, "tasks.9.id") == []
+    assert task_app._dotted({"jobID": "j"}, "jobID") == ["j"]
+
+
+@pytest.mark.parametrize("body, expected", [
+    (b'{"id": "t-1"}', "t-1"),
+    (b'[{"id": "t-1", "limit": 10}]', "t-1"),
+    (b'[{"id": "t-1"}, {"id": "t-1"}]', "t-1"),
+    (b'[{"id": "t-1"}, {"id": "t-2"}]', None),  # a second task naming another resource
+    (b'[{"id": "t-1"}, {"limit": 10}]', None),  # a second task naming none
+    (b'[]', None),
+])
+def test_a_body_resource_id_may_sit_in_a_task_array(body, expected):
+    from types import SimpleNamespace
+
+    from treg.application.call.resolve import _one_resource_value
+    from treg.application.call.types import ResolutionFailed
+
+    ep, refs, query = {"id": "x.reader"}, [("resource", {"name": "id", "in": "body"})], \
+        SimpleNamespace(items=[])
+    if expected is None:
+        with pytest.raises(ResolutionFailed):
+            _one_resource_value(ep, query, refs, body)
+    else:
+        assert _one_resource_value(ep, query, refs, body) == expected
+
+
+def test_an_observed_async_basis_settles_at_the_charge_reported_on_submission():
+    """DataForSEO bills when the task is posted and its task_get reports no cost: the frozen
+    submission charge settles the task, a charge reported on the answer itself still wins."""
+    basis = {"when": "terminal", "amount": {"kind": "observed"}, "fallback_micro": 1_200,
+             "reserve_micro": 1_200, "submission_charge_micro": 7_500}
+    assert settlement.settle(basis, {"terminal": {"cost": 0}}) == 7_500
+    assert settlement.settle(basis, {"terminal": {}, "observed_micro": 40}) == 40
+    assert settlement.settle({**basis, "submission_charge_micro": None}, {"terminal": {}}) == 1_200
+
+
+def test_a_terminal_on_submission_row_archives_only_finished_answers():
+    """Such a row usually answers at once; a "still working" answer is a task id, not an answer to
+    replay. A row that always submits is covered end to end in test_dataforseo_async.py."""
+    from types import SimpleNamespace
+
+    instant = SimpleNamespace(async_descriptor={"id_from": "id", "terminal_on_submission": True,
+                                                "status": {"path": "status", "success": ["done"]}},
+                              resource_ownership=None)
+    assert not call_service._only_submits(instant)
+    assert call_service._unfinished_submission(instant, b'{"status": "queued"}')
+    assert not call_service._unfinished_submission(instant, b'{"status": "done"}')

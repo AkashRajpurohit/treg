@@ -1197,6 +1197,28 @@ class _DuplicateJsonKey(ValueError):
 
 def _strict_json_object(body: bytes, ep_id: str) -> dict:
     """Parse a platform request without accepting ambiguous duplicate JSON keys."""
+    document = _strict_json(body, ep_id)
+    if not isinstance(document, dict):
+        raise ResolutionFailed(
+            "catalog_parameter_invalid", status_code=400,
+            detail=f"{ep_id} requires a JSON object request body",
+        )
+    return document
+
+
+def _strict_json_task_objects(body: bytes, ep_id: str) -> list[dict]:
+    """A JSON object, or the array of task objects some providers take (DataForSEO), as a list."""
+    document = _strict_json(body, ep_id)
+    tasks = document if isinstance(document, list) else [document]
+    if not tasks or not all(isinstance(task, dict) for task in tasks):
+        raise ResolutionFailed(
+            "catalog_parameter_invalid", status_code=400,
+            detail=f"{ep_id} requires a JSON object or an array of JSON objects as the request body",
+        )
+    return tasks
+
+
+def _strict_json(body: bytes, ep_id: str) -> object:
     def object_pairs(pairs):
         result = {}
         for name, value in pairs:
@@ -1217,11 +1239,6 @@ def _strict_json_object(body: bytes, ep_id: str) -> dict:
             "catalog_parameter_invalid", status_code=400,
             detail=f"{ep_id} requires a JSON request body",
         ) from None
-    if not isinstance(document, dict):
-        raise ResolutionFailed(
-            "catalog_parameter_invalid", status_code=400,
-            detail=f"{ep_id} requires a JSON object request body",
-        )
     return document
 
 
@@ -1779,13 +1796,18 @@ def _async_resource_refs(ep: dict) -> list[tuple[str, dict]]:
 def _one_resource_value(ep: dict, query: QueryValues, refs: list[tuple[str, dict]],
                         body: bytes = b"") -> str:
     supplied: list[str] = []
-    document = _strict_json_object(body, ep["id"]) if body else {}
+    # Every task object must name the resource: a DataForSEO on-page reader takes `[{"id": ...}]`,
+    # and a second element naming another team's crawl must not ride along on an owned first one.
+    tasks = _strict_json_task_objects(body, ep["id"]) if body else [{}]
     for _, param in refs:
         name = str(param.get("name") or "")
         if param.get("in") == "body":
-            value = document.get(name)
-            if isinstance(value, (str, int, float)) and not isinstance(value, bool):
-                supplied.append(str(value))
+            for document in tasks:
+                value = document.get(name)
+                if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                    supplied.append(str(value))
+                elif len(tasks) > 1:
+                    supplied.append("")  # an element without the id makes the request ambiguous
         else:
             supplied.extend(value for key, value in query.items if key == name)
     values = set(supplied)

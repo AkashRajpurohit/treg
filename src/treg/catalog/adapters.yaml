@@ -1330,7 +1330,7 @@ adapters:
   seranking.google.keywords.volume:
     accepts: [[keywords]]
     in:  {keywords: body.keywords}
-    in_expr: {queryParams.source: "lower(country)"}
+    in_expr: {queryParams.source: "seranking_source(country)"}
     out: {rows: "."}
     miss: ". == []"
   dataforseo.x.keywords-data-dataforseo-trends-explore-live:

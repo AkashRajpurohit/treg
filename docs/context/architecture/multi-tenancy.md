@@ -479,7 +479,10 @@ the ledger/hold it references. Pinned read scopes do not change budget concurren
   must resolve their id through an org-owned `AsyncTaskRecord` or `AsyncResourceRecord` before the
   upstream is contacted. `_one_resource_value` reads the id from the query string or, when the
   catalog descriptor names a body parameter (`in: body`), from the JSON body — either way exactly one
-  value must be supplied. BYOK calls keep access to ids in the team's own provider account.
+  value must be supplied. A body may be one object or a provider's array of task objects
+  (DataForSEO's `[{"id": ...}]`); every element must name that same id, so an owned first task
+  cannot carry another team's id in a second. A `produces` path may take every list item with `*`
+  (`tasks.*.id`): one submission of several tasks owns each of them. BYOK calls keep access to ids in the team's own provider account.
 - **Shared-provider durable objects are org-scoped.** A platform-key managed-resource call verifies
   every scalar or array id against `ProviderResource` before contacting the provider. A `use` tool
   may additionally declare a read-only public lookup: an id absent from the ownership table is

@@ -295,13 +295,20 @@ waterfall; it is not safe to start another billable provider while the first may
 
 | Command | Options | What it does |
 |---|---|---|
-| `treg call TOOL PATH` | `--method GET`, `--query K=V` (repeatable), `--data STR`, `--file PATH` | proxy a call (named form) |
+| `treg call TOOL PATH` | `--method GET`, `--query K=V` (repeatable), `--data STR` (or `@PATH`, `@-`), `--file PATH` | proxy a call (named form) |
 | `treg calls` | `--limit N` | audit log (who called which tool, when, status) |
 
 ```bash
 treg call intercom conversations --query per_page=5
 treg call posthog api/projects --method POST --data '{"name":"x"}'
+treg call dataforseo.google.keywords.volume --data @body.json   # @PATH reads a file, @- stdin
 ```
+
+A body that starts like JSON but does not parse is refused rather than sent: PowerShell strips the
+quotes inside a quoted argument, so put the body in a file (`--file PATH` or `--data @PATH`). A JSON
+file saved with a byte-order mark (PowerShell's `>` writes UTF-16) is sent as UTF-8 JSON, with a note
+on stderr; any other file is sent byte for byte. Pass `--content-type` to send a body exactly as
+written.
 
 **Agent-native (raw HTTP) form** — build the real upstream URL and prefix it; no CLI needed:
 
