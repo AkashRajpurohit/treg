@@ -308,8 +308,11 @@ Bare **`treg connections`** now lists (the subparser is `required=False` with a 
   catalog (prompts for its key env var + API base_url) and prints a catalog-entry snippet to share; an
   unknown bin isn't server-allow-listed, so it runs locally until an admin allow-lists it. Brains in
   `providers.py` + `skills.py`; see [env-import](env-import.md).
-- **`call`** (`target`, optional `path`; `--method`, `--query K=V` repeatable, `--data`, `--file`,
-  `--content-type`, `--header 'K: V'` repeatable) → three shapes: named `call <tool> <path>`, agent-native
+- **`call`** (`target`, optional `path`; `--method`, `--query K=V` repeatable, `--data` (`@PATH` reads a
+  file, `@-` stdin, as curl does), `--file`, `--content-type`, `--header 'K: V'` repeatable). A body
+  that opens like JSON but does not parse is refused unless `--content-type` is given (PowerShell
+  strips quotes inside a quoted argument); a body file that is JSON behind a UTF-8 or UTF-16
+  byte-order mark is sent as UTF-8 JSON with a note, any other file byte for byte. Three shapes: named `call <tool> <path>`, agent-native
   single URL `call https://host/full/path` (path omitted), or a **catalog endpoint id**
   `call tikhub.tiktok.video.comments` — all hit `/call/<rest>`. **`--header`** adds an
   extra request header the binding can't know (e.g. Google Ads' per-call `login-customer-id`); an
