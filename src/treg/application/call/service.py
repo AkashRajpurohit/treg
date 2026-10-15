@@ -19,6 +19,7 @@ from ...application.hub import limits as hub_limits
 from ... import sandbox as demo_sandbox
 from ...client_identity import _norm_client
 from ...config import get_settings
+from ...domain.catalog import results as catalog_results
 from ...domain.catalog import store as catalog_store
 from ...domain import provider_resources
 from ...infra import money_admission
@@ -1408,6 +1409,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
                 if (mk.metered and archive.recording() and not archive_opted_out
                         and 200 <= response.status < 300
                         and spooled_bytes is None and not _unfinished_submission(mk, body)
+                        and catalog_results.fails_expect(mk.endpoint_id, body) is None
                         and not (own_credential and _echoes_own_credential(tool, secrets, body))
                         and not _account_out_2xx(mk, response, body)):
                     _ct = next((v.decode("latin-1") for k, v in response.raw_headers
@@ -1730,6 +1732,12 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
         _set_response_header(response, "X-Treg-Call-Id", call_ref)
         if served_via:
             _set_response_header(response, "X-Treg-Served-Via", served_via)
+        elif (200 <= response.status < 300 and spooled_bytes is None and not deferred
+                and (upstream_failed := catalog_results.fails_expect(mk.endpoint_id, body))):
+            # The provider answered 2xx but its own success rule says the request failed (a
+            # DataForSEO task status other than 20000). The body is relayed untouched and the
+            # charge is what the provider reported; this header is how the caller learns it.
+            _set_response_header(response, "X-Treg-Upstream-Failed", upstream_failed)
         if smoothed:
             _set_response_header(response, "X-Treg-Smoothed", " ".join(smoothed))
         return response

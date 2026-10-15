@@ -733,8 +733,13 @@ async def _run_routed(parent: CallContext, ep: dict, body_bytes: bytes, get_head
             if errors > MAX_ERROR_FALLBACKS or not plan.contract.idempotent:
                 break
             continue
-        if doc is None or is_miss or empty_core:
-            tried.append(Attempt(cand.endpoint["id"], cand.endpoint["provider"], "miss", response.status, charged, ignored=ignored))
+        # The provider's own `expect` success rule (a DataForSEO task status other than 20000 under
+        # a 20000 envelope) says this request failed: not an answer, whatever the remains read as.
+        upstream_failed = catalog_results.fails_expect(cand.endpoint["id"], raw)
+        if doc is None or is_miss or empty_core or upstream_failed:
+            tried.append(Attempt(cand.endpoint["id"], cand.endpoint["provider"], "miss", response.status, charged,
+                                 f"provider reported failure: {upstream_failed}" if upstream_failed else "",
+                                 ignored=ignored))
             if options.waterfall:
                 continue
             winner = (cand, doc if doc is not None else {}, {}, raw)

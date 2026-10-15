@@ -1763,6 +1763,11 @@ Five rules worth keeping:
   declaration), charging nothing and asking no one else. `endpoint_view` shows `status` and
   `means` on the tools that declare it. Each scrape adapter's `miss` predicate reads that
   provider's own text field, so an empty page is a miss for every provider, not a hit.
+- **A failed `expect` rule is a miss.** A routed child's 2xx whose body fails the endpoint's own
+  `expect` success rule (a DataForSEO task status other than 20000) is a `miss`, whatever the
+  adapter reads off the remains; its `detail` names the failed value
+  (`provider reported failure: tasks.0.status_code=40101`). The waterfall treats it like any other
+  miss, and the child keeps the charge the provider reported.
 - **`miss` semantics ride on the endpoint.** Some providers answer "asked and answered: no result"
   with an error status (PDL 404s a person it has no record of; Hunter's combined-find does the
   same). Endpoints with evidenced miss behaviour carry a `miss: {status, means}` block in their

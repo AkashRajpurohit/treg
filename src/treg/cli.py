@@ -366,6 +366,9 @@ def _show_charge_line(resp: httpx.Response) -> None:
     if call_id := headers.get("X-Treg-Call-Id"):
         line += f" · call id {call_id}"
     print(line, file=sys.stderr)
+    if upstream_failed := headers.get("X-Treg-Upstream-Failed"):
+        print(f"treg: the provider reported this request as failed ({upstream_failed}); "
+              "the body carries no result", file=sys.stderr)
 
 
 def _show_hint_line(resp: httpx.Response) -> None:
@@ -2547,6 +2550,8 @@ def _call_envelope(response: httpx.Response, content_type: str) -> dict:
         meta["reserved_micro" if headers.get("X-Treg-Async") else "charged_micro"] = int(cost)
     if headers.get("X-Treg-Idempotent-Replay"):
         meta["replay"] = True
+    if upstream_failed := headers.get("X-Treg-Upstream-Failed"):
+        meta["upstream_failed"] = upstream_failed
     if headers.get("X-Treg-Async"):
         meta["async"] = True
     if kind := headers.get("X-Treg-Hint"):

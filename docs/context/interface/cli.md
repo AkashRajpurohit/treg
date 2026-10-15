@@ -150,7 +150,8 @@ provider answered and treg relayed it unchanged), the `X-Treg-Call-Id` to quote 
 `X-Treg-Cost-Micro` charge when the header is present. stdout stays the exact body — a runner that
 saved only stdout filed 115 relayed Moz quota 403s as a bare "cli_error" with no status or id. A
 metered 2xx gets the matching line (`_show_charge_line`: `treg: charged $0.006667 · call id …`,
-replay-aware). An async submission instead says `reserved up to $… for async settlement`, because
+replay-aware), followed by `treg: the provider reported this request as failed (…)` when
+`X-Treg-Upstream-Failed` is set (`--json` puts it in `_treg.upstream_failed`). An async submission instead says `reserved up to $… for async settlement`, because
 its header is the open hold ceiling rather than the final charge. No cost header (own key,
 non-call response) → nothing extra.
 

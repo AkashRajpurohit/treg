@@ -1488,6 +1488,14 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
             out["hint"] = (f"served through the overflow relay ({served_via.removeprefix('overflow:')}) "
                            f"at its real price because treg's {provider} account is out; cost_usd is "
                            f"what the relay billed, not the catalog's direct price")
+    # A 2xx whose body fails the provider's own success rule (a DataForSEO task status other than
+    # 20000): the body is the provider's own words, but it is not an answer, and it may be billed.
+    if upstream_failed := r.headers.get("X-Treg-Upstream-Failed"):
+        out["upstream_failed"] = upstream_failed
+        if not out.get("hint"):
+            out["hint"] = (f"the provider answered 2xx but reported this request as failed "
+                           f"({upstream_failed}); there is no result in the body, and cost_usd is "
+                           f"what the provider billed for the attempt")
     if (200 <= r.status_code < 300 and not out.get("hint") and not out.get("replayed")
             and surface.invites and not _is_openai_client(ctx.headers if ctx else None)):
         # /call/ decides whether to invite (application/call/invite.py) and records that it did;

@@ -398,13 +398,16 @@ requires its successful status as described below. Results are `found`,
 LeadMagic needs person identity fields, not an email address; SE Ranking needs boolean
 `is_data_found` and a valid nonnegative volume for found rows. Zero volume is useful data. A
 mixed SE Ranking batch is useful if at least one row has data and every row has a valid shape.
-Explicit empty arrays/no-data flags are empty. HTTP errors and explicit provider error envelopes
-are errors; invalid JSON, predicate failures and unsupported shapes are unknown. Generic adapter
+Explicit empty arrays/no-data flags are empty. A 2xx body that fails the endpoint's own `expect`
+success rule (`results.fails_expect`; a DataForSEO task status other than 20000 under a 20000
+envelope) is an error with reason `expect_failed`, before any adapter reads it. HTTP errors and
+explicit provider error envelopes are errors; invalid JSON, predicate failures and unsupported shapes are unknown. Generic adapter
 rules retain their existing semantics, including their limitations on missing fields; verification
 against a fixture does not imply full response-schema validation.
 
 Endpoints without enabled hit/miss rules retain their original latest-snapshot serving, TTL
-learning, and refresh behavior. Their unknown business-result metric does not reject caching.
+learning, and refresh behavior, with one exception on every endpoint: a body failing the `expect`
+rule is never recorded, and one already stored is never served (lookup reports `result_error`). Their unknown business-result metric does not reject caching.
 The mode, serving allowlist, cohort and retention gates remain authoritative for every endpoint.
 This policy does not enable cache serving for additional endpoints.
 
