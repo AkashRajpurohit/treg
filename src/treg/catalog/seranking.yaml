@@ -111,16 +111,16 @@ endpoints:
       queryParams: {source: us}
       body: {keywords: ["seo platform"]}
     cost:
-      type: per_result
-      value: 10
+      type: per_call
+      value: 100
       currency: credit
       per: 1
-      unit: keyword
-      source: docs
-      source_url: https://seranking.com/pricing.html
-      checked: '2026-07-28'
-      confidence: documented
-      note: 10 credits per keyword RETURNED, 0 per request. Batching 5,000 keywords into one call costs the same as 5,000 single-keyword calls (50,000 credits) but saves the round trips — batch for latency, not for price.
+      unit: call
+      source: observed
+      source_url: https://seranking.com/api/data/keyword-research/#export
+      checked: '2026-10-16'
+      confidence: verified
+      note: "Flat per request, up to 5,000 keywords: 100 credits however many keywords are sent or found. Requests of 50 and 100 real keywords and of 200 unknown ones each moved the account usage counter by exactly 100, as the docs state. Batch keywords into one request."
     verified: 2026-07-31
     added: '2026-07-28'
     example_response: examples/seranking.google.keywords.volume.json
