@@ -25,6 +25,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import ratestore
@@ -33,8 +34,8 @@ from ..domain.catalog import store as catalog_store
 from ..domain.identity.api_keys import is_machine_email
 from ..domain.images import ImageRejected, parse_key
 from ..infra.db import session_maker
-from ..models import (CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseCursor, ShowcaseVote,
-                      ShowcaseWeek, User)
+from ..models import (ApiKey, CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseAppKey,
+                      ShowcaseCursor, ShowcaseVote, ShowcaseWeek, User)
 from ..timeutil import utcnow_naive
 from . import images
 
@@ -48,7 +49,9 @@ APPLY_NS = "showcase_apply"
 APPLY_MAX_PER_USER = 20
 
 
-LIMIT_DETAIL = "a team lists one app - withdraw it to apply with another"
+LIMIT_DETAIL = f"a team can list at most {rules.MAX_APPS_PER_TEAM} apps"
+TEAM = 0            # the `api_key_id` of a whole-team activity source
+MAX_KEYS_PER_APP = 10
 
 
 class ShowcaseError(Exception):
@@ -124,10 +127,12 @@ def _preview(rev: dict | None, *, public: set[str] | None = None) -> dict | None
     return {**rev, "icon_url": url(rev["icon_key"]), "shot_urls": [url(k) for k in rev["shot_keys"]]}
 
 
-def app_view(app: ShowcaseApp, *, org: Org | None = None) -> dict:
-    """The maker's and staff's view of one entry: status, the live version, the proposed one."""
+def app_view(app: ShowcaseApp, *, org: Org | None = None, usage: dict | None = None) -> dict:
+    """The maker's and staff's view of one entry: status, the live version, the proposed one, and
+    where its activity comes from."""
     view = {
         "id": app.id, "org_id": app.org_id, "status": app.status, "version": app.version,
+        "usage": usage or {"source": app.usage_source},
         "live": _preview(live_of(app)) if app.approved_at else None,
         "pending": _preview(app.pending, public=_live_keys(app)),
         "reject_reason": app.reject_reason, "approved_at": app.approved_at.isoformat() if app.approved_at else None,
@@ -136,6 +141,78 @@ def app_view(app: ShowcaseApp, *, org: Org | None = None) -> dict:
     if org is not None:
         view["team"] = {"id": org.id, "slug": org.slug, "name": org.name}
     return view
+
+
+# ---- where an app's activity comes from ----------------------------------------------------------
+# An app counts all of its team's calls, or only those made with the API keys linked to it. A key
+# that was rotated points at its replacement (`ApiKey.replacement_key_id`); the replacement counts
+# for the same app, so a rotation never needs an edit.
+
+async def _org_keys(db: AsyncSession, org_ids) -> dict[int, ApiKey]:
+    ids = sorted(set(org_ids))
+    if not ids:
+        return {}
+    return {k.id: k for k in (await db.execute(select(ApiKey).where(ApiKey.org_id.in_(ids)))).scalars().all()}
+
+
+def _chain(keys: dict[int, ApiKey], key_id: int) -> list[int]:
+    """A key and every key that replaced it, oldest first."""
+    out: list[int] = []
+    while key_id in keys and key_id not in out:
+        out.append(key_id)
+        key_id = keys[key_id].replacement_key_id or 0
+    return out
+
+
+async def _links(db: AsyncSession, app_ids) -> dict[int, list[int]]:
+    ids = sorted(set(app_ids))
+    out: dict[int, list[int]] = {i: [] for i in ids}
+    if ids:
+        for key_id, app_id in (await db.execute(select(ShowcaseAppKey.api_key_id, ShowcaseAppKey.app_id)
+                                                .where(ShowcaseAppKey.app_id.in_(ids))
+                                                .order_by(ShowcaseAppKey.api_key_id))).all():
+            out[app_id].append(key_id)
+    return out
+
+
+async def _sources(db: AsyncSession, apps) -> dict[int, list[tuple[int, int]]]:
+    """Each app's activity sources: `(org_id, TEAM)`, or `(org_id, key)` for every linked key and
+    its replacements."""
+    apps = list(apps)
+    links = await _links(db, [a.id for a in apps if a.usage_source == "keys"])
+    keys = await _org_keys(db, [a.org_id for a in apps if a.usage_source == "keys"])
+    out: dict[int, list[tuple[int, int]]] = {}
+    for a in apps:
+        if a.usage_source == "team":
+            out[a.id] = [(a.org_id, TEAM)]
+        else:
+            out[a.id] = sorted({(a.org_id, k) for linked in links.get(a.id, []) for k in _chain(keys, linked)})
+    return out
+
+
+def _key_view(key: ApiKey) -> dict:
+    return {"id": key.id, "name": key.name, "prefix": key.safe_prefix or "",
+            "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None}
+
+
+async def _views(db: AsyncSession, apps, *, orgs: dict[int, Org] | None = None, with_keys: bool = True) -> list[dict]:
+    """`app_view` for each app, with its usage: the source, and for a team's owner or admin and for
+    staff, the linked keys as they are now (a rotated key shows as its newest replacement)."""
+    apps = list(apps)
+    links = await _links(db, [a.id for a in apps if a.usage_source == "keys"]) if with_keys else {}
+    keys = await _org_keys(db, [a.org_id for a in apps if a.id in links])
+    out = []
+    for a in apps:
+        usage = {"source": a.usage_source}
+        if a.id in links:
+            newest = {_chain(keys, k)[-1] for k in links[a.id] if k in keys}
+            usage["keys"] = [_key_view(keys[k]) for k in sorted(newest)]
+        out.append(app_view(a, org=(orgs or {}).get(a.org_id), usage=usage))
+    return out
+
+
+async def _view(db: AsyncSession, app: ShowcaseApp, **kw) -> dict:
+    return (await _views(db, [app], **kw))[0]
 
 
 async def team_role(db: AsyncSession, user_id: int, org_id: int) -> str | None:
@@ -171,11 +248,12 @@ async def my_teams(user: User) -> list[dict]:
 
 async def team_apps(user: User, org_id: int) -> list[dict]:
     async with session_maker() as db:
-        if await team_role(db, user.id, org_id) is None:
+        role = await team_role(db, user.id, org_id)
+        if role is None:
             raise ShowcaseError("forbidden", "you are not a member of this team")
         apps = (await db.execute(select(ShowcaseApp).where(ShowcaseApp.org_id == org_id)
                                  .order_by(ShowcaseApp.id))).scalars().all()
-        return [app_view(a) for a in apps]
+        return await _views(db, apps, with_keys=role in ("owner", "admin"))
 
 
 async def _team_full(db: AsyncSession, org_id: int, *, besides: int | None = None) -> bool:
@@ -209,7 +287,7 @@ async def apply(user: User, org_id: int, raw: dict) -> dict:
         _event(db, app, "applied", rules.changes({}, rev), actor=user.email, source="web")
         await db.commit()
         log.info("showcase applied app=%s team=%s", app.id, org_id)
-        return app_view(app)
+        return await _view(db, app)
 
 
 async def edit(user: User, app_id: int, raw: dict, expected_version: int) -> dict:
@@ -232,7 +310,7 @@ async def edit(user: User, app_id: int, raw: dict, expected_version: int) -> dic
         app.pending = rev
         _event(db, app, "edited", changed, actor=user.email, source="web")
         await db.commit()
-        return app_view(app)
+        return await _view(db, app)
 
 
 async def withdraw(user: User, app_id: int) -> None:
@@ -248,6 +326,80 @@ async def withdraw(user: User, app_id: int) -> None:
         await db.commit()
 
 
+def _usable(key: ApiKey) -> bool:
+    return key.state != "revoked" and key.deleted_at is None
+
+
+async def _taken(db: AsyncSession, keys: dict[int, ApiKey], org_id: int) -> dict[int, int]:
+    """{key id: app id} for every key an app of the team uses, rotations included."""
+    rows = (await db.execute(select(ShowcaseAppKey.api_key_id, ShowcaseAppKey.app_id)
+                             .join(ShowcaseApp, ShowcaseApp.id == ShowcaseAppKey.app_id)
+                             .where(ShowcaseApp.org_id == org_id))).all()
+    return {k: app_id for linked, app_id in rows for k in _chain(keys, linked)}
+
+
+async def team_keys(user: User, org_id: int) -> list[dict]:
+    """The team's API keys an owner or admin may link to an app, and the app each one already
+    counts for. Names and prefixes only: a key's secret is never stored."""
+    async with session_maker() as db:
+        if await team_role(db, user.id, org_id) not in ("owner", "admin"):
+            raise ShowcaseError("forbidden", "owner or admin role in this team is required")
+        keys = await _org_keys(db, [org_id])
+        taken = await _taken(db, keys, org_id)
+    return [{**_key_view(k), "app_id": taken.get(k.id)} for k in sorted(keys.values(), key=lambda k: k.id)
+            if _usable(k)]
+
+
+def _usage_label(source: str, key_ids: list[int]) -> str:
+    return "team" if source == "team" else "keys:" + ",".join(str(k) for k in sorted(key_ids))
+
+
+async def set_usage(user: User, app_id: int, source: str, key_ids: list[int]) -> dict:
+    """Choose where an app's activity comes from: the whole team, or the given API keys of the team.
+    Applied at once, not reviewed: it changes nothing anyone reads but the team's own numbers. The
+    next activity run counts a newly linked key's last four weeks."""
+    if source not in ("team", "keys"):
+        raise ShowcaseError("invalid", "source: use team or keys")
+    wanted = sorted(set(key_ids)) if source == "keys" else []
+    if source == "keys" and not 1 <= len(wanted) <= MAX_KEYS_PER_APP:
+        raise ShowcaseError("invalid", f"key_ids: pick 1 to {MAX_KEYS_PER_APP} API keys")
+    async with session_maker() as db:
+        app = await _owned_app(db, user, app_id)
+        keys = await _org_keys(db, [app.org_id])
+        for k in wanted:
+            if k not in keys or not _usable(keys[k]):
+                raise ShowcaseError("invalid", "key_ids: pick active API keys of this team")
+        taken = await _taken(db, keys, app.org_id)
+        if any(taken.get(k, app.id) != app.id for k in wanted):
+            raise ShowcaseError("conflict", "that API key already counts for another app of this team")
+        current = (await _links(db, [app.id]))[app.id]
+        before, after = _usage_label(app.usage_source, current), _usage_label(source, wanted)
+        if before == after:
+            raise ShowcaseError("invalid", "nothing changed")
+        await db.execute(delete(ShowcaseAppKey).where(ShowcaseAppKey.app_id == app.id))
+        for k in wanted:
+            db.add(ShowcaseAppKey(app_id=app.id, api_key_id=k))
+        app.usage_source = source
+        _event(db, app, "usage", {"usage": [before, after]}, actor=user.email, source="web")
+        try:
+            await db.commit()
+        except IntegrityError:
+            raise ShowcaseError("conflict", "that API key already counts for another app of this team") from None
+        return await _view(db, app)
+
+
+async def remove(user: User, app_id: int) -> dict:
+    """The team takes its live app off the showcase at once. Only staff show it again."""
+    async with session_maker() as db:
+        app = await _owned_app(db, user, app_id)
+        if app.status != "approved":
+            raise ShowcaseError("invalid", "only a live app can be removed")
+        app.status = "hidden"
+        _event(db, app, "removed", {}, actor=user.email, source="web")
+        await db.commit()
+        return await _view(db, app)
+
+
 # ---- staff --------------------------------------------------------------------------------------
 
 async def queue(status: str | None = None) -> list[dict]:
@@ -259,7 +411,23 @@ async def queue(status: str | None = None) -> list[dict]:
         elif status:
             stmt = stmt.where(ShowcaseApp.status == status)
         rows = (await db.execute(stmt.order_by(ShowcaseApp.updated_at.desc()))).all()
-        return [app_view(a, org=o) for a, o in rows]
+        apps = [a for a, _ in rows]
+        since = await _pending_since(db, apps)
+        views = await _views(db, apps, orgs={o.id: o for _, o in rows})
+        return [{**v, "pending_since": since.get(v["id"])} for v in views]
+
+
+async def _pending_since(db: AsyncSession, apps) -> dict[int, str]:
+    """When each app's waiting proposal was last sent: its pictures expire from staging about 30
+    days after that, so the queue can warn before an approval would find them gone."""
+    ids = [a.id for a in apps if a.pending is not None]
+    if not ids:
+        return {}
+    rows = (await db.execute(select(ShowcaseAppEvent.app_id, func.max(ShowcaseAppEvent.created_at))
+                             .where(ShowcaseAppEvent.app_id.in_(ids),
+                                    ShowcaseAppEvent.action.in_(("applied", "edited")))
+                             .group_by(ShowcaseAppEvent.app_id))).all()
+    return {app_id: at.isoformat() for app_id, at in rows}
 
 
 async def staff_get(app_id: int) -> dict:
@@ -270,7 +438,8 @@ async def staff_get(app_id: int) -> dict:
         org = await db.get(Org, app.org_id)
         events = (await db.execute(select(ShowcaseAppEvent).where(ShowcaseAppEvent.app_id == app_id)
                                    .order_by(ShowcaseAppEvent.version.desc()))).scalars().all()
-        return {**app_view(app, org=org), "history": [
+        since = await _pending_since(db, [app])
+        return {**await _view(db, app, orgs={org.id: org}), "pending_since": since.get(app.id), "history": [
             {"version": e.version, "action": e.action, "changes": e.changes, "note": e.note,
              "actor": e.actor, "source": e.source, "created_at": e.created_at.isoformat()} for e in events]}
 
@@ -319,7 +488,7 @@ async def approve(app_id: int, expected_version: int, *, actor: str, source: str
         app.approved_at = app.approved_at or utcnow_naive()
         _event(db, app, "approved", rules.changes(before, rev), actor=actor, source=source)
         await db.commit()
-        view = app_view(app)
+        view = await _view(db, app)
     await images.retire([k for k in old_keys if k not in ([rev["icon_key"], *rev["shot_keys"]])])
     return view
 
@@ -340,7 +509,7 @@ async def reject(app_id: int, expected_version: int, reason: str, *, actor: str,
             app.pending = None                 # the live version stays
         _event(db, app, "rejected", {}, actor=actor, source=source, note=reason)
         await db.commit()
-        return app_view(app)
+        return await _view(db, app)
 
 
 async def set_hidden(app_id: int, expected_version: int, hidden: bool, *, actor: str, source: str = "admin") -> dict:
@@ -355,7 +524,7 @@ async def set_hidden(app_id: int, expected_version: int, hidden: bool, *, actor:
         _event(db, app, "hidden" if hidden else "unhidden", {"status": [before, target]},
                actor=actor, source=source)
         await db.commit()
-        return app_view(app)
+        return await _view(db, app)
 
 
 async def staff_edit(app_id: int, expected_version: int, raw: dict, *, actor: str, source: str = "admin") -> dict:
@@ -382,7 +551,7 @@ async def staff_edit(app_id: int, expected_version: int, raw: dict, *, actor: st
             raise ShowcaseError("invalid", "nothing changed")
         _event(db, app, "edited", changed, actor=actor, source=source)
         await db.commit()
-        view = app_view(app)
+        view = await _view(db, app)
     if old_keys:
         await images.retire([k for k in old_keys if k not in ([rev["icon_key"], *rev["shot_keys"]])])
     return view
@@ -408,19 +577,22 @@ async def staff_create(org_id: int, raw: dict, *, approve_now: bool, actor: str,
 
 
 # ---- weekly activity ----------------------------------------------------------------------------
-# The calls are the team's, so activity is counted once per team that lists an approved app, and
-# every app of that team shows it. Counted a little at a time: each run reads only the team's calls
-# after its cursor, over the (org_id, id) index, in batches of BATCH_ROWS, each its own short
-# transaction holding the cursor row locked, so overlapping runs never count a call twice. Ids are
-# given as rows are inserted, so a call that is written late still lands after the cursor. Calls
-# younger than LAG wait for the next run: a lower id still being committed by another writer is then
-# already visible. Teams take turns, a batch each, until MAX_ROWS calls are read, so one busy team
-# cannot hold the others back; a busy team's first weeks are counted over several runs. A cursor
-# left behind the window (a team whose app was hidden for a while) jumps to the window first.
+# Activity is counted per source: a team's calls (`api_key_id` TEAM) for an app that shows its
+# team's activity, or one API key's calls for an app linked to keys. Each source an approved app uses
+# is counted once, however many apps read it. Counted a little at a time: each run reads only the
+# source's calls after its cursor, over the (org_id, id) index for a team or (org_id, api_key_id, id)
+# for a key, in batches of BATCH_ROWS, each its own short transaction holding the cursor row locked,
+# so overlapping runs never count a call twice. Ids are given as rows are inserted, so a call that is
+# written late still lands after the cursor. Calls younger than LAG wait for the next run: a lower
+# id still being committed by another writer is then already visible. Sources take turns, a batch
+# each, until MAX_ROWS calls are read, so one busy source cannot hold the others back; a busy
+# source's first weeks are counted over several runs. A cursor left behind the window jumps to it.
 
 BATCH_ROWS = 5_000
 MAX_ROWS = 200_000
 LAG = timedelta(minutes=5)
+
+Source = tuple[int, int]   # (org_id, api_key_id or TEAM)
 
 
 def _categories_by_endpoint() -> dict[str, str]:
@@ -429,7 +601,7 @@ def _categories_by_endpoint() -> dict[str, str]:
 
 async def _window_floor(db: AsyncSession, org_id: int, since: date) -> int:
     """Just before the team's first call of the window, found on the (org_id, created_at) index;
-    past its newest call when there is none."""
+    past its newest call when there is none. A key's calls are the team's, so it starts there too."""
     begin = datetime(since.year, since.month, since.day)
     first = (await db.execute(select(CallRecord.id).where(
         CallRecord.org_id == org_id, CallRecord.created_at >= begin)
@@ -440,27 +612,33 @@ async def _window_floor(db: AsyncSession, org_id: int, since: date) -> int:
     return newest or 0
 
 
-async def _locked_cursor(db: AsyncSession, org_id: int) -> ShowcaseCursor:
-    """The team's cursor row, created if missing and locked for this batch. Created first and then
+async def _locked_cursor(db: AsyncSession, source: Source) -> ShowcaseCursor:
+    """The source's cursor row, created if missing and locked for this batch. Created first and then
     locked, so two runs that both find no cursor cannot both insert one."""
-    await db.execute(_insert(db)(ShowcaseCursor).values(org_id=org_id, through_id=-1, updated_at=utcnow_naive())
-                     .on_conflict_do_nothing(index_elements=[ShowcaseCursor.org_id]))
-    return (await db.execute(select(ShowcaseCursor).where(ShowcaseCursor.org_id == org_id)
+    org_id, key_id = source
+    await db.execute(_insert(db)(ShowcaseCursor).values(org_id=org_id, api_key_id=key_id, through_id=-1,
+                                                        updated_at=utcnow_naive())
+                     .on_conflict_do_nothing(index_elements=[ShowcaseCursor.org_id, ShowcaseCursor.api_key_id]))
+    return (await db.execute(select(ShowcaseCursor).where(ShowcaseCursor.org_id == org_id,
+                                                          ShowcaseCursor.api_key_id == key_id)
                              .with_for_update().execution_options(populate_existing=True))).scalar_one()
 
 
-async def _fold_batch(db: AsyncSession, org_id: int, *, since: date, young: datetime, limit: int,
+async def _fold_batch(db: AsyncSession, source: Source, *, since: date, young: datetime, limit: int,
                       domains: dict[str, str], first: bool) -> tuple[int, bool]:
-    """Add the team's next `limit` calls after its cursor to its week rows and move the cursor, in
+    """Add the source's next `limit` calls after its cursor to its week rows and move the cursor, in
     the caller's transaction. Returns (calls read, caught up)."""
-    cursor = await _locked_cursor(db, org_id)
+    org_id, key_id = source
+    cursor = await _locked_cursor(db, source)
     if first:
         cursor.through_id = max(cursor.through_id, await _window_floor(db, org_id, since))
+    which = [CallRecord.org_id == org_id, CallRecord.id > cursor.through_id]
+    if key_id != TEAM:
+        which.append(CallRecord.api_key_id == key_id)
     rows = (await db.execute(
         select(CallRecord.id, CallRecord.created_at, CallRecord.provider, CallRecord.endpoint_id,
                CallRecord.refused_by)
-        .where(CallRecord.org_id == org_id, CallRecord.id > cursor.through_id)
-        .order_by(CallRecord.id).limit(limit))).all()
+        .where(*which).order_by(CallRecord.id).limit(limit))).all()
     counted, through, read, waiting = [], cursor.through_id, 0, False
     for call_id, at, provider, endpoint_id, refused_by in rows:
         if at >= young:
@@ -472,9 +650,9 @@ async def _fold_batch(db: AsyncSession, org_id: int, *, since: date, young: date
             counted.append((at, provider, endpoint_id))
     for start, delta in rules.fold_calls(counted, lambda e: domains.get(e, "other")).items():
         key = start.isoformat()
-        week = await db.get(ShowcaseWeek, (org_id, key))
+        week = await db.get(ShowcaseWeek, (org_id, key_id, key))
         if week is None:
-            week = ShowcaseWeek(org_id=org_id, week_start=key)
+            week = ShowcaseWeek(org_id=org_id, api_key_id=key_id, week_start=key)
             db.add(week)
         merged = rules.add_to_week({"calls": week.calls, "active_days": week.active_days,
                                     "providers": week.providers, "categories": week.categories}, delta)
@@ -485,38 +663,47 @@ async def _fold_batch(db: AsyncSession, org_id: int, *, since: date, young: date
     return read, waiting or len(rows) < limit
 
 
+async def _approved_sources(db: AsyncSession) -> tuple[list[ShowcaseApp], dict[int, list[Source]]]:
+    apps = (await db.execute(select(ShowcaseApp).where(ShowcaseApp.status == "approved")
+                             .order_by(ShowcaseApp.id))).scalars().all()
+    return list(apps), await _sources(db, apps)
+
+
 async def refresh_activity(session_factory: Callable = session_maker, *, now: datetime | None = None,
                            max_rows: int = MAX_ROWS, batch_rows: int = BATCH_ROWS) -> dict:
-    """One scheduled pass: add the new calls of every team with an approved app to its week rows,
-    then drop rows older than KEEP_WEEKS and those of teams no longer listed. Returns
-    `{teams, calls, caught_up, newest_week}`."""
+    """One scheduled pass: add the new calls of every source an approved app uses to its week rows,
+    then drop rows older than KEEP_WEEKS and those of sources no approved app uses. Returns
+    `{sources, calls, caught_up, newest_week}`."""
     now = now or utcnow_naive()
     since = rules.window_start(now.date())
     young = now - LAG
     domains = _categories_by_endpoint()
     async with session_factory() as db:
-        teams = list((await db.execute(select(ShowcaseApp.org_id).where(ShowcaseApp.status == "approved")
-                                       .distinct().order_by(ShowcaseApp.org_id))).scalars().all())
-    read, waiting, started = 0, list(teams), set()
+        _, by_app = await _approved_sources(db)
+    sources = sorted({src for srcs in by_app.values() for src in srcs})
+    read, waiting, started = 0, list(sources), set()
     while waiting and read < max_rows:
-        for org_id in list(waiting):
+        for source in list(waiting):
             if read >= max_rows:
                 break
             async with session_factory() as db:
-                n, done = await _fold_batch(db, org_id, since=since, young=young, domains=domains,
-                                            limit=min(batch_rows, max_rows - read), first=org_id not in started)
+                n, done = await _fold_batch(db, source, since=since, young=young, domains=domains,
+                                            limit=min(batch_rows, max_rows - read), first=source not in started)
                 await db.commit()
-            started.add(org_id)
+            started.add(source)
             read += n
             if done:
-                waiting.remove(org_id)
+                waiting.remove(source)
+    wanted = set(sources)
     async with session_factory() as db:
         await db.execute(delete(ShowcaseWeek).where(ShowcaseWeek.week_start < rules.keep_from(now.date()).isoformat()))
         for model in (ShowcaseWeek, ShowcaseCursor):
-            await db.execute(delete(model).where(model.org_id.not_in(teams)) if teams else delete(model))
+            stored = set((await db.execute(select(model.org_id, model.api_key_id).distinct())).all())
+            for org_id, key_id in stored - wanted:
+                await db.execute(delete(model).where(model.org_id == org_id, model.api_key_id == key_id))
         await db.commit()
-    log.info("showcase activity: %d teams, %d calls read, caught up %s", len(teams), read, not waiting)
-    return {"teams": len(teams), "calls": read, "caught_up": not waiting,
+    log.info("showcase activity: %d sources, %d calls read, caught up %s", len(sources), read, not waiting)
+    return {"sources": len(sources), "calls": read, "caught_up": not waiting,
             "newest_week": rules.last_complete_week(now.date()).isoformat()}
 
 
@@ -543,15 +730,14 @@ def _public_app(app: ShowcaseApp) -> dict:
 
 async def leaderboard(db: AsyncSession) -> dict:
     """The public leaderboard: approved apps only, activity through `rules.public_entry`."""
-    apps = (await db.execute(select(ShowcaseApp).where(ShowcaseApp.status == "approved")
-                             .order_by(ShowcaseApp.id))).scalars().all()
+    apps, by_app = await _approved_sources(db)
     orgs = sorted({a.org_id for a in apps})
     weeks = (await db.execute(select(ShowcaseWeek).where(ShowcaseWeek.org_id.in_(orgs)))).scalars().all() if orgs else []
     upvotes = await _upvotes(db)
     ref = rules.last_complete_week(utcnow_naive().date())   # the week still running never counts
-    by_org: dict[int, list[rules.Week]] = {}
+    by_source: dict[Source, list[rules.Week]] = {}
     for w in weeks:
-        by_org.setdefault(w.org_id, []).append(rules.Week(
+        by_source.setdefault((w.org_id, w.api_key_id), []).append(rules.Week(
             week_start=date.fromisoformat(w.week_start), calls=w.calls, active_days=w.active_days,
             providers=frozenset(w.providers or []), categories=dict(w.categories or {})))
     folded: dict[int, tuple[rules.Activity, rules.Consent, int]] = {}
@@ -559,7 +745,8 @@ async def leaderboard(db: AsyncSession) -> dict:
     for a in apps:
         consent = rules.Consent(calls=a.show_calls, streak=a.show_streak,
                                 providers=a.show_providers, categories=a.show_categories)
-        folded[a.id] = (rules.activity(by_org.get(a.org_id, []), ref), consent, upvotes.get(a.id, 0))
+        own = rules.merge_weeks(w for src in by_app[a.id] for w in by_source.get(src, []))
+        folded[a.id] = (rules.activity(own, ref), consent, upvotes.get(a.id, 0))
         entries.append({**_public_app(a), **rules.public_entry(*folded[a.id])})
     return {"week": ref.isoformat(), "apps": entries, "boards": rules.boards(folded)}
 

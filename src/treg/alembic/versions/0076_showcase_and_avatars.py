@@ -4,11 +4,12 @@ Revision ID: 0076
 Revises: 0075
 Create Date: 2026-10-15
 
-Additive: five new tables and two nullable columns. `showcaseapp` holds teams' applications to the
+Additive: six new tables and two nullable columns. `showcaseapp` holds teams' applications to the
 /showcase leaderboard and their review state; `showcaseappevent` its append-only history;
-`showcaseweek` one row per listed team per UTC week and `showcasecursor` the last call counted into them,
+`showcaseappkey` the API keys an app's activity comes from; `showcaseweek` one row per source (a team or
+one key) per UTC week and `showcasecursor` the last call counted into them,
 both written by `treg-worker showcase activity`, which reads only new `callrecord` rows on the existing
-(org_id, id) index; `showcasevote` one upvote per person per app.
+(org_id, id) and (org_id, api_key_id, id) indexes; `showcasevote` one upvote per person per app.
 `org.avatar_key` and `user.avatar_key` name a picture in the media bucket, NULL for initials.
 """
 from collections.abc import Sequence
@@ -51,8 +52,10 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.Column("approved_at", sa.DateTime(), nullable=True),
+        sa.Column("usage_source", sa.String(), nullable=False),
         sa.CheckConstraint("status IN ('pending', 'approved', 'rejected', 'hidden')", name="ck_showcaseapp_status"),
         sa.CheckConstraint("version >= 0", name="ck_showcaseapp_version"),
+        sa.CheckConstraint("usage_source IN ('team', 'keys')", name="ck_showcaseapp_usage_source"),
     )
     op.create_index("ix_showcaseapp_org_id", "showcaseapp", ["org_id"])
     op.create_index("ix_showcaseapp_status_id", "showcaseapp", ["status", "id"])
@@ -72,8 +75,16 @@ def upgrade() -> None:
         sa.CheckConstraint("source IN ('web', 'api', 'admin')", name="ck_showcaseappevent_source"),
     )
     op.create_table(
+        "showcaseappkey",
+        sa.Column("api_key_id", sa.Integer(), sa.ForeignKey("apikey.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("app_id", sa.Integer(), sa.ForeignKey("showcaseapp.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+    )
+    op.create_index("ix_showcaseappkey_app_id", "showcaseappkey", ["app_id"])
+    op.create_table(
         "showcaseweek",
         sa.Column("org_id", sa.Integer(), sa.ForeignKey("org.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("api_key_id", sa.Integer(), primary_key=True),
         sa.Column("week_start", sa.String(), primary_key=True),
         sa.Column("calls", sa.Integer(), nullable=False),
         sa.Column("active_days", sa.Integer(), nullable=False),
@@ -86,6 +97,7 @@ def upgrade() -> None:
     op.create_table(
         "showcasecursor",
         sa.Column("org_id", sa.Integer(), sa.ForeignKey("org.id", ondelete="CASCADE"), primary_key=True),
+        sa.Column("api_key_id", sa.Integer(), primary_key=True),
         sa.Column("through_id", sa.BigInteger(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
     )
@@ -104,6 +116,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("showcasevote")
     op.drop_table("showcasecursor")
+    op.drop_table("showcaseappkey")
     op.drop_table("showcaseweek")
     op.drop_table("showcaseappevent")
     op.drop_table("showcaseapp")

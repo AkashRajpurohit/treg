@@ -67,3 +67,16 @@ test('initials come from a name or an email', () => {
   expect(initialsOf('Lead Scout')).toBe('LS')
   expect(initialsOf('')).toBe('?')
 })
+
+test('usage reads as one line and changes only when the source or keys differ', async () => {
+  const { usageText, usageDraftOf, usageChanged } = await import('../src/pages/team/showcase')
+  const keyed = app({ usage: { source: 'keys', keys: [{ id: 7, name: 'prod', prefix: 'treg_ab', last_used_at: null }] } })
+  expect(usageText(undefined)).toBe('Activity: the whole team')
+  expect(usageText(keyed.usage)).toBe('Activity: API keys prod')
+  expect(usageDraftOf(keyed)).toEqual({ source: 'keys', keyIds: [7] })
+  expect(usageChanged(keyed, { source: 'keys', keyIds: [7] })).toBe(false)
+  expect(usageChanged(keyed, { source: 'keys', keyIds: [7, 8] })).toBe(true)
+  expect(usageChanged(keyed, { source: 'team', keyIds: [] })).toBe(true)
+  expect(usageChanged(null, { source: 'team', keyIds: [] })).toBe(false)
+  expect(usageChanged(null, { source: 'keys', keyIds: [3] })).toBe(true)
+})

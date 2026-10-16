@@ -4,6 +4,7 @@ Pure rules. The bytes are decoded and re-drawn in `infra.imaging`, stored by `in
 sequenced by `application.images`. Every upload is re-drawn from its pixels, so nothing the uploader
 hid in the file (metadata, a second format inside the first) survives; the stored file is named by
 the SHA-256 of what was re-drawn, so a name never changes meaning and can be cached for good.
+Every name starts with `img/`: the public bucket is shared, and treg writes and deletes only there.
 """
 from __future__ import annotations
 
@@ -30,17 +31,17 @@ def sniff(data: bytes) -> str | None:
 @dataclass(frozen=True)
 class Output:
     suffix: str        # "" or "-640": appended to the fingerprint in the file name
-    width: int
-    height: int
+    size: int          # square: the side of the square; fit: the longest side (never enlarged)
     fmt: str           # png | webp
+    square: bool       # True: fitted onto a transparent square; False: shape kept, never cropped
 
 
 @dataclass(frozen=True)
 class Kind:
     name: str
     outputs: tuple[Output, ...]
-    min_width: int
-    min_height: int
+    min_long: int      # the longest side must be at least this
+    min_short: int     # and the shortest side at least this
     max_bytes: int
     reviewed: bool     # True: public only once staff approve it; False: published when set
 
@@ -52,15 +53,18 @@ class Kind:
 MAX_PIXELS = 40_000_000  # decompression-bomb guard: no upload may decode to more than this
 
 KINDS: dict[str, Kind] = {k.name: k for k in (
-    Kind("user_avatar", (Output("", 256, 256, "png"),), 64, 64, 2_000_000, reviewed=False),
-    Kind("team_avatar", (Output("", 256, 256, "png"),), 64, 64, 2_000_000, reviewed=False),
-    Kind("showcase_icon", (Output("", 256, 256, "png"),), 128, 128, 2_000_000, reviewed=True),
-    Kind("showcase_shot", (Output("", 1280, 800, "webp"), Output("-640", 640, 400, "webp")),
-         1280, 600, 5_000_000, reviewed=True),
+    # Avatars are mostly photos: WebP is a fraction of PNG's size. Icons are logos: PNG stays sharp.
+    Kind("user_avatar", (Output("", 256, "webp", square=True),), 64, 64, 2_000_000, reviewed=False),
+    Kind("team_avatar", (Output("", 256, "webp", square=True),), 64, 64, 2_000_000, reviewed=False),
+    Kind("showcase_icon", (Output("", 512, "png", square=True),), 128, 128, 2_000_000, reviewed=True),
+    # Screenshots keep their shape, desktop or phone: a 1080x2400 phone screen becomes 576x1280.
+    Kind("showcase_shot", (Output("", 1280, "webp", square=False), Output("-640", 640, "webp", square=False)),
+         600, 200, 5_000_000, reviewed=True),
 )}
 
+PREFIX = "img/"
 CONTENT_TYPES = {"png": "image/png", "webp": "image/webp"}
-_KEY = re.compile(r"(?P<kind>[a-z_]{1,32})/(?P<sha>[0-9a-f]{64})(?P<suffix>-640)?\.(?P<ext>png|webp)")
+_KEY = re.compile(r"img/(?P<kind>[a-z_]{1,32})/(?P<sha>[0-9a-f]{64})(?P<suffix>-640)?\.(?P<ext>png|webp)")
 
 
 class ImageRejected(Exception):
@@ -79,7 +83,7 @@ def kind_of(name: str) -> Kind:
 
 
 def key_for(kind: Kind, sha256: str, output: Output) -> str:
-    return f"{kind.name}/{sha256}{output.suffix}.{output.fmt}"
+    return f"{PREFIX}{kind.name}/{sha256}{output.suffix}.{output.fmt}"
 
 
 def keys_for(kind: Kind, sha256: str) -> list[str]:
@@ -119,5 +123,8 @@ def check_upload(kind: Kind, data: bytes) -> str:
 def check_dimensions(kind: Kind, width: int, height: int) -> None:
     if width * height > MAX_PIXELS:
         raise ImageRejected("too_many_pixels", "the image is too large to process")
-    if width < kind.min_width or height < kind.min_height:
-        raise ImageRejected("too_small", f"use an image at least {kind.min_width}x{kind.min_height} px")
+    if max(width, height) < kind.min_long or min(width, height) < kind.min_short:
+        if kind.min_long == kind.min_short:
+            raise ImageRejected("too_small", f"use an image at least {kind.min_long}x{kind.min_long} px")
+        raise ImageRejected("too_small", f"use an image at least {kind.min_long} px on its longest side "
+                                         f"and {kind.min_short} px on its shortest")

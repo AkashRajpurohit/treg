@@ -1005,10 +1005,11 @@ deletes rows past 90 days. No analytics or audit emission is involved. See [ads 
 
 ## Showcase leaderboard and pictures
 
-Additive revision `0076`: `showcaseapp` (an entry: status, live fields, consent flags, the pending
-proposal as JSON), `showcaseappevent` (append-only history, unique per entry and version),
-`showcaseweek` (one row per listed team per UTC week), `showcasecursor` (the last call id counted
-into a team's weeks) and `showcasevote` (unique per entry and person), all written only by
-`application.showcase`; the entry's children cascade with it, the two activity tables are keyed by
-team, and team deletion removes all of them. `org.avatar_key` and `user.avatar_key` name a picture in
+Additive revision `0076`: `showcaseapp` (an entry: status, live fields, consent flags, the usage
+source, the pending proposal as JSON), `showcaseappevent` (append-only history, unique per entry
+and version), `showcaseappkey` (an API key whose calls are an entry's activity; one entry per key),
+`showcaseweek` (one row per source - a team, `api_key_id` 0, or one key - per UTC week),
+`showcasecursor` (the last call id counted into a source's weeks) and `showcasevote` (unique per
+entry and person), all written only by `application.showcase`; the entry's children cascade with
+it, the two activity tables are keyed by team and key, and team deletion removes all of them. `org.avatar_key` and `user.avatar_key` name a picture in
 the public media bucket and are written only by `application.images`. See [showcase](showcase.md).

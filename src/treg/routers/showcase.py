@@ -83,6 +83,12 @@ class EditIn(BaseModel):
     fields: Revision
 
 
+class UsageIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: str
+    key_ids: list[int] = Field(default_factory=list)
+
+
 class VoteIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: int
@@ -175,6 +181,28 @@ async def showcase_withdraw(app_id: int, request: Request, user: User = Depends(
     except showcase.ShowcaseError as exc:
         raise _fail(exc) from None
     return _private({"withdrawn": app_id})
+
+
+@router.get("/showcase/teams/{org_id}/keys", include_in_schema=False)
+async def showcase_team_keys(org_id: int, user: User = Depends(_maker)):
+    """The team's API keys an owner or admin may link to an app (names and prefixes only)."""
+    return await _run(showcase.team_keys(user, org_id))
+
+
+@router.put("/showcase/apps/{app_id}/usage", include_in_schema=False)
+async def showcase_set_usage(app_id: int, body: UsageIn, request: Request, user: User = Depends(_maker)):
+    """Where the app's activity comes from: the whole team, or some of its API keys. Not reviewed."""
+    if not _same_origin(request):
+        raise HTTPException(403, "cross-origin request rejected")
+    return await _run(showcase.set_usage(user, app_id, body.source, body.key_ids))
+
+
+@router.post("/showcase/apps/{app_id}/remove", include_in_schema=False)
+async def showcase_remove(app_id: int, request: Request, user: User = Depends(_maker)):
+    """The team takes its live app off the showcase."""
+    if not _same_origin(request):
+        raise HTTPException(403, "cross-origin request rejected")
+    return await _run(showcase.remove(user, app_id))
 
 
 # ---- staff (the private admin) -------------------------------------------------------------------

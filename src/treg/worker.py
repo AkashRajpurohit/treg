@@ -9,6 +9,8 @@
     treg-worker catalog requeue-async-stats [--apply]   # preview or queue one async-window repair
     treg-worker catalog repair-status --manifest <path>  # check the saved applied target list
     treg-worker spend rollup [--max-rows 50000]      # fold new ledger settles into per-key daily spend
+    treg-worker showcase activity                    # add new calls to the /showcase activity rows (hourly)
+    treg-worker media sweep                          # delete public pictures nothing uses any more (daily)
     treg-worker jev xboost [--posts 60] [--min-likes 150]   # the /jev launch-radar demo: X posts <24h -> jev
     treg-worker admin purge-evidence [--batch-size 5000]  # blank expired error evidence past 14-day retention
     treg-worker admin purge-ad-clicks                      # delete email-to-click stash rows past 90 days
@@ -385,6 +387,15 @@ async def _showcase_activity(args) -> int:
     return 0
 
 
+async def _media_sweep(args) -> int:
+    from .infra.db import verify_db
+    from .application.images import sweep
+
+    await verify_db()
+    print(json.dumps(await sweep(), sort_keys=True))
+    return 0
+
+
 async def _spend_rollup(args) -> int:
     from .infra.db import verify_db
     from .application.key_spend_rollup import refresh
@@ -562,6 +573,10 @@ def main(argv: list[str] | None = None) -> int:
     showcasesub = showcase.add_subparsers(dest="cmd", required=True)
     activity = showcasesub.add_parser("activity", help="add each approved app's new calls to its weekly activity rows")
     activity.set_defaults(fn=_showcase_activity)
+    media = sub.add_parser("media", help="picture files in the public media bucket")
+    mediasub = media.add_subparsers(dest="cmd", required=True)
+    media_sweep = mediasub.add_parser("sweep", help="delete public pictures no team, person or app uses any more")
+    media_sweep.set_defaults(fn=_media_sweep)
     spend = sub.add_parser("spend", help="spend read models derived from the ledger")
     spendsub = spend.add_subparsers(dest="cmd", required=True)
     rollup = spendsub.add_parser("rollup", help="fold new ledger settles into per-key, per-tool, per-day spend")

@@ -8,6 +8,8 @@ The sequence for every kind (`domain.images.KINDS`):
              from staging and write it to PUBLIC. Idempotent.
 3. retire  - after a row stops pointing at a key, delete it from PUBLIC unless another row still
              does. Staging is never cleaned here: the bucket's lifecycle rule expires it.
+4. sweep   - `treg-worker media sweep`: delete every public picture no row names any more, such as
+             those of a deleted team or person, through the same check.
 
 No database connection is held while the buckets are read or written (AGENTS.md rule 3): each
 database step opens and closes its own session around the storage I/O. This module is the only
@@ -17,12 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select
 
 from .. import ratestore
 from ..config import get_settings
-from ..domain.images import ImageRejected, is_stored_key, keys_for, kind_of, parse_key
+from ..domain.images import PREFIX, ImageRejected, is_stored_key, keys_for, kind_of, parse_key
 from ..infra import media_store as stores
 from ..infra.db import session_maker
 from ..models import Org, ShowcaseApp, User
@@ -115,6 +118,45 @@ async def publish(key: str) -> None:
             raise ImageRejected("missing", "the picture has expired - upload it again")
         content_type = "image/png" if file_key.endswith(".png") else "image/webp"
         await st.put("public", file_key, body, content_type)
+
+
+async def _used_keys() -> set[str]:
+    """Every picture a row names: avatars, and every app's icon and screenshots (live and proposed)."""
+    async with session_maker() as db:
+        used = set((await db.execute(select(User.avatar_key).where(User.avatar_key.is_not(None)))).scalars())
+        used |= set((await db.execute(select(Org.avatar_key).where(Org.avatar_key.is_not(None)))).scalars())
+        for icon, shots, pending in (await db.execute(
+                select(ShowcaseApp.icon_key, ShowcaseApp.shot_keys, ShowcaseApp.pending))).all():
+            used |= {icon, *(shots or [])}
+            if pending:
+                used |= {pending.get("icon_key"), *(pending.get("shot_keys") or [])}
+    used.discard(None)
+    return used
+
+
+SWEEP_GRACE = timedelta(days=1)
+
+
+async def sweep(*, now: datetime | None = None) -> dict:
+    """Delete public pictures no row names any more: what a deleted team or person left behind, and
+    any file a racing change missed. A file younger than SWEEP_GRACE is left alone, since an approval
+    publishes its pictures before the row that names them is saved. Only `img/` is read: the public
+    bucket is shared. Reads the rows, closes the session, then lists and deletes (rule 3)."""
+    st = store()
+    if st is None:
+        return {"checked": 0, "deleted": 0}
+    used = await _used_keys()
+    keep = {k for key in used if (parsed := parse_key(key)) for k in keys_for(*parsed)}
+    cutoff = (now or datetime.now(timezone.utc)) - SWEEP_GRACE
+    listed = await st.listing("public", PREFIX)
+    deleted = 0
+    for key, modified in listed:
+        if key in keep or not is_stored_key(key) or modified > cutoff:
+            continue
+        await st.delete("public", key)
+        deleted += 1
+    log.info("image sweep checked=%d deleted=%d", len(listed), deleted)
+    return {"checked": len(listed), "deleted": deleted}
 
 
 async def _still_used(key: str) -> bool:

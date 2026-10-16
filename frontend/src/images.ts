@@ -10,7 +10,7 @@ export const IMAGE_RULES: Record<ImageKind, { maxBytes: number, hint: string }> 
   user_avatar: { maxBytes: 2 * MB, hint: 'PNG, JPEG or WebP, at least 64×64, up to 2 MB.' },
   team_avatar: { maxBytes: 2 * MB, hint: 'PNG, JPEG or WebP, at least 64×64, up to 2 MB.' },
   showcase_icon: { maxBytes: 2 * MB, hint: 'Square PNG, JPEG or WebP, at least 128×128, up to 2 MB.' },
-  showcase_shot: { maxBytes: 5 * MB, hint: 'PNG, JPEG or WebP, at least 1280×600, up to 5 MB.' },
+  showcase_shot: { maxBytes: 5 * MB, hint: 'PNG, JPEG or WebP, desktop or phone, at least 600 px on the longest side, up to 5 MB.' },
 }
 const TYPES = ['image/png', 'image/jpeg', 'image/webp']
 

@@ -1,7 +1,7 @@
 """The /showcase leaderboard: teams apply, staff review, the public board shows only what was
 approved and consented, and people upvote.
 
-What these pin: an owner or admin applies for their team, one entry per team; nothing is
+What these pin: an owner or admin applies for their team, at most five entries per team; nothing is
 public before approval, and approval publishes the pictures before the row points at them; an edit
 to a live entry leaves the live version until it is approved; a rejected application can be fixed
 and resubmitted; the public JSON never carries a team, an exact call count or money; the weekly fold
@@ -11,7 +11,7 @@ registry.
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 
 import pytest
@@ -27,8 +27,8 @@ from treg.config import get_settings
 from treg.domain import showcase as rules
 from treg.domain.identity import session
 from treg.infra.db import session_maker
-from treg.models import (CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseCursor, ShowcaseVote,
-                         ShowcaseWeek, User)
+from treg.models import (ApiKey, CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseCursor,
+                         ShowcaseVote, ShowcaseWeek, User)
 from treg.timeutil import utcnow_naive
 
 TODAY = utcnow_naive().date()
@@ -125,7 +125,7 @@ async def test_apply_review_approve_and_nothing_public_before(clients, store, st
     user, org_id = await _tim()
     _cookie(clients, user)
     teams = (await clients.get("/showcase/my-teams")).json()
-    assert any(t["id"] == org_id and t["limit"] == 1 for t in teams)
+    assert any(t["id"] == org_id and t["limit"] == 5 for t in teams)
     icon, shot = await _upload(clients, "showcase_icon"), await _upload(clients, "showcase_shot")
     applied = await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(icon_key=icon, shot_keys=[shot]))
     assert applied.status_code == 200, applied.text
@@ -197,7 +197,8 @@ async def test_a_rejected_app_cannot_return_to_review_past_the_limit(clients, st
     first = (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 0"))).json()
     rejected = (await clients.post(f"/admin/showcase/apps/{first['id']}/reject", headers=staff,
                                    json={"expected_version": first["version"], "reason": "No"})).json()
-    assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 1"))).status_code == 200
+    for i in range(1, 6):
+        assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name=f"App {i}"))).status_code == 200
     back = await clients.patch(f"/showcase/apps/{first['id']}", json={"expected_version": rejected["version"],
                                                                         "fields": fields(name="App 0 again")})
     assert back.status_code == 409
@@ -222,14 +223,15 @@ async def test_an_edit_previews_kept_pictures_from_the_public_side(clients, stor
     assert approved.status_code == 200 and approved.json()["live"]["name"] == "Renamed"
 
 
-async def test_one_app_per_team_and_only_owners_or_admins_apply(clients, staff):
+async def test_five_apps_per_team_and_only_owners_or_admins_apply(clients, staff):
     user, org_id = await _tim()
     _cookie(clients, user)
-    assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 1"))).status_code == 200
-    second = await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 2"))
-    assert second.status_code == 409 and "one app" in second.json()["detail"]
+    for i in range(5):
+        assert (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name=f"App {i}"))).status_code == 200
+    sixth = await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="App 6"))
+    assert sixth.status_code == 409 and "5 apps" in sixth.json()["detail"]
     assert (await clients.post(f"/admin/showcase/teams/{org_id}/apps", headers=staff,
-                               json={"fields": fields(name="Staff 2")})).status_code == 409
+                               json={"fields": fields(name="Staff 6")})).status_code == 409
     async with session_maker() as db:
         db.add(Org(name="Not mine", slug="not-mine"))
         await db.commit()
@@ -264,12 +266,13 @@ async def _approved(org_id: int, **over) -> int:
         return app_.id
 
 
-async def _calls(org_id, at, n, *, provider="tikhub", endpoint="tikhub.tiktok.user.profile", refused_by=None):
+async def _calls(org_id, at, n, *, provider="tikhub", endpoint="tikhub.tiktok.user.profile", refused_by=None,
+                 key=None):
     async with session_maker() as db:
         for _ in range(n):
             db.add(CallRecord(org_id=org_id, user_email="a@b.c", tool_name=endpoint, method="GET", path="/x",
                               status_code=200, endpoint_id=endpoint, provider=provider, refused_by=refused_by,
-                              created_at=at))
+                              created_at=at, api_key_id=key))
         await db.commit()
 
 
@@ -284,7 +287,7 @@ async def test_the_fold_counts_only_new_upstream_calls_in_small_batches(clients)
     first = await showcase.refresh_activity(now=NOW, batch_rows=2)
     assert first["caught_up"] and first["calls"] == 9      # refused calls move the cursor but are not activity
     async with session_maker() as db:
-        row = await db.get(ShowcaseWeek, (org_id, NEWEST.isoformat()))
+        row = await db.get(ShowcaseWeek, (org_id, 0, NEWEST.isoformat()))
         assert (await db.execute(select(func.count()).select_from(ShowcaseWeek))).scalar_one() == 1
     assert (row.calls, row.active_days, row.providers) == (5, 0b101, ["anyapi", "tikhub"])
     assert sum(row.categories.values()) == 5
@@ -295,7 +298,7 @@ async def test_the_fold_counts_only_new_upstream_calls_in_small_batches(clients)
     again = await showcase.refresh_activity(now=NOW)
     assert again["calls"] == 1
     async with session_maker() as db:
-        assert (await db.get(ShowcaseWeek, (org_id, NEWEST.isoformat()))).calls == 6
+        assert (await db.get(ShowcaseWeek, (org_id, 0, NEWEST.isoformat()))).calls == 6
     assert (await showcase.refresh_activity(now=NOW))["calls"] == 0
     assert (await showcase.refresh_activity(now=NOW + timedelta(minutes=10)))["calls"] == 1
 
@@ -309,7 +312,7 @@ async def test_a_capped_run_resumes_where_it_stopped(clients):
     second = await showcase.refresh_activity(now=NOW, max_rows=3, batch_rows=2)
     assert (second["calls"], second["caught_up"]) == (2, True)
     async with session_maker() as db:
-        assert (await db.get(ShowcaseWeek, (org_id, NEWEST.isoformat()))).calls == 5
+        assert (await db.get(ShowcaseWeek, (org_id, 0, NEWEST.isoformat()))).calls == 5
 
 
 async def test_teams_take_turns_and_a_team_is_read_once_for_all_its_apps(clients):
@@ -326,9 +329,9 @@ async def test_teams_take_turns_and_a_team_is_read_once_for_all_its_apps(clients
     await _calls(busy, monday, 6)
     await _calls(quiet, monday, 1)
     run = await showcase.refresh_activity(now=NOW, max_rows=4, batch_rows=2)
-    assert (run["teams"], run["calls"], run["caught_up"]) == (2, 4, False)   # busy 2, quiet 1, busy 1: quiet never waited
+    assert (run["sources"], run["calls"], run["caught_up"]) == (2, 4, False)   # busy 2, quiet 1, busy 1: quiet never waited
     async with session_maker() as db:
-        assert (await db.get(ShowcaseWeek, (quiet, NEWEST.isoformat()))).calls == 1
+        assert (await db.get(ShowcaseWeek, (quiet, 0, NEWEST.isoformat()))).calls == 1
     await showcase.refresh_activity(now=NOW)
     board = {a["name"]: a for a in (await clients.get("/showcase/leaderboard")).json()["apps"]}
     assert board["Busy one"]["calls_tier"] is None and board["Busy one"]["streak_days"] == 1
@@ -346,7 +349,7 @@ async def test_a_team_no_longer_listed_loses_its_rows_and_starts_over(clients, s
         await db.commit()
     await showcase.refresh_activity(now=NOW)
     async with session_maker() as db:
-        assert await db.get(ShowcaseCursor, org_id) is None and await db.get(ShowcaseWeek, (org_id, NEWEST.isoformat())) is None
+        assert await db.get(ShowcaseCursor, (org_id, 0)) is None and await db.get(ShowcaseWeek, (org_id, 0, NEWEST.isoformat())) is None
         app_ = await db.get(ShowcaseApp, app_id)
         app_.status = "approved"
         await db.commit()
@@ -356,10 +359,10 @@ async def test_a_team_no_longer_listed_loses_its_rows_and_starts_over(clients, s
 async def test_a_cursor_is_created_once_even_when_two_runs_find_none(clients):
     _, org_id = await _tim()
     async with session_maker() as db:
-        await showcase._locked_cursor(db, org_id)
+        await showcase._locked_cursor(db, (org_id, 0))
         await db.commit()
     async with session_maker() as db:
-        await showcase._locked_cursor(db, org_id)
+        await showcase._locked_cursor(db, (org_id, 0))
         await db.commit()
         assert (await db.execute(select(func.count()).select_from(ShowcaseCursor))).scalar_one() == 1
 
@@ -369,11 +372,11 @@ async def test_weeks_that_leave_the_window_are_dropped(clients):
     app_id = await _approved(org_id)
     async with session_maker() as db:
         old = (rules.keep_from(TODAY) - timedelta(days=7)).isoformat()
-        db.add(ShowcaseWeek(org_id=org_id, week_start=old, calls=9, active_days=1))
+        db.add(ShowcaseWeek(org_id=org_id, api_key_id=0, week_start=old, calls=9, active_days=1))
         await db.commit()
     await showcase.refresh_activity(now=NOW)
     async with session_maker() as db:
-        assert await db.get(ShowcaseWeek, (org_id, old)) is None
+        assert await db.get(ShowcaseWeek, (org_id, 0, old)) is None
 
 
 async def test_the_public_board_never_leaks_the_team_or_exact_numbers(clients):
@@ -429,8 +432,8 @@ async def test_deleting_a_team_removes_its_entries_and_everything_under_them(cli
         await db.commit()
     app_id = await _approved(org_id)
     async with session_maker() as db:
-        db.add(ShowcaseWeek(org_id=org_id, week_start=NEWEST.isoformat(), calls=1, active_days=1))
-        db.add(ShowcaseCursor(org_id=org_id, through_id=1))
+        db.add(ShowcaseWeek(org_id=org_id, api_key_id=0, week_start=NEWEST.isoformat(), calls=1, active_days=1))
+        db.add(ShowcaseCursor(org_id=org_id, api_key_id=0, through_id=1))
         db.add(ShowcaseVote(app_id=app_id, user_id=user.id))
         db.add(ShowcaseAppEvent(app_id=app_id, version=1, action="applied", actor="t", source="api"))
         await db.commit()
@@ -452,3 +455,164 @@ async def test_the_leaderboard_does_not_exist_on_a_self_hosted_registry(monkeypa
                 assert r.status_code == 404, path
     finally:
         get_settings.cache_clear()
+
+
+# ---- activity from API keys ----------------------------------------------------------------------
+
+async def _key(org_id, name, **over) -> int:
+    async with session_maker() as db:
+        key = ApiKey(org_id=org_id, kind="agent", name=name, safe_prefix=f"treg_{name[:4]}", **over)
+        db.add(key)
+        await db.commit()
+        return key.id
+
+
+async def test_an_app_counts_its_own_keys_and_the_team_choice_is_applied_at_once(clients, staff):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    team_app = await _approved(org_id, name="Whole team", show_providers=True)
+    keyed = await _approved(org_id, name="Keyed", show_providers=True)
+    k1, k2 = await _key(org_id, "prod"), await _key(org_id, "other")
+    monday = datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9)
+    await _calls(org_id, monday, 3, key=k1)
+    await _calls(org_id, monday, 2, key=k2, provider="anyapi", endpoint="anyapi.x.search.posts")
+
+    listed = (await clients.get(f"/showcase/teams/{org_id}/keys")).json()
+    assert {k["name"] for k in listed} >= {"prod", "other"} and all(k["app_id"] is None for k in listed)
+    r = await clients.put(f"/showcase/apps/{keyed}/usage", json={"source": "keys", "key_ids": [k1]})
+    assert r.status_code == 200, r.text
+    assert r.json()["usage"] == {"source": "keys", "keys": [
+        {"id": k1, "name": "prod", "prefix": "treg_prod", "last_used_at": None}]}
+    assert r.json()["status"] == "approved" and r.json()["pending"] is None      # not reviewed
+    assert (await clients.put(f"/showcase/apps/{keyed}/usage", json={"source": "keys", "key_ids": [k1]})).status_code == 422
+    assert (await clients.put(f"/showcase/apps/{team_app}/usage",
+                              json={"source": "keys", "key_ids": [k1]})).status_code == 409   # one app per key
+    assert (await clients.put(f"/showcase/apps/{keyed}/usage", json={"source": "keys", "key_ids": []})).status_code == 422
+    assert {k["id"]: k["app_id"] for k in (await clients.get(f"/showcase/teams/{org_id}/keys")).json()}[k1] == keyed
+
+    run = await showcase.refresh_activity(now=NOW)
+    assert run["sources"] == 2
+    async with session_maker() as db:
+        assert (await db.get(ShowcaseWeek, (org_id, k1, NEWEST.isoformat()))).calls == 3
+        assert (await db.get(ShowcaseWeek, (org_id, 0, NEWEST.isoformat()))).calls == 5
+    board = {a["name"]: a for a in (await clients.get("/showcase/leaderboard")).json()["apps"]}
+    assert board["Keyed"]["providers"] == 1 and board["Whole team"]["providers"] == 2
+    assert "usage" not in board["Keyed"] and "keys" not in json.dumps(board)
+
+    # Back to the team: the key's rows are no longer needed and go.
+    assert (await clients.put(f"/showcase/apps/{keyed}/usage", json={"source": "team"})).json()["usage"] == {"source": "team"}
+    await showcase.refresh_activity(now=NOW)
+    async with session_maker() as db:
+        assert await db.get(ShowcaseWeek, (org_id, k1, NEWEST.isoformat())) is None
+    detail = (await clients.get(f"/admin/showcase/apps/{keyed}", headers=staff)).json()
+    assert [h["action"] for h in detail["history"]][:2] == ["usage", "usage"]
+    assert detail["history"][0]["changes"] == {"usage": [f"keys:{k1}", "team"]}
+
+
+async def test_only_active_keys_of_the_team_and_only_its_owner_or_admin(clients):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    app_id = await _approved(org_id)
+    async with session_maker() as db:
+        other = Org(name="Elsewhere", slug="elsewhere-team")
+        db.add(other)
+        await db.commit()
+        other_id = other.id
+    foreign = await _key(other_id, "theirs")
+    revoked = await _key(org_id, "old", state="revoked", revoked_at=datetime(2026, 9, 1))
+    for bad in (foreign, revoked, 999999):
+        assert (await clients.put(f"/showcase/apps/{app_id}/usage",
+                                  json={"source": "keys", "key_ids": [bad]})).status_code == 422
+    assert (await clients.put(f"/showcase/apps/{app_id}/usage", json={"source": "nope"})).status_code == 422
+    assert revoked not in {k["id"] for k in (await clients.get(f"/showcase/teams/{org_id}/keys")).json()}
+    assert (await clients.get(f"/showcase/teams/{other_id}/keys")).status_code == 403
+    async with session_maker() as db:
+        (await db.execute(select(Membership).where(Membership.user_id == user.id, Membership.org_id == org_id))
+         ).scalar_one().role = "member"
+        await db.commit()
+    assert (await clients.put(f"/showcase/apps/{app_id}/usage", json={"source": "team"})).status_code == 403
+    member_view = (await clients.get(f"/showcase/teams/{org_id}/apps")).json()
+    assert member_view[0]["usage"] == {"source": "team"}
+
+
+async def test_a_rotated_key_keeps_counting_for_its_app(clients):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    app_id = await _approved(org_id, show_calls=True)
+    old = await _key(org_id, "first")
+    assert (await clients.put(f"/showcase/apps/{app_id}/usage", json={"source": "keys", "key_ids": [old]})).status_code == 200
+    new = await _key(org_id, "second")
+    async with session_maker() as db:
+        row = await db.get(ApiKey, old)
+        row.state, row.revoked_at, row.deleted_at, row.replacement_key_id = "revoked", NOW, NOW, new
+        await db.commit()
+    monday = datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9)
+    await _calls(org_id, monday, 2, key=old)
+    await _calls(org_id, monday + timedelta(days=1), 3, key=new)
+    await showcase.refresh_activity(now=NOW)
+    async with session_maker() as db:
+        weeks = (await db.execute(select(ShowcaseWeek).where(ShowcaseWeek.org_id == org_id))).scalars().all()
+    assert sorted((w.api_key_id, w.calls) for w in weeks) == sorted([(old, 2), (new, 3)])
+    view = (await clients.get(f"/showcase/teams/{org_id}/apps")).json()[0]
+    assert [k["name"] for k in view["usage"]["keys"]] == ["second"]
+    board = (await clients.get("/showcase/leaderboard")).json()["apps"][0]
+    assert board["streak_days"] == 2
+    other = await _approved(org_id, name="Other")
+    assert (await clients.put(f"/showcase/apps/{other}/usage",
+                              json={"source": "keys", "key_ids": [new]})).status_code == 409   # the replacement is taken
+
+
+async def test_the_team_removes_its_live_app_and_only_staff_show_it_again(clients, staff):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    app_id = await _approved(org_id)
+    pending = (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="Waiting"))).json()
+    assert (await clients.post(f"/showcase/apps/{pending['id']}/remove")).status_code == 422
+    removed = await clients.post(f"/showcase/apps/{app_id}/remove")
+    assert removed.status_code == 200 and removed.json()["status"] == "hidden"
+    assert all(a["id"] != app_id for a in (await clients.get("/showcase/leaderboard")).json()["apps"])
+    detail = (await clients.get(f"/admin/showcase/apps/{app_id}", headers=staff)).json()
+    assert detail["history"][0]["action"] == "removed" and detail["history"][0]["source"] == "web"
+    assert (await clients.post(f"/showcase/apps/{app_id}/remove",
+                               headers={"Origin": "https://evil.example"})).status_code == 403
+
+
+async def test_the_queue_says_when_a_proposal_was_sent(clients, staff):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    entry = (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields())).json()
+    queue = (await clients.get("/admin/showcase/apps?status=review", headers=staff)).json()
+    assert queue[0]["id"] == entry["id"] and queue[0]["pending_since"]
+    assert (await clients.get(f"/admin/showcase/apps/{entry['id']}", headers=staff)).json()["pending_since"]
+
+
+# ---- the picture sweep ---------------------------------------------------------------------------
+
+async def test_the_sweep_deletes_only_pictures_no_row_names(clients, store):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    keys = [await _upload(clients, "showcase_shot", picture(1600, 1000 + i)) for i in range(3)]
+    used, gone, shared = keys
+    for k in keys:
+        await images.publish(k)
+    await store.put("public", "site/fable/ad1.mp4", b"video", "video/mp4")       # not ours: never touched
+    await _approved(org_id, shot_keys=[used, shared])
+    async with session_maker() as db:
+        other = Org(name="Sharing", slug="sharing-team")
+        db.add(other)
+        await db.commit()
+        other_id = other.id
+    await _approved(other_id, shot_keys=[shared])
+    later = datetime.now(timezone.utc) + timedelta(days=2)
+    assert (await images.sweep())["deleted"] == 0                                 # all younger than the grace
+    result = await images.sweep(now=later)
+    assert result["deleted"] == 2                                                 # `gone`, with its small copy
+    left = store.keys("public")
+    assert gone not in left and gone.replace(".webp", "-640.webp") not in left
+    assert {used, shared, used.replace(".webp", "-640.webp"), "site/fable/ad1.mp4"} <= set(left)
+    # A deleted team leaves its pictures behind; the sweep takes those no one else uses.
+    from treg.domain.governance.teams import cascade_delete_org
+    async with session_maker() as db:
+        await cascade_delete_org(await db.get(Org, other_id), db)
+        await db.commit()
+    assert (await images.sweep(now=later))["deleted"] == 0                         # `shared` is still Tim's

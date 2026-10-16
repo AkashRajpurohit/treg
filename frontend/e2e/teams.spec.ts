@@ -252,7 +252,7 @@ test('an owner lists the team\'s showcase entries, applies with pictures, meets 
     await uploads(page, true)
     await page.goto('/app#orgs/showcase')
     await page.reload()  // the hash alone does not boot again, and boot reads /auth/me
-    await expect(page.getByText('One app per team')).toBeVisible()
+    await expect(page.getByText('0 of 5 used')).toBeVisible()
     await page.getByRole('button', { name: '＋ Apply with an app' }).click()
     const form = page.getByRole('form', { name: 'Apply with an app' })
     await form.getByLabel('App name').fill('Lead scout')
@@ -290,14 +290,44 @@ test('an owner lists the team\'s showcase entries, applies with pictures, meets 
       await expect(list.getByText(chip, { exact: true }).first()).toBeVisible()
   })
 
-  await test.step('a team lists one app; a rejected one does not count', async () => {
-    apps = [STATES[3]]
+  await test.step('five places is the limit; a rejected entry does not count', async () => {
+    apps = STATES
     await page.reload()
-    await expect(page.getByRole('button', { name: '＋ Apply with an app' })).toBeEnabled()
-    apps = [STATES[3], STATES[1]]
-    await page.reload()
+    await expect(page.getByText('5 of 5 used')).toBeVisible()
     await expect(page.getByRole('button', { name: '＋ Apply with an app' })).toBeDisabled()
-    await expect(page.getByText(/Your team already lists its app/)).toBeVisible()
+    await expect(page.getByText(/Your team uses all 5 places/)).toBeVisible()
+  })
+
+  await test.step('choosing API keys is saved at once, and a live app can be removed', async () => {
+    const live = { ...STATES[1], usage: { source: 'team' } }
+    apps = [live]
+    const usage: any[] = [], patched: any[] = [], removed: string[] = []
+    await page.route(/\/showcase\/teams\/\d+\/keys$/, route => route.fulfill(json([
+      { id: 11, name: 'prod', prefix: 'treg_ab12', last_used_at: '2026-10-10T00:00:00', app_id: null },
+      { id: 12, name: 'other app', prefix: 'treg_cd34', last_used_at: null, app_id: 99 }])))
+    await page.route(/\/showcase\/apps\/\d+\/usage$/, route => {
+      usage.push(route.request().postDataJSON())
+      return route.fulfill(json({ ...live, usage: { source: 'keys', keys: [{ id: 11, name: 'prod', prefix: 'treg_ab12', last_used_at: null }] } }))
+    })
+    await page.route(/\/showcase\/apps\/\d+$/, route => { patched.push(route.request().method()); return route.fulfill(json(live)) })
+    await page.route(/\/showcase\/apps\/\d+\/remove$/, route => { removed.push(route.request().method()); return route.fulfill(json({ ...live, status: 'hidden' })) })
+    await page.reload()
+    await expect(page.getByText('Activity: the whole team')).toBeVisible()
+    await page.getByRole('button', { name: 'Edit' }).click()
+    const form = page.getByRole('form', { name: 'Edit showcase entry' })
+    await form.getByRole('radio', { name: /Only some API keys/ }).check()
+    await expect(form.getByRole('checkbox', { name: 'API key other app' })).toBeDisabled()   // counts for another app
+    await form.getByRole('checkbox', { name: 'API key prod' }).check()
+    await form.getByRole('button', { name: 'Send for review' }).click()
+    await expect(page.getByText('Saved. The activity boards use it from the next hourly count.')).toBeVisible()
+    expect(usage).toEqual([{ source: 'keys', key_ids: [11] }])
+    expect(patched).toEqual([])                                     // nothing to review: no PATCH
+    await page.getByRole('button', { name: 'Remove from showcase' }).click()
+    await page.getByRole('button', { name: 'Confirm remove' }).click()
+    await expect(page.getByText('Removed from the showcase. Ask treg if you want it shown again.')).toBeVisible()
+    expect(removed).toEqual(['POST'])
+    for (const p of [/\/showcase\/teams\/\d+\/keys$/, /\/showcase\/apps\/\d+\/usage$/, /\/showcase\/apps\/\d+$/, /\/showcase\/apps\/\d+\/remove$/])
+      await page.unroute(p)
   })
 
   await test.step('without uploads the form still works, with no picture controls', async () => {

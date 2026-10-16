@@ -895,7 +895,7 @@ var BOARD = (function () {
   function row(id, rank, delay) {
     var a = byId[id];
     return '<li class="rank" style="--i:' + delay + '"><span class="no">' + rank + '</span>' + iconHtml(a) +
-      '<span class="who"><a href="' + esc(safeUrl(a.url)) + '" target="_blank" rel="noopener nofollow">' + esc(a.name) + '</a>' +
+      '<span class="who"><a href="' + esc(safeUrl(a.url)) + '" target="_blank" rel="noopener ugc">' + esc(a.name) + '</a>' +
       '<span class="tag">' + esc(a.tagline) + '</span><span class="badges">' + badgeHtml(a.badges) + '</span></span>' +
       '<span class="metric">' + metric(a) + '</span>' + (board === 'most_loved' ? voteHtml(a) : '') + '</li>';
   }
@@ -999,7 +999,7 @@ var BOARD = (function () {
     var full = teams.every(function (t) { return t.apps >= t.limit; });
     body.innerHTML =
       '<label class="f">Team<select id="ap-team">' + teams.map(function (t) {
-        return '<option value="' + t.id + '"' + (t.apps >= t.limit ? ' disabled' : '') + '>' + esc(t.name) + (t.apps >= t.limit ? ' (already listed)' : '') + '</option>'; }).join('') + '</select></label>' +
+        return '<option value="' + t.id + '"' + (t.apps >= t.limit ? ' disabled' : '') + '>' + esc(t.name) + ' (' + t.apps + ' of ' + t.limit + ' used)</option>'; }).join('') + '</select></label>' +
       '<div class="row2"><label class="f">App name<input type="text" id="ap-name" maxlength="60" required></label>' +
       '<label class="f">Link<input type="url" id="ap-url" placeholder="https://" required></label></div>' +
       '<label class="f">One line about it <small>(up to 80 characters)</small><input type="text" id="ap-tagline" maxlength="80" required></label>' +
@@ -1009,18 +1009,41 @@ var BOARD = (function () {
       '<div class="row2"><label class="f">X handle <small>(optional)</small><input type="text" id="ap-x" placeholder="@you"></label>' +
       '<label class="f">Launch post <small>(optional)</small><input type="url" id="ap-post" placeholder="https://x.com/…"></label></div>' +
       (state.uploads ?
-        '<fieldset><legend>Pictures</legend><p class="note">Icon: square, at least 128 px. Screenshots: up to 4, at least 1280 px wide; the first is the cover. PNG, JPEG or WebP.</p>' +
+        '<fieldset><legend>Pictures</legend><p class="note">Icon: square, at least 128 px. Screenshots: up to 4, desktop or phone, at least 600 px on the longest side; the first is the cover. PNG, JPEG or WebP.</p>' +
         '<div class="pics" id="ap-icon"></div><div class="pics" id="ap-shots"></div>' +
         '<input type="file" id="ap-icon-file" accept="image/png,image/jpeg,image/webp" hidden><input type="file" id="ap-shot-file" accept="image/png,image/jpeg,image/webp" hidden></fieldset>'
         : '<p class="note">Picture uploads are not enabled yet; your entry shows its first letter until they are.</p>') +
-      '<fieldset><legend>What may we show on the leaderboard?</legend><p class="note">Upvotes always show. Activity comes from your team\'s calls, as tiers and badges only: never exact numbers, never money.</p>' +
+      '<fieldset><legend>Where does its activity come from?</legend>' +
+      '<label class="chk"><input type="radio" name="ap-source" value="team" checked><span>The whole team <small>- every call your team makes</small></span></label>' +
+      '<label class="chk"><input type="radio" name="ap-source" value="keys"><span>Only some API keys <small>- for a team with more than one app</small></span></label>' +
+      '<div id="ap-keys" hidden></div></fieldset>' +
+      '<fieldset><legend>What may we show on the leaderboard?</legend><p class="note">Upvotes always show. Activity shows as tiers and badges only: never exact numbers, never money.</p>' +
       SHOW.map(function (s) { return '<label class="chk"><input type="checkbox" id="ap-' + s[0] + '"><span>' + s[1] + ' <small>- ' + s[2] + '</small></span></label>'; }).join('') +
       '</fieldset><div class="err" id="ap-err"></div>' +
       '<div class="actions"><button type="button" class="pill" id="ap-cancel">Cancel</button><button type="button" class="pill dark" id="ap-submit"' + (full ? ' disabled' : '') + '>Submit for review</button></div>';
     document.getElementById('ap-cancel').addEventListener('click', close);
     document.getElementById('ap-submit').addEventListener('click', submit);
     if (state.uploads) { paintPics(); wireFile('ap-icon-file', 'showcase_icon'); wireFile('ap-shot-file', 'showcase_shot'); }
-    if (full) document.getElementById('ap-err').textContent = 'Each of your teams already lists its app. A team lists one app.';
+    if (full) document.getElementById('ap-err').textContent = 'Each of your teams already lists 5 apps.';
+    body.querySelectorAll('input[name=ap-source]').forEach(function (r) { r.addEventListener('change', paintKeys); });
+    document.getElementById('ap-team').addEventListener('change', function () { state.keys = null; paintKeys(); });
+  }
+  function source() { var r = body.querySelector('input[name=ap-source]:checked'); return r ? r.value : 'team'; }
+  function paintKeys() {
+    var box = document.getElementById('ap-keys');
+    box.hidden = source() !== 'keys';
+    if (box.hidden) return;
+    if (!state.keys) {
+      box.innerHTML = '<p class="note">Loading your API keys…</p>';
+      json('/showcase/teams/' + val('ap-team') + '/keys').then(function (keys) { state.keys = keys; paintKeys(); })
+        .catch(function (e) { box.innerHTML = '<p class="note">' + esc(e.message) + '</p>'; });
+      return;
+    }
+    box.innerHTML = state.keys.length ? state.keys.map(function (k) {
+      var taken = k.app_id != null;
+      return '<label class="chk"><input type="checkbox" class="ap-key" value="' + k.id + '"' + (taken ? ' disabled' : '') + '><span>' +
+        esc(k.name) + (k.prefix ? ' <small>' + esc(k.prefix) + '…</small>' : '') + (taken ? ' <small>- counts for another app</small>' : '') + '</span></label>';
+    }).join('') : '<p class="note">This team has no API keys yet.</p>';
   }
   function pic(src, onRemove, label) {
     var d = el('div', { class: 'pic' }, '<img alt="' + esc(label) + '" src="' + esc(src) + '"><button type="button" aria-label="Remove ' + esc(label) + '">✕</button>');
@@ -1054,11 +1077,20 @@ var BOARD = (function () {
       category: val('ap-category'), maker_name: val('ap-maker'), x_handle: val('ap-x'), launch_post_url: val('ap-post'),
       icon_key: state.icon ? state.icon.key : null, shot_keys: state.shots.map(function (s) { return s.key; }) };
     SHOW.forEach(function (s) { payload[s[0]] = document.getElementById('ap-' + s[0]).checked; });
+    var keyIds = Array.prototype.map.call(body.querySelectorAll('.ap-key:checked'), function (c) { return +c.value; });
+    if (source() === 'keys' && !keyIds.length) { err.textContent = 'Pick at least one API key, or count the whole team.'; return; }
     btn.disabled = true; err.textContent = '';
-    json('/showcase/teams/' + val('ap-team') + '/apps', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-      .then(function () {
+    var headers = { 'content-type': 'application/json' };
+    json('/showcase/teams/' + val('ap-team') + '/apps', { method: 'POST', headers: headers, body: JSON.stringify(payload) })
+      .then(function (app) {
+        // Where the activity comes from is not reviewed: it is set right after the application.
+        if (source() !== 'keys') return '';
+        return json('/showcase/apps/' + app.id + '/usage', { method: 'PUT', headers: headers, body: JSON.stringify({ source: 'keys', key_ids: keyIds }) })
+          .then(function () { return ''; }, function (e) { return '<p>Your API keys were not saved (' + esc(e.message) + '). Choose them in the dashboard.</p>'; });
+      })
+      .then(function (note) {
         track('showcase_apply_submit', {});
-        message('<p><b>Submitted for review.</b></p><p>We will check it soon. You can follow its status, and edit it, in the dashboard: Team, Showcase.</p><p><a class="pill dark" href="/app#orgs/showcase">Open the dashboard</a></p>');
+        message('<p><b>Submitted for review.</b></p><p>We will check it soon. You can follow its status, and edit it, in the dashboard: Team, Showcase.</p>' + note + '<p><a class="pill dark" href="/app#orgs/showcase">Open the dashboard</a></p>');
       })
       .catch(function (e) { btn.disabled = false; err.textContent = e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.'; });
   }

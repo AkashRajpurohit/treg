@@ -1,7 +1,7 @@
 // The Team page's Showcase tab: what a team's entries say and what an application sends.
 // The server (domain/showcase) is the judge of every field; these only shape the form.
 
-export const MAX_APPS = 1   // one app per team (domain.showcase.MAX_APPS_PER_TEAM)
+export const MAX_APPS = 5
 export const MAX_SHOTS = 4
 
 export const CATEGORIES: [string, string][] = [
@@ -16,9 +16,12 @@ export type Revision = {
   show_calls: boolean, show_streak: boolean, show_providers: boolean, show_categories: boolean,
 }
 export type Preview = Revision & { icon_url: string | null, shot_urls: string[] }
+export type TeamKey = { id: number, name: string, prefix: string, last_used_at: string | null, app_id?: number | null }
+/** Where an app's activity comes from: all of the team's calls, or only some of its API keys. */
+export type Usage = { source: 'team' | 'keys', keys?: TeamKey[] }
 export type ShowcaseApp = {
   id: number, org_id: number, status: 'pending' | 'approved' | 'rejected' | 'hidden', version: number,
-  live: Preview | null, pending: Preview | null, reject_reason: string,
+  usage?: Usage, live: Preview | null, pending: Preview | null, reject_reason: string,
   approved_at: string | null, created_at: string, updated_at: string,
 }
 export type Picture = { key: string, url: string }
@@ -79,4 +82,24 @@ export function moved<T>(list: T[], i: number, by: number): T[] {
   const out = list.slice()
   ;[out[i], out[j]] = [out[j]!, out[i]!]
   return out
+}
+
+/** One line for the list: where the app's activity comes from. */
+export function usageText(usage: Usage | undefined): string {
+  if (!usage || usage.source === 'team') return 'Activity: the whole team'
+  const names = (usage.keys || []).map(k => k.name)
+  return names.length ? 'Activity: API keys ' + names.join(', ') : 'Activity: API keys'
+}
+
+/** The usage form value for an entry: the source, and the linked key ids. */
+export function usageDraftOf(app: ShowcaseApp | null): { source: 'team' | 'keys', keyIds: number[] } {
+  const u = app && app.usage
+  return { source: u && u.source === 'keys' ? 'keys' : 'team', keyIds: ((u && u.keys) || []).map(k => k.id) }
+}
+
+/** Whether the usage form differs from what the entry has now. */
+export function usageChanged(app: ShowcaseApp | null, d: { source: string, keyIds: number[] }): boolean {
+  const now = usageDraftOf(app)
+  if (d.source !== now.source) return true
+  return d.source === 'keys' && [...d.keyIds].sort().join(',') !== [...now.keyIds].sort().join(',')
 }

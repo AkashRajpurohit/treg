@@ -113,6 +113,23 @@ def add_to_week(row: dict, delta: dict) -> dict:
             "categories": mix}
 
 
+def merge_weeks(weeks) -> list[Week]:
+    """Weeks of several sources (an app's API keys) as one: same-week rows add up."""
+    by_start: dict[date, Week] = {}
+    for w in weeks:
+        prev = by_start.get(w.week_start)
+        if prev is None:
+            by_start[w.week_start] = w
+            continue
+        mix = dict(prev.categories)
+        for k, n in w.categories.items():
+            mix[k] = mix.get(k, 0) + n
+        by_start[w.week_start] = Week(week_start=w.week_start, calls=prev.calls + w.calls,
+                                      active_days=prev.active_days | w.active_days,
+                                      providers=prev.providers | w.providers, categories=mix)
+    return [by_start[d] for d in sorted(by_start)]
+
+
 def call_tier(calls: int) -> str | None:
     for floor, label in CALL_TIERS:
         if calls >= floor:
@@ -215,8 +232,8 @@ def boards(apps: dict[int, tuple[Activity, Consent, int]]) -> dict[str, list[int
 # What a team submits. Checked here so the /showcase form, the dashboard and the staff API refuse
 # the same things. Text is stored as given and escaped wherever it is shown.
 
-# One app per team: activity is counted from the team's calls, so a team's numbers are its app's.
-MAX_APPS_PER_TEAM = 1
+# A team with several apps links each to its own API keys; an app without keys shows the team's calls.
+MAX_APPS_PER_TEAM = 5
 MAX_SHOTS = 4
 CATEGORIES: dict[str, str] = {
     "social-listening": "Social listening", "ads": "Ads", "sales": "Sales and leads",

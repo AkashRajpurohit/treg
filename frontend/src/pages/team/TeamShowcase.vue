@@ -2,7 +2,7 @@
 import { useDashboard } from '../../state/context'
 import Avatar from '../../components/ui/Avatar.vue'
 import { IMAGE_RULES, imageProblem, uploadImage } from '../../images'
-import { CATEGORIES, MAX_APPS, MAX_SHOTS, blankDraft, draftOf, moved, revisionOf, slotsUsed, statusOf } from './showcase'
+import { CATEGORIES, MAX_APPS, MAX_SHOTS, blankDraft, draftOf, moved, revisionOf, slotsUsed, statusOf, usageChanged, usageDraftOf, usageText } from './showcase'
 
 // The team's entries on the public showcase (/showcase): apply, edit, withdraw. Owners and admins
 // only (TeamPage shows the tab on canAdmin). Every name here starts with `sc` so it never shadows
@@ -21,7 +21,8 @@ export default {
     CATEGORIES, CONSENTS, MAX_APPS, MAX_SHOTS, IMAGE_RULES,
     scApps: [], scLoaded: false, scClosed: false, scErr: '', scMsg: '',
     scForm: null, scFormErr: '', scStale: false, scSaving: false,
-    scUpBusy: '', scUpErr: '', scUploadsOff: false, scConfirm: null,
+    scUpBusy: '', scUpErr: '', scUploadsOff: false, scConfirm: null, scRemoveConfirm: null,
+    scKeys: [], scKeysErr: '',
   }),
   computed: {
     scUsed() { return slotsUsed(this.scApps) },
@@ -32,6 +33,14 @@ export default {
   mounted() { this.scLoad() },
   methods: {
     scStatus: statusOf,
+    scUsageText: usageText,
+    async scLoadKeys() {
+      this.scKeys = []; this.scKeysErr = ''
+      try { this.scKeys = await this.api('/showcase/teams/' + this.activeOrgId + '/keys') }
+      catch (e) { this.scKeysErr = e.detail || 'Could not load the API keys (' + e.status + ').' }
+    },
+    scKeyTaken(k) { return k.app_id != null && (!this.scForm || k.app_id !== this.scForm.id) },
+    scKeyOwner(k) { const a = this.scApps.find(x => x.id === k.app_id); return a ? (a.pending || a.live || {}).name : 'another app' },
     async scLoad() {
       const id = this.activeOrgId
       if (!id) return
@@ -49,11 +58,14 @@ export default {
     },
     scNew() {
       this.scMsg = ''; this.scFormErr = ''; this.scUpErr = ''; this.scStale = false
-      this.scForm = { id: null, version: 0, live: false, draft: blankDraft() }
+      this.scForm = { id: null, version: 0, live: false, draft: blankDraft(), base: null, usage: usageDraftOf(null) }
+      this.scLoadKeys()
     },
     scEdit(app) {
       this.scMsg = ''; this.scFormErr = ''; this.scUpErr = ''; this.scStale = false
-      this.scForm = { id: app.id, version: app.version, live: !!app.approved_at, draft: draftOf(app) }
+      this.scForm = { id: app.id, version: app.version, live: !!app.approved_at, draft: draftOf(app), app,
+                      base: JSON.stringify(revisionOf(draftOf(app))), usage: usageDraftOf(app) }
+      this.scLoadKeys()
     },
     // After "this app changed": start again from what the server holds now.
     async scReloadForm() {
@@ -68,14 +80,32 @@ export default {
       this.scSaving = true; this.scFormErr = ''; this.scStale = false
       const fields = revisionOf(f.draft)
       const json = { 'content-type': 'application/json' }
+      const usage = { source: f.usage.source, key_ids: f.usage.source === 'keys' ? f.usage.keyIds : [] }
+      const usageNew = usageChanged(f.app || null, f.usage)
+      if (usage.source === 'keys' && !usage.key_ids.length) {
+        this.scFormErr = 'Pick at least one API key, or count the whole team.'; this.scSaving = false; return
+      }
       try {
+        // The fields are reviewed; where the activity comes from is applied at once.
+        let id = f.id, sent = false
         if (f.id === null) {
-          await this.api('/showcase/teams/' + this.activeOrgId + '/apps', { method: 'POST', headers: json, body: JSON.stringify(fields) })
+          const created = await this.api('/showcase/teams/' + this.activeOrgId + '/apps', { method: 'POST', headers: json, body: JSON.stringify(fields) })
+          // From here on the form edits the new entry, so a retry after a failed key step adds no second app.
+          Object.assign(f, { id: created.id, version: created.version, app: created, base: JSON.stringify(fields) })
+          id = created.id
           this.scMsg = 'Sent for review. Nothing is public until treg approves it.'
-        } else {
+          sent = true
+        } else if (JSON.stringify(fields) !== f.base) {
           await this.api('/showcase/apps/' + f.id, { method: 'PATCH', headers: json, body: JSON.stringify({ expected_version: f.version, fields }) })
           this.scMsg = f.live ? 'Change sent for review. The live version stays until treg approves the change.'
             : 'Change sent for review.'
+          sent = true
+        }
+        if (usageNew) {
+          await this.api('/showcase/apps/' + id + '/usage', { method: 'PUT', headers: json, body: JSON.stringify(usage) })
+          if (!sent) this.scMsg = 'Saved. The activity boards use it from the next hourly count.'
+        } else if (!sent) {
+          this.scFormErr = 'Nothing changed.'; return
         }
         this.scForm = null
         await this.scLoad()
@@ -92,6 +122,15 @@ export default {
         if (this.scForm && this.scForm.id === app.id) this.scForm = null
         await this.scLoad()
       } catch (e) { this.scErr = e.detail || 'Could not withdraw (' + e.status + ').' }
+    },
+    async scRemove(app) {
+      if (this.scRemoveConfirm !== app.id) { this.scRemoveConfirm = app.id; return }
+      this.scRemoveConfirm = null; this.scErr = ''; this.scMsg = ''
+      try {
+        await this.api('/showcase/apps/' + app.id + '/remove', { method: 'POST' })
+        this.scMsg = 'Removed from the showcase. Ask treg if you want it shown again.'
+        await this.scLoad()
+      } catch (e) { this.scErr = e.detail || 'Could not remove (' + e.status + ').' }
     },
     scClose() { if (!this.scSaving) { this.scForm = null; this.scFormErr = '' } },
     scPick(ref) { const input = this.$refs[ref]; if (input) input.click() },
@@ -130,14 +169,14 @@ export default {
       </p>
     </div>
     <div v-if="!scClosed" class="sc-slots">
-      <span class="sub" style="margin:0">One app per team</span>
+      <span class="sub" style="margin:0">{{scUsed}} of {{MAX_APPS}} used</span>
       <button class="btn primary sm" :disabled="scFull || !scLoaded" @click="scNew">＋ Apply with an app</button>
     </div>
   </div>
 
   <p v-if="scClosed" class="sub">The showcase is not open on this registry.</p>
   <template v-else>
-    <p v-if="scFull" class="tut-notice" role="status" style="margin:10px 0 0">Your team already lists its app. Withdraw it to apply with another. A rejected app does not count.</p>
+    <p v-if="scFull" class="tut-notice" role="status" style="margin:10px 0 0">Your team uses all {{MAX_APPS}} places. Withdraw or remove an entry to apply with another. Rejected entries do not count.</p>
     <div v-if="scErr" class="banner" role="alert" style="margin-top:10px">{{scErr}}</div>
     <div v-if="scMsg" class="tut-notice" role="status" style="margin-top:10px;display:flex;justify-content:space-between;gap:12px">
       <span>{{scMsg}}</span><button class="btn sm ico" aria-label="Dismiss" @click="scMsg=''">✕</button>
@@ -152,12 +191,15 @@ export default {
           <div class="sc-app-name"><b>{{(a.pending||a.live||{}).name}}</b>
             <span class="chip sc-chip" :class="scStatus(a).tone">{{scStatus(a).text}}</span></div>
           <div class="sub" style="margin:2px 0 0;font-size:12px">{{(a.pending||a.live||{}).tagline}}</div>
+          <div class="sub sc-usage" style="margin:2px 0 0;font-size:12px">{{scUsageText(a.usage)}}</div>
           <div v-if="a.status!=='rejected' && a.approved_at && a.reject_reason && !a.pending" class="sub" style="margin:4px 0 0;font-size:12px">Your last change was not approved: {{a.reject_reason}}</div>
         </div>
         <div class="row-actions sc-app-actions">
           <button class="btn sm" @click="scEdit(a)">Edit</button>
           <button v-if="!a.approved_at || a.pending" class="btn sm" :class="{danger:scConfirm===a.id}" @click="scWithdraw(a)">
             {{scConfirm===a.id ? 'Confirm withdraw' : (a.approved_at ? 'Withdraw change' : 'Withdraw')}}</button>
+          <button v-if="a.status==='approved'" class="btn sm" :class="{danger:scRemoveConfirm===a.id}" @click="scRemove(a)">
+            {{scRemoveConfirm===a.id ? 'Confirm remove' : 'Remove from showcase'}}</button>
         </div>
       </li>
     </ul>
@@ -237,6 +279,26 @@ export default {
               </template>
             </section>
 
+            <section class="sc-section" aria-labelledby="sc-usage-title">
+              <h3 id="sc-usage-title" class="lbl">Where its activity comes from</h3>
+              <p class="sub sc-hint" style="margin:0 0 8px">The activity boards count these calls. Saved at once, without review. A rotated key keeps counting through its replacement.</p>
+              <div class="sc-consent" role="radiogroup" aria-label="Activity source">
+                <label class="sc-check"><input v-model="scForm.usage.source" type="radio" value="team">
+                  <span><b>The whole team</b><span class="sub">Every call your team makes.</span></span></label>
+                <label class="sc-check"><input v-model="scForm.usage.source" type="radio" value="keys">
+                  <span><b>Only some API keys</b><span class="sub">For a team with more than one app.</span></span></label>
+              </div>
+              <div v-if="scForm.usage.source==='keys'" class="sc-keys">
+                <p v-if="scKeysErr" class="banner" role="alert">{{scKeysErr}}</p>
+                <p v-else-if="!scKeys.length" class="sub sc-hint">Your team has no API keys yet.</p>
+                <label v-for="k in scKeys" :key="k.id" class="sc-key" :class="{off:scKeyTaken(k)}">
+                  <input v-model="scForm.usage.keyIds" type="checkbox" :value="k.id" :disabled="scKeyTaken(k)" :aria-label="'API key ' + k.name">
+                  <span><b>{{k.name}}</b> <code v-if="k.prefix">{{k.prefix}}…</code>
+                    <span class="sub">{{scKeyTaken(k) ? 'counts for ' + scKeyOwner(k) : (k.last_used_at ? 'last used ' + k.last_used_at.slice(0,10) : 'not used yet')}}</span></span>
+                </label>
+              </div>
+            </section>
+
             <section class="sc-section" aria-labelledby="sc-consent-title">
               <h3 id="sc-consent-title" class="lbl">What the showcase may show</h3>
               <p class="sub sc-hint" style="margin:0 0 8px">Upvotes always show. Each item below is off until you turn it on. Only rounded figures are shown, never exact counts, spend or your team's name.</p>
@@ -311,6 +373,11 @@ export default {
 .sc-check input { margin-top:2px; }
 .sc-check .sub { display:block; margin:2px 0 0; font-size:12px; }
 .sc-off { font-size:12px; margin:0; }
+.sc-keys { display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+.sc-key { display:flex; gap:10px; align-items:center; padding:8px 12px; border:1px solid var(--line); border-radius:10px; font-size:13px; cursor:pointer; }
+.sc-key.off { opacity:.55; cursor:default; }
+.sc-key code { font:12px var(--mono, monospace); color:var(--muted); }
+.sc-key .sub { margin-left:6px; font-size:12px; }
 .sc-foot { display:flex; justify-content:flex-end; gap:10px; padding:12px 20px; border-top:1px solid var(--line); background:var(--surface); }
 @media (max-width:700px) { .sc-grid, .sc-consent { grid-template-columns:1fr; } .sc-app { flex-wrap:wrap; } .sc-body { padding:14px 14px 6px; } }
 </style>

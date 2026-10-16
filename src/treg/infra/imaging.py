@@ -3,8 +3,8 @@
 The only module that decodes user images. Decoding is bounded (`domain.images.MAX_PIXELS` before the
 pixels are loaded), only PNG, JPEG and WebP decoders are allowed, and the output is a fresh file
 written from the pixels: metadata, colour profiles and anything appended to the original are gone.
-Square kinds are fitted onto a transparent square (never stretched); wide kinds are cropped to their
-shape from the top, the way the /showcase gallery frames a page.
+Square kinds are fitted onto a transparent square; the others keep their shape and are scaled down to
+their longest side. Nothing is stretched or cropped; only a square is scaled up to fill its side.
 """
 from __future__ import annotations
 
@@ -28,15 +28,19 @@ class Rendered:
 
 
 def _fit_square(img: Image.Image, size: int) -> Image.Image:
-    img = img.copy()
-    img.thumbnail((size, size), Image.Resampling.LANCZOS)
+    """Scaled (up or down) until its longest side fills the square, then centred on it."""
+    scale = size / max(img.size)
+    img = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))),
+                     Image.Resampling.LANCZOS)
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     canvas.paste(img, ((size - img.width) // 2, (size - img.height) // 2), img)
     return canvas
 
 
-def _cover_top(img: Image.Image, width: int, height: int) -> Image.Image:
-    return ImageOps.fit(img, (width, height), Image.Resampling.LANCZOS, centering=(0.5, 0.0))
+def _fit_long(img: Image.Image, size: int) -> Image.Image:
+    img = img.copy()
+    img.thumbnail((size, size), Image.Resampling.LANCZOS)
+    return img
 
 
 def _encode(img: Image.Image, fmt: str) -> bytes:
@@ -62,8 +66,7 @@ def render(kind: Kind, data: bytes) -> Rendered:
         raise ImageRejected("unreadable", "the image could not be read") from exc
     rendered: list[tuple[Output, bytes]] = []
     for out in kind.outputs:
-        square = out.width == out.height
-        drawn = _fit_square(img, out.width) if square else _cover_top(img, out.width, out.height)
+        drawn = _fit_square(img, out.size) if out.square else _fit_long(img, out.size)
         if out.fmt != "png":   # no alpha in the lossy output: flatten onto white, never onto black
             flat = Image.new("RGBA", drawn.size, (255, 255, 255, 255))
             drawn = Image.alpha_composite(flat, drawn).convert("RGB")

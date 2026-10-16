@@ -3028,6 +3028,31 @@
       "GET",
       "HEAD"
     ],
+    "name": "showcase_team_keys",
+    "path": "/showcase/teams/{org_id}/keys"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "PUT"
+    ],
+    "name": "showcase_set_usage",
+    "path": "/showcase/apps/{app_id}/usage"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "POST"
+    ],
+    "name": "showcase_remove",
+    "path": "/showcase/apps/{app_id}/remove"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
     "name": "staff_queue",
     "path": "/admin/showcase/apps"
   },

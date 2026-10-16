@@ -7,6 +7,7 @@ buckets). Callers hold no database connection while these run (AGENTS.md rule 3)
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Protocol
 from urllib.parse import urlsplit
 
@@ -22,6 +23,7 @@ class MediaStore(Protocol):
     async def put(self, bucket: Bucket, key: str, body: bytes, content_type: str) -> None: ...
     async def get(self, bucket: Bucket, key: str) -> bytes | None: ...
     async def delete(self, bucket: Bucket, key: str) -> None: ...
+    async def listing(self, bucket: Bucket, prefix: str) -> list[tuple[str, datetime]]: ...
 
 
 def configured(settings) -> bool:
@@ -64,6 +66,17 @@ class S3MediaStore:
             await obstore.delete_async(self._clients[bucket], key)
         except Exception as exc:
             raise MediaStoreError(f"delete failed ({type(exc).__name__})") from None
+
+    async def listing(self, bucket: Bucket, prefix: str) -> list[tuple[str, datetime]]:
+        """Every (key, last modified) under `prefix`."""
+        import obstore
+        out: list[tuple[str, datetime]] = []
+        try:
+            async for batch in obstore.list(self._clients[bucket], prefix=prefix, chunk_size=1000):
+                out.extend((item["path"], item["last_modified"]) for item in batch)
+        except Exception as exc:
+            raise MediaStoreError(f"list failed ({type(exc).__name__})") from None
+        return out
 
 
 def open_media_store(settings) -> S3MediaStore | None:

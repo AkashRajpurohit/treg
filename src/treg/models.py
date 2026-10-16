@@ -148,7 +148,7 @@ class Org(SQLModel, table=True):
     # flag because the moment the team objected is the processing record. Appended last, like the
     # column above, so create_all schemas match the migrated shape.
     archive_opt_out_at: NaiveUTC | None = Field(default=None)
-    # The team's picture: a media key (`team_avatar/<sha256>.png`) in the public media bucket, or
+    # The team's picture: a media key (`img/team_avatar/<sha256>.webp`) in the public media bucket, or
     # NULL for initials. Set by owners and admins through `application.images`. Appended last.
     avatar_key: str | None = Field(default=None)
 
@@ -221,7 +221,7 @@ class User(SQLModel, table=True):
     # so we never generate codes for the majority who never look. See referrals.py.
     referral_code: str | None = Field(default=None, index=True, unique=True)
     created_at: NaiveUTC = Field(default_factory=_now)
-    # This person's picture: a media key (`user_avatar/<sha256>.png`) in the public media bucket, or
+    # This person's picture: a media key (`img/user_avatar/<sha256>.webp`) in the public media bucket, or
     # NULL for initials. Set by the person themselves through `application.images`. Appended last.
     avatar_key: str | None = Field(default=None)
 
@@ -2225,6 +2225,7 @@ class ShowcaseApp(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint(f"status IN {SHOWCASE_STATUSES}", name="ck_showcaseapp_status"),
         CheckConstraint("version >= 0", name="ck_showcaseapp_version"),
+        CheckConstraint("usage_source IN ('team', 'keys')", name="ck_showcaseapp_usage_source"),
         Index("ix_showcaseapp_status_id", "status", "id"),
     )
     id: int | None = Field(default=None, primary_key=True)
@@ -2244,6 +2245,9 @@ class ShowcaseApp(SQLModel, table=True):
     show_streak: bool = Field(default=False)       # active-day streak
     show_providers: bool = Field(default=False)    # providers used
     show_categories: bool = Field(default=False)   # capability mix
+    # Where the app's activity comes from: all of the team's calls, or only those made with the API
+    # keys in `ShowcaseAppKey`. Set by the team's owner or admin and applied at once (not reviewed).
+    usage_source: str = Field(default="team")
     # none_as_null: a cleared proposal is SQL NULL, not JSON null, so "pending IS NOT NULL" means
     # "something waits for review".
     pending: dict | None = Field(default=None, sa_column=Column(JSON(none_as_null=True), nullable=True))
@@ -2274,18 +2278,29 @@ class ShowcaseAppEvent(SQLModel, table=True):
     created_at: NaiveUTC = Field(default_factory=_now)
 
 
+class ShowcaseAppKey(SQLModel, table=True):
+    """An API key whose calls are an app's activity (when its `usage_source` is "keys"). A key
+    belongs to at most one app. Written only by `application.showcase`; it goes with the app, and
+    team deletion removes it before the team's keys."""
+
+    api_key_id: int = Field(primary_key=True, foreign_key="apikey.id", ondelete="CASCADE")
+    app_id: int = Field(foreign_key="showcaseapp.id", ondelete="CASCADE", index=True)
+    created_at: NaiveUTC = Field(default_factory=_now)
+
+
 class ShowcaseWeek(SQLModel, table=True):
-    """One team's activity in one UTC week (Monday start), from its call records, kept while the team
-    lists an approved /showcase app. Every app of the team shows it: the calls are the team's. Written
-    only by `application.showcase.refresh_activity`, which adds new calls as they arrive (the current
-    week's row grows until the week ends); team deletion removes it with the team. Rows add up
-    exactly: the leaderboard sums the last four complete weeks and unions their provider lists."""
+    """The activity of one source in one UTC week (Monday start): a team's calls (`api_key_id` 0) or
+    one API key's, kept while an approved /showcase app uses that source. Written only by
+    `application.showcase.refresh_activity`, which adds new calls as they arrive (the current week's
+    row grows until the week ends); team deletion removes it with the team. Rows add up exactly: the
+    leaderboard sums the last four complete weeks and unions their provider lists."""
 
     __table_args__ = (
         CheckConstraint("calls >= 0", name="ck_showcaseweek_calls"),
         CheckConstraint("active_days BETWEEN 0 AND 127", name="ck_showcaseweek_active_days"),
     )
     org_id: int = Field(primary_key=True, foreign_key="org.id", ondelete="CASCADE")
+    api_key_id: int = Field(primary_key=True)  # 0 = the whole team; no foreign key, like ApiKeySpendDay
     week_start: str = Field(primary_key=True)  # YYYY-MM-DD, a Monday, UTC
     calls: int = Field(default=0)
     active_days: int = Field(default=0)  # bit d set = a call on day d of the week (0 = Monday)
@@ -2295,11 +2310,13 @@ class ShowcaseWeek(SQLModel, table=True):
 
 
 class ShowcaseCursor(SQLModel, table=True):
-    """How far `application.showcase.refresh_activity` has counted one team's calls: the last
+    """How far `application.showcase.refresh_activity` has counted one source's calls: the last
     `callrecord.id` folded into its week rows. Each run reads only calls after it, over the
-    `(org_id, id)` index, so no run re-reads a team's history. Same writers as `ShowcaseWeek`."""
+    `(org_id, id)` index for a team or `(org_id, api_key_id, id)` for a key, so no run re-reads a
+    source's history. Same writers as `ShowcaseWeek`."""
 
     org_id: int = Field(primary_key=True, foreign_key="org.id", ondelete="CASCADE")
+    api_key_id: int = Field(primary_key=True)  # 0 = the whole team
     through_id: int = Field(default=0, sa_column=Column(BigInteger, nullable=False))
     updated_at: NaiveUTC = Field(default_factory=_now)
 

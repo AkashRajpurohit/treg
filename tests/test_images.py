@@ -56,20 +56,34 @@ def test_a_redraw_drops_what_was_hidden_and_has_a_stable_name():
     original = picture(500, 300, "JPEG", exif=exif.tobytes()) + b"<script>alert(1)</script>"
     out = render(kind, original)
     (key, body, content_type), = out.files
-    assert key == f"showcase_icon/{out.sha256}.png" and content_type == "image/png"
+    assert key == f"img/showcase_icon/{out.sha256}.png" and content_type == "image/png"
     assert b"secret description" not in body and b"<script>" not in body
     with Image.open(BytesIO(body)) as redrawn:
-        assert redrawn.size == (256, 256) and redrawn.mode == "RGBA"
+        assert redrawn.size == (512, 512) and redrawn.mode == "RGBA"
         assert redrawn.getpixel((0, 0))[3] == 0          # fitted onto a transparent square, not stretched
+        assert redrawn.getpixel((0, 256))[3] == 255      # and scaled up to fill its width
     assert render(kind, original).sha256 == out.sha256    # same picture, same name
 
 
-def test_screenshots_get_two_sizes_cropped_from_the_top():
-    out = render(rules.KINDS["showcase_shot"], picture(1600, 1200, "PNG"))
+def test_screenshots_keep_their_shape_desktop_or_phone():
+    kind = rules.KINDS["showcase_shot"]
+    out = render(kind, picture(1600, 1200, "PNG"))
     keys = [k for k, _, _ in out.files]
-    assert keys == [f"showcase_shot/{out.sha256}.webp", f"showcase_shot/{out.sha256}-640.webp"]
-    sizes = [Image.open(BytesIO(b)).size for _, b, _ in out.files]
-    assert sizes == [(1280, 800), (640, 400)]
+    assert keys == [f"img/showcase_shot/{out.sha256}.webp", f"img/showcase_shot/{out.sha256}-640.webp"]
+    assert [Image.open(BytesIO(b)).size for _, b, _ in out.files] == [(1280, 960), (640, 480)]
+    phone = render(kind, picture(1080, 2400, "PNG"))
+    assert [Image.open(BytesIO(b)).size for _, b, _ in phone.files] == [(576, 1280), (288, 640)]
+    small = render(kind, picture(800, 600, "PNG"))       # never enlarged
+    assert Image.open(BytesIO(small.files[0][1])).size == (800, 600)
+    with pytest.raises(rules.ImageRejected):
+        render(kind, picture(1000, 150, "PNG"))           # a sliver
+
+
+def test_avatars_are_webp():
+    out = render(rules.KINDS["user_avatar"], picture(300, 300, "JPEG"))
+    (key, body, content_type), = out.files
+    assert key.startswith("img/user_avatar/") and key.endswith(".webp") and content_type == "image/webp"
+    assert Image.open(BytesIO(body)).size == (256, 256)
 
 
 async def _tim() -> tuple[User, int]:
