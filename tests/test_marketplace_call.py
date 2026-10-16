@@ -3214,6 +3214,29 @@ def test_thecompaniesapi_simplified_is_free_only_where_declared():
     assert call_settle._observed_cost_micro(other, b'{"pattern":"{first}"}') != 0
 
 
+async def test_a_simplified_thecompaniesapi_search_holds_nothing(clients: AsyncClient, monkeypatch):
+    """`simplified=true` returns reduced records for zero credits and settles 0, but the hold still
+    priced the requested `size`: a zero price ceiling or a drained balance refused a free call with
+    a 402. The full search keeps its per-company hold."""
+    monkeypatch.setenv("TREG_PLATFORM_KEY_THECOMPANIESAPI", "PLATFORM-TCA-KEY")
+    monkeypatch.setenv("TREG_PLATFORM_PROVIDERS", "thecompaniesapi")
+    get_settings.cache_clear()
+    monkeypatch.setattr(call_service, "relay", _fake_relay(
+        200, b'{"companies":[{"domain":"a.example"},{"domain":"b.example"}]}'))
+    ep = "thecompaniesapi.companies.search"
+    free = {"query": "[]", "size": "50", "simplified": "true"}
+    r = await clients.get(f"/call/{ep}", params=free, headers={"X-Treg-Route-Max-Cost": "0"})
+    assert r.status_code == 200, r.text
+    row = await _telemetry(clients)
+    assert not row["cost_estimated_micro"] and row["cost_observed_micro"] == row["cost_charged_micro"] == 0
+    org_id = (await clients.get("/orgs")).json()[0]["org_id"]
+    async with session_maker() as db:
+        await ledger.reserve(db, org_id, "drain", await _balance(clients))
+    assert (await clients.get(f"/call/{ep}", params=free)).status_code == 200
+    paid = await clients.get(f"/call/{ep}", params={**free, "simplified": "false"})
+    assert paid.status_code == 402 and paid.json()["detail"]["error"] == "insufficient_balance"
+
+
 def test_icypeas_profile_url_miss_settles_at_zero():
     """No adapter reads these bodies, so the endpoint's `expect` rule is what makes a miss free."""
     for endpoint in ("icypeas.people.profile.url", "icypeas.companies.profile.url"):

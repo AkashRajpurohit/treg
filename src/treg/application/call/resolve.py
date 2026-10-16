@@ -769,6 +769,15 @@ def _octen_rates_or_fail(endpoint_id: str, cost: dict | None) -> dict[str, int]:
         ) from exc
 
 
+def _thecompaniesapi_simplified(endpoint_id: str, query) -> bool:
+    """`simplified=true` returns a reduced record for zero credits on the endpoints that declare
+    it, and settle bills it 0 (settle.py). Holding the requested `size` refused a free call with a
+    402 on a low balance or a price ceiling."""
+    ep = catalog_store.load().by_id.get(endpoint_id) or {}
+    declared = (ep.get("input") or {}).get("queryParams") or {}
+    return "simplified" in declared and str(query.get("simplified")).lower() == "true"
+
+
 def _marketplace_pricing(
     provider: str, endpoint_id: str, cost: dict | None, query, body: bytes
 ) -> tuple[int, int]:
@@ -788,6 +797,8 @@ def _marketplace_pricing(
         query_values = dict(query.multi_items()) if isinstance(query, QueryValues) else dict(query)
         return enrichlayer.estimate_micro(endpoint_id, cost, query_values, credit)
     if not cost:
+        return 0, 0
+    if provider == "thecompaniesapi" and _thecompaniesapi_simplified(endpoint_id, query):
         return 0, 0
     if provider == "tavily" and endpoint_id in _TAVILY_ENDPOINTS:
         return _tavily_pricing(endpoint_id, cost, body)

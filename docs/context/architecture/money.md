@@ -866,7 +866,7 @@ Provider-specific calculation stays outside the faithful relay.
 | Icypeas bulk (`profile.url.bulk`, `people.identity.resolve.bulk`, `scrape.bulk`) | Rows in `data[]` whose `status` is `FOUND`; a company scrape (`type: "company"` in the request body) bills at 0.5 credit a hit, other bulk rows at 1 credit; `NOT_FOUND` rows are free |
 | Serpstat | An `error` envelope (bad token, exhausted limit, "Data not found") is free; otherwise rows in `result.data[]`, or `result.data.top[]` for `getKeywordTop`, floored at the documented 1-credit minimum on an empty list; any other response shape settles at the estimate |
 | SpyFu | Rows in `results[]` at the per-row price, capped at the hold; an empty list is free and any other shape settles at the estimate |
-| TheCompaniesAPI companies search | `simplified=true` is free on endpoints that declare it in `input.queryParams`; otherwise one credit per company in `companies[]`, capped at the requested `size` |
+| TheCompaniesAPI companies search | `simplified=true` is free on endpoints that declare it in `input.queryParams`, and reserves nothing (`resolve._thecompaniesapi_simplified`), so a low balance or a price ceiling never refuses it; otherwise one credit per company in `companies[]`, capped at the requested `size` |
 | Findymail employee search | One finder credit per contact in the returned list (`_rows_billed_micro`); an empty list is a free miss where the estimate used to bill the hold |
 | You.com Contents | Reserve for each requested URL, then count objects in the returned bare array at the frozen per-page price, capped at the hold. An unreadable response keeps the estimate. Search modes that may trigger live page fetches stay BYOK because the response does not identify the billed pages |
 
