@@ -3455,6 +3455,7 @@ _SITEMAP_PAGES: tuple[tuple[str, str, str], ...] = (
     ("/connectors/claude", "claude-connector.html", "0.6"),
     ("/people-search", "people-search.html", "0.8"),
     ("/leads-signals", "leads-signals.html", "0.8"),
+    ("/web-access", "web-access.html", "0.8"),
     ("/grokbot", "grokbot.html", "0.8"),
     ("/fable", "fable-gtm.html", "0.8"),
     ("/gpt6", "astra.html", "0.8"),
@@ -3970,6 +3971,13 @@ async def leads_signals_page(request: Request):
     return _static_page("leads-signals.html", request)
 
 
+@app.get("/web-access", include_in_schema=False)
+async def web_access_page(request: Request):
+    """Landing page for the web-access launch ("Claude for Free Web Access"). Served like /leads-signals;
+    its benchmark and price comparison read /web-arena/api/leaderboard and fall back to a bundled snapshot."""
+    return _static_page("web-access.html", request)
+
+
 @app.get("/gtm-engineering", include_in_schema=False)
 async def gtm_engineering_page(request: Request):
     """The GTM-engineering hub: the seven jobs a GTM engineer runs, each linked to its existing
@@ -4080,6 +4088,8 @@ async def jev_xboost_judge(request: Request, db: AsyncSession = Depends(get_sess
 # chronological (newest first), not alphabetical.
 _BLOG_LAUNCHES: list[tuple[str, str, str, str]] = [
     # (slug, title, date, one-line blurb)
+    ("/web-access", "Claude for Free Web Access", "2026-10-15",
+     "Free web search and page reads for your agent; when free fails, the next vendor answers."),
     ("/showcase", "Built with treg", "2026-10-12",
      "Apps whose agents reach the outside world through treg, the people who made them, and their launch posts."),
     ("/gtm-engineering", "The GTM Engineering Playbook", "2026-09-30",

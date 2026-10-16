@@ -76,6 +76,14 @@ async def test_web_access_skill_is_served_and_advertised(clients):
     assert f"description: {idx['description']}" in r.text
 
 
+async def test_web_access_landing_page_installs_the_skill(clients):
+    """The /web-access launch page is served with its placeholders filled and points at the skill it sells."""
+    r = await clients.get("/web-access")
+    assert r.status_code == 200 and "{BASE}" not in r.text
+    assert "npx skills add superdesigndev/treg --skill web-access" in r.text
+    assert "/web-arena/api/leaderboard" in r.text
+
+
 async def test_jev_memory_skill_is_served_but_opt_in(clients):
     """The Claude Code memory mod as a skill, served by URL but kept out of the index, so install.sh
     never installs it unasked. It points at the mod in the repo, so that folder has to exist where

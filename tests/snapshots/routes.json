@@ -1050,6 +1050,15 @@
       "GET",
       "HEAD"
     ],
+    "name": "web_access_page",
+    "path": "/web-access"
+  },
+  {
+    "kind": "APIRoute",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
     "name": "gtm_engineering_page",
     "path": "/gtm-engineering"
   },
