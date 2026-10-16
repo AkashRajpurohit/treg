@@ -384,6 +384,8 @@ endpoints:
   test_request: {queryParams: {"company_domain": "microsoft.com", "first_name": "Satya", "last_name": "Nadella"}}
   cost:
     type: per_success
+    bills_miss: true
+    note: Enrichlayer charges the 2 credits for every answered lookup, including one that finds no profile.
     value: 2
     currency: credit
     per: 1
@@ -578,6 +580,8 @@ endpoints:
   test_request: {queryParams: {"email": "satyan@microsoft.com"}}
   cost:
     type: per_success
+    bills_miss: true
+    note: Enrichlayer charges the 3 credits for every answered lookup, including one whose profile URLs are all null.
     value: 3
     currency: credit
     per: 1

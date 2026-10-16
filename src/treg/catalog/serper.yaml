@@ -176,7 +176,9 @@ endpoints:
         autocorrect: {type: boolean, required: false, default: true}
       note: "Answers arrive in news."
     test_request: {body: {q: "OpenAI", gl: us, hl: en}}
-    cost: *one_credit
+    cost:
+      <<: *one_credit
+      note: "One credit per search, including one that answers an empty `news` list (live: an empty news query reported credits 1)."
     verified: '2026-09-24'
     added: '2026-09-24'
     example_response: examples/serper.google.serp.news.json
@@ -208,7 +210,7 @@ endpoints:
     cost:
       <<: *one_credit
       value: 2
-      note: "Two credits per successful 40-result Shopping response, confirmed by response.credits and the account balance delta."
+      note: "Two credits per 40-result Shopping response, confirmed by response.credits and the account balance delta; an empty `shopping` list is charged the same."
     verified: '2026-09-24'
     added: '2026-09-24'
     example_response: examples/serper.google.serp.shopping.json

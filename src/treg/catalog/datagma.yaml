@@ -69,7 +69,8 @@ endpoints:
       queryParams: {data: datagma.com, fullName: Raphael Azot, companyPremium: false, companyFull: false, personFull: false, phoneFull: false, deepTraffic: false, debug: false}
     cost:
       <<: *one_credit
-      note: Datagma reports the exact charge in creditBurn. A successful basic-person enrichment used one credit.
+      bills_miss: true
+      note: Datagma reports the exact charge in creditBurn. A successful basic-person enrichment used one credit, and so does an answer with no person (`person.basic.name` null), which Datagma also charges.
     verified: '2026-09-18'
     added: '2026-09-18'
     example_response: examples/datagma.people.enrich.json
@@ -98,7 +99,8 @@ endpoints:
       queryParams: {data: algolia.com, companyPremium: true, companyFull: true, personFull: false, phoneFull: false, deepTraffic: false, debug: false}
     cost:
       <<: *one_credit
-      note: Datagma reports the exact charge in creditBurn. A successful premium + full company enrichment used one credit.
+      bills_miss: true
+      note: Datagma reports the exact charge in creditBurn. A successful premium + full company enrichment used one credit, and an answer with no company is charged too.
     verified: '2026-09-18'
     added: '2026-09-18'
     example_response: examples/datagma.companies.enrich.json

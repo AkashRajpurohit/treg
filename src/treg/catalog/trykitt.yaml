@@ -50,8 +50,8 @@ endpoints:
         type: string
         required: false
     bodyType: json
-    note: Only found verified B2B emails are charged; email=no-results-found is a
-      free miss. Found emails include Kitt verification. Base rate for the first million
+    note: Every found email is charged, including one Kitt rates valid-risky rather
+      than valid (read `validity` before outreach); email=no-results-found is a free miss. Found emails include Kitt verification. Base rate for the first million
       finds per billing period; subsequent finds are documented at $0.0025. Billing
       period starts on the day of first credit purchase. Platform settlement uses
       credits.jobCredits in USD, including explicit zero; missing/null billing falls
@@ -77,8 +77,8 @@ endpoints:
     source_url: https://trykitt.ai/pricing
     checked: '2026-09-09'
     confidence: verified
-    note: Only found verified B2B emails are charged; email=no-results-found is a
-      free miss. Found emails include Kitt verification. Base rate for the first million
+    note: Every found email is charged, including one Kitt rates valid-risky rather
+      than valid (read `validity` before outreach); email=no-results-found is a free miss. Found emails include Kitt verification. Base rate for the first million
       finds per billing period; subsequent finds are documented at $0.0025. Billing
       period starts on the day of first credit purchase. Platform settlement uses
       credits.jobCredits in USD, including explicit zero; missing/null billing falls

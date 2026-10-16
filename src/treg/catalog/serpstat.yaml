@@ -126,7 +126,7 @@ endpoints:
       source_url: https://serpstat.com/pay/
       checked: '2026-07-28'
       confidence: documented
-      note: 1 API credit per returned keyword — `size` (default 100, max 1,000) is the cost dial, and an empty result still bills the 1-credit minimum.
+      note: 1 API credit per returned keyword — `size` (default 100, max 1,000) is the cost dial, and an empty result still bills the 1-credit minimum. An `error` envelope, including 32017 "Data not found" for a domain or keyword Serpstat has no data on, costs you nothing (Serpstat charges treg one credit for it).
     docs_url: https://api-docs.serpstat.com/docs/serpstat-public-api/
 
   - id: serpstat.google.domain.competitors
@@ -233,7 +233,7 @@ endpoints:
       source_url: https://serpstat.com/pay/
       checked: '2026-07-28'
       confidence: documented
-      note: 1 API credit per returned keyword — `size` (default 100, max 1,000) is the cost dial, and an empty result still bills the 1-credit minimum.
+      note: 1 API credit per returned keyword — `size` (default 100, max 1,000) is the cost dial, and an empty result still bills the 1-credit minimum. An `error` envelope, including 32017 "Data not found" for a domain or keyword Serpstat has no data on, costs you nothing (Serpstat charges treg one credit for it).
     docs_url: https://api-docs.serpstat.com/docs/serpstat-public-api/7yidbv07n5q9u-get-related-keywords
 
   - id: serpstat.google.serp.organic

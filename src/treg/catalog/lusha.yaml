@@ -112,6 +112,7 @@ endpoints:
       means: "`results[0].error.code == NOT_FOUND` (0 credits) or a matched profile with no `phones` key (1 credit) — Lusha has no number; do not retry the same identifier"
     cost:
       type: per_success
+      bills_miss: true
       value: 6
       currency: credit
       per: 1

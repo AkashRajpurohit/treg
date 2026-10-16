@@ -46,7 +46,7 @@ source:
 #     named fields), `zero_trace` (Enterprise only).
 
 
-limits: "concurrency and hourly throughput scale with plan"
+limits: "concurrency and hourly throughput scale with plan. SerpApi bills every search that completes (search_metadata.status Success), including one that returns no results; an errored search is free. treg charges that empty search too, unless the tool's routing adapter reads it as a miss."
 pricing_url: https://serpapi.com/pricing  # One request = one billed search regardless of result count. No pay-as-you-go; unused searches reset monthly. Throughput capped at ~20% of monthly volume per hour.; free tier: 2
 endpoints:
   - id: serpapi.google.serp.organic

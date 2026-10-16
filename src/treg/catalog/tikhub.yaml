@@ -12,6 +12,13 @@ source:
 # page: it is machine-readable, free to call, and re-checkable, which is what earns every price in
 # this file `confidence: verified`.
 pricing_url: https://api.tikhub.io/api/v1/tikhub/user/get_all_endpoints_info
+# TikHub bills every 2xx it answers, and says so in the body ("This request will incur a charge."):
+# a user that does not exist, an empty video list, a `status: false` payload or a validation error
+# inside a 200 is charged at the endpoint's price: the account's daily usage counter counts misses
+# among its paid requests. Only an answer whose message says it is not charged settles at zero
+# (settle.py).
+limits: "Every endpoint is rate-limited to 10 requests/second. Every 2xx is charged at the endpoint's price, including a not-found user, an empty list or an error code inside the 200; only an answer whose message says it is not charged is free."
+bills_miss: true
 
 endpoints:
   # --- TikTok -----------------------------------------------------------------------------------
