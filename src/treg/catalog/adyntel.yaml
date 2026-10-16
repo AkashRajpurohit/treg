@@ -172,6 +172,8 @@ endpoints:
     test_request: {body: {company_domain: gymshark.com}}
     example_response: examples/adyntel.tiktok-ads.library.search.company.json
     miss: {status: 204, means: "No matching ads were returned."}
+    # a failed lookup can answer 200 with an `exc_type` object; Adyntel does not bill failed lookups
+    expect: {json_path: exc_type, equals: null}
     cost:
       <<: *one_credit
       settle: modifiers
