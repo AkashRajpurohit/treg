@@ -999,16 +999,25 @@ var BOARD = (function () {
     var on = tabs.querySelector('[aria-selected="true"]');
     if (on) { mark.style.width = on.offsetWidth + 'px'; mark.style.transform = 'translateX(' + on.offsetLeft + 'px)'; }
   }
+  // An upvote redraws only its own button, never the list (which would replay every row's fade-in),
+  // and a button ignores clicks while its vote is on the way, so answers cannot cross.
+  var sending = {};
+  function paintVote(id) {
+    var b = list.querySelector('.vote[data-id="' + id + '"]');
+    if (b) b.outerHTML = voteHtml(byId[id]);
+  }
   function cast(id) {
     if (!me.signed_in) { track('showcase_vote_signin', { app: id }); window.tregSigninHere('#leaderboard'); return; }
     if (!me.can_vote) { say('Verify your email to upvote.'); return; }
+    if (sending[id]) return;
     var a = byId[id], before = !!mine[id], up = !before, was = a.upvotes;
-    a.upvotes += up ? 1 : -1; mine[id] = up; paint();
+    sending[id] = true; a.upvotes += up ? 1 : -1; mine[id] = up; paintVote(id);
     track('showcase_vote', { app: id, up: up });
     fetch('/showcase/vote', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, up: up }) })
       .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) throw new Error(d.detail || 'upvote failed'); return d; }); })
-      .then(function (d) { a.upvotes = d.upvotes; paint(); if (!up) say('Your upvote is removed.'); })
-      .catch(function (e) { a.upvotes = was; mine[id] = before; paint(); say(e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.'); });
+      .then(function (d) { a.upvotes = d.upvotes; if (!up) say('Your upvote is removed.'); })
+      .catch(function (e) { a.upvotes = was; mine[id] = before; say(e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.'); })
+      .then(function () { sending[id] = false; paintVote(id); });
   }
   list.addEventListener('click', function (e) {
     var b = e.target.closest('.vote');
