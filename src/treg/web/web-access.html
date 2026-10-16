@@ -166,7 +166,7 @@
   .rel:hover { box-shadow: 0 2px 4px rgba(20,18,12,.06), 0 14px 30px -10px rgba(20,18,12,.16); }
   .rel b { display: block; font-size: 15px; margin-bottom: 4px; }
   .rel span { font-size: 13px; color: var(--muted); }
-  #duel-sec, #route, #jobs, #bench { scroll-margin-top: 70px; }
+  #duel-sec, #route, #jobs { scroll-margin-top: 70px; }
   :root { --gold: #E3B935; --gold-soft: #FFF7D6; --paper: #fff; --red-soft: rgba(192,54,47,.10); }
 
   /* ---------- hero film: free vs paid ---------- */
@@ -388,33 +388,6 @@
   .plats .row span { display: inline-flex; align-items: center; gap: 7px; background: #fff; border-radius: 999px; padding: 7px 13px 7px 9px; font-size: 13px; font-weight: 500; box-shadow: 0 1px 2px rgba(20,18,12,.05), inset 0 0 0 1px var(--line); }
   .plats .row img { width: 16px; height: 16px; }
 
-  /* ---------- routed by real-time benchmarks ---------- */
-  .rb { max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: 14px; }
-  .rb > * { min-width: 0; }
-  .stat { background: var(--gold-soft); border-radius: 18px; padding: 20px 22px; box-shadow: inset 0 0 0 1.5px #F0E3A8; display: flex; flex-direction: column; gap: 6px; }
-  .stat .sh { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; }
-  .stat .sh img { width: 24px; height: 24px; border-radius: 6px; }
-  .stat .sh em { margin-left: auto; font-style: normal; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
-  .stat .big { font-family: var(--pixel); font-size: 64px; line-height: 1; letter-spacing: -.02em; margin-top: auto; padding-top: 18px; }
-  .stat .big small { font-size: .42em; color: var(--muted); margin-left: 4px; }
-  .stat .bar { height: 7px; border-radius: 4px; background: #F1E6B8; overflow: hidden; margin: 6px 0 4px; }
-  .stat .bar i { display: block; height: 100%; width: 0; background: var(--ink); border-radius: 4px; transition: width 1s cubic-bezier(.3,.7,.3,1); }
-  .stat .meta { font-family: var(--mono); font-size: 12px; color: #6A6864; }
-  .order { background: var(--paper); border-radius: 18px; padding: 20px 22px; box-shadow: 0 1px 2px rgba(20,18,12,.05), 0 14px 34px -22px rgba(20,18,12,.25); }
-  .order h3 { font-family: var(--display); font-weight: 500; font-size: 17px; letter-spacing: -.01em; margin: 0 0 12px; }
-  .order ol { list-style: none; margin: 0; padding: 0; counter-reset: o; }
-  .order li { counter-increment: o; display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
-  .order li:first-child { border-top: 0; padding-top: 0; }
-  .order li::before { content: counter(o); width: 22px; height: 22px; border-radius: 50%; background: var(--card); display: grid; place-items: center; font-family: var(--mono); font-size: 11.5px; color: #5E5C58; }
-  .order li b { font-weight: 600; }
-  .order li span { color: var(--muted); display: block; font-size: 12.5px; }
-  .order li.key::before { background: var(--green); color: #fff; }
-  .lb-cap { text-align: center; color: var(--muted); font-size: 12.5px; margin: 18px auto 0; font-family: var(--mono); max-width: 760px; }
-  .lb-cap .live { display: inline-flex; align-items: center; gap: 6px; color: var(--green); }
-  .lb-cap .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
-  @keyframes pulse { 50% { opacity: .3; } }
-  .lb-cta { text-align: center; margin-top: 22px; }
-
   /* ---------- responsive ---------- */
   @media (max-width: 960px) {
     .bhead { display: none; }
@@ -424,7 +397,6 @@
     .tries::before { display: none; }
     .twin { grid-template-columns: 1fr; }
     .jpane { grid-template-columns: 1fr; }
-    .rb { grid-template-columns: 1fr 1fr; } .order { grid-column: 1 / -1; }
     .posts, .shops { grid-template-columns: repeat(3, minmax(160px, 1fr)); overflow-x: auto; }
   }
   @media (max-width: 640px) {
@@ -432,7 +404,6 @@
     .vs { top: 50%; font-size: 40px; }
     .dr { grid-template-columns: 44px 1fr 16px 58px; font-size: 12px; }
     .board { padding: 18px 14px 12px; }
-    .rb { grid-template-columns: 1fr; }
     .jl { padding: 16px; }
     .posts, .shops { grid-template-columns: repeat(3, 72%); }
   }
@@ -440,7 +411,7 @@
     .dr, .fish { animation: none; }
     .try, .got, .tree div { transition: none; opacity: 1; transform: none; }
     .try.sb { opacity: .5; }
-    .tabs button .pg, .jpane.play .scan, .lb-cap .live::before { animation: none; }
+    .tabs button .pg, .jpane.play .scan { animation: none; }
     .strip .cur { animation: none; }
     .hw { opacity: 1; transform: none; }
   }
@@ -452,7 +423,7 @@
 <nav class="nav" id="nav">
   <span class="wordmark"><span class="wm-agents"><img src="media/people-search/claude-code.png" alt="Claude Code"><img src="media/people-search/codex.png" alt="Codex"><img src="media/people-search/openclaw.png" alt="OpenClaw"><img src="media/people-search/hermes.png" alt="Hermes"></span> <span class="wm-x" style="color:var(--muted);font-weight:400">×</span> <a href="/" style="display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none" aria-label="treg home"><svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="112" fill="#101010"/><rect x="111" y="111" width="140.5" height="140.5" rx="20" fill="#fff"/><rect x="260.5" y="260.5" width="140.5" height="140.5" rx="20" fill="#fff"/></svg> treg</a> <span style="color:var(--muted);font-weight:400">/</span> <span style="font-weight:500">Web access</span></span>
   <span style="display:flex;gap:8px">
-    <span class="nav-links"><a href="#bench">Benchmarks</a><a href="/web-arena">Web Arena</a><a href="https://github.com/superdesigndev/treg" target="_blank" rel="noopener"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> Open source</a><a href="https://x.com/treg_ai" target="_blank" rel="noopener" aria-label="treg on X"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.451-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117l11.966 15.644Z"/></svg></a><a href="https://discord.gg/6mQYYfFMAn" target="_blank" rel="noopener" aria-label="treg on Discord"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z"/></svg></a></span>
+    <span class="nav-links"><a href="/web-arena">Web Arena</a><a href="https://github.com/superdesigndev/treg" target="_blank" rel="noopener"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> Open source</a><a href="https://x.com/treg_ai" target="_blank" rel="noopener" aria-label="treg on X"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.451-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117l11.966 15.644Z"/></svg></a><a href="https://discord.gg/6mQYYfFMAn" target="_blank" rel="noopener" aria-label="treg on Discord"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418Z"/></svg></a></span>
     <a class="pill dark" href="/app?ref=web-access" id="ctaNav">Set up treg</a>
   </span>
 </nav>
@@ -462,7 +433,7 @@
   <p class="sub">Your agent searches the web and reads any page <strong>for $0</strong>. When the free call comes back empty or blocked, treg tries the next vendor, so your agent still gets <strong>pages, sites, social posts, store listings and reviews</strong>, all through one API. Open source, no plan.</p>
   <div class="ctas">
     <a class="pill dark" href="/app?ref=web-access" id="ctaHero">Set up treg</a>
-    <a class="pill" href="#bench">See the live benchmarks</a>
+    <a class="pill" href="#route">How the fallback works</a>
   </div>
 </header>
 
@@ -702,27 +673,6 @@ IC+ pricing · Volume discounts
       <span><img src="media/web-access/p-x.svg" alt="">X</span><span><img src="media/web-access/p-linkedin.svg" alt="">LinkedIn</span><span><img src="media/web-access/p-reddit.svg" alt="">Reddit</span><span><img src="media/web-access/p-tiktok.svg" alt="">TikTok</span><span><img src="media/web-access/p-instagram.svg" alt="">Instagram</span><span><img src="media/web-access/p-youtube.svg" alt="">YouTube</span><span><img src="media/web-access/p-threads.svg" alt="">Threads</span><span><img src="media/web-access/p-facebook.svg" alt="">Facebook</span><span><img src="media/web-access/p-amazon.svg" alt="">Amazon</span><span><img src="media/web-access/p-walmart.svg" alt="">Walmart</span><span><img src="media/web-access/p-ebay.svg" alt="">eBay</span><span><img src="media/web-access/p-shopify.svg" alt="">Shopify</span><span><img src="media/web-access/p-etsy.svg" alt="">Etsy</span><span><img src="media/web-access/p-app-store.svg" alt="">App Store</span><span><img src="media/web-access/p-google-play.svg" alt="">Google Play</span><span><img src="media/web-access/p-trustpilot.svg" alt="">Trustpilot</span><span><img src="media/web-access/p-apple-maps.svg" alt="">Maps</span>
     </div>
   </div>
-</section>
-
-<section class="section" id="bench" style="padding-top:60px">
-  <h2>Routed by<br><span class="hl2">real-time benchmarks.</span></h2>
-  <p class="lede">treg measures every vendor on live traffic and uses those numbers to pick the order your agent's call tries them in. Free comes first, and it holds up.</p>
-  <div class="rb">
-    <div class="stat" id="stSearch"><div class="sh"><img src="logos/tinyfish.svg" alt="">Free web search<em>TinyFish · $0</em></div>
-      <div class="big"><span data-v>…</span><small>hit rate</small></div><div class="bar"><i></i></div><div class="meta" data-m>&nbsp;</div></div>
-    <div class="stat" id="stFetch"><div class="sh"><img src="logos/tinyfish.svg" alt="">Free page fetch<em>TinyFish · $0</em></div>
-      <div class="big"><span data-v>…</span><small>hit rate</small></div><div class="bar"><i></i></div><div class="meta" data-m>&nbsp;</div></div>
-    <div class="order"><h3>How the order is picked</h3>
-      <ol>
-        <li class="key"><div><b>Your own key</b><span>always first, never metered</span></div></li>
-        <li><div><b>The vendor you prefer</b><span><code style="font-family:var(--mono);font-size:11.5px">X-Treg-Route-Prefer</code>, like free TinyFish</span></div></li>
-        <li><div><b>Lowest cost per answer</b><span>price ÷ measured hit rate, so a cheap vendor that often misses ranks lower</span></div></li>
-        <li><div><b>Then speed</b><span>median response time on live calls</span></div></li>
-      </ol>
-    </div>
-  </div>
-  <div class="lb-cap" id="lbCap">hit rate = the call returned results, on live treg traffic</div>
-  <div class="lb-cta"><a class="pill" href="/web-arena">See every vendor in the Web Arena →</a></div>
 </section>
 
 <section class="cta-final">
@@ -1003,24 +953,6 @@ IC+ pricing · Volume discounts
   if (reduced) { stage.classList.add('paused'); show(0); }
   else onSeen(stage, function () { show(0); auto = setInterval(next, DUR); }, 0.3);
 
-  /* ---------- routed by real-time benchmarks: the free tier's live numbers ---------- */
-  function secs(ms) { return ms < 1000 ? (ms / 1000).toFixed(2) + ' s' : (ms / 1000).toFixed(1) + ' s'; }
-  function short(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
-  lbData.then(function (d) {
-    var days = d.window_days || 30;
-    [['search', 'stSearch'], ['fetch', 'stFetch']].forEach(function (t) {
-      var r = (d.task_results[t[0]] || []).filter(function (x) { return x.provider === 'tinyfish'; })[0], el = document.getElementById(t[1]);
-      if (!r || r.success_rate == null) { el.hidden = true; return; }
-      el.querySelector('[data-v]').textContent = r.success_rate.toFixed(1) + '%';
-      el.querySelector('[data-m]').textContent = secs(r.median_provider_ms) + ' median · ' + short(r.runs) + ' calls in ' + days + ' days';
-      var bar = el.querySelector('.bar i'), grow = function () { bar.style.width = r.success_rate + '%'; };
-      if (reduced) grow(); else onSeen(el, grow, 0.3);
-    });
-    var live = d !== SNAP && d.status === 'live';
-    var when = d.updated_at ? new Date(d.updated_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
-    document.getElementById('lbCap').innerHTML = (live ? '<span class="live">live</span> · updated ' + esc(when) + ' · ' : 'snapshot · ') +
-      'hit rate = the call returned results, on live treg traffic · each vendor sees different requests, so it is not a head-to-head test';
-  });
 })();
 </script>
 <script src="/sitetrack.js"></script>
