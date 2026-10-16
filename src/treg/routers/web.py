@@ -3715,6 +3715,13 @@ async def lead_signals_skill_md():
     return _serve_md("skills/lead-signals/SKILL.md")
 
 
+@app.get("/skills/web-access/SKILL.md", include_in_schema=False)
+async def web_access_skill_md():
+    """The web-access skill: when to search, read, map or call a platform job, free first, with the
+    routed fallbacks steered by headers. Bundled like lead-signals; `.agents/skills/web-access` links to it."""
+    return _serve_md("skills/web-access/SKILL.md")
+
+
 @app.get("/skills/jev-memory/SKILL.md", include_in_schema=False)
 async def jev_memory_skill_md():
     """The jev-memory skill: install (or build) the Claude Code mod in
@@ -4414,10 +4421,12 @@ async def well_known_skills_index():
     fm = _skill_frontmatter()
     ugc = _skill_frontmatter("skills/make-ugc/SKILL.md")
     sig = _skill_frontmatter("skills/lead-signals/SKILL.md")
+    web = _skill_frontmatter("skills/web-access/SKILL.md")
     return JSONResponse({"skills": [
         {"name": fm.get("name", "treg"), "description": fm.get("description", ""), "files": ["SKILL.md"]},
         {"name": ugc.get("name", "make-ugc"), "description": ugc.get("description", ""), "files": ["SKILL.md"]},
         {"name": sig.get("name", "lead-signals"), "description": sig.get("description", ""), "files": ["SKILL.md"]},
+        {"name": web.get("name", "web-access"), "description": web.get("description", ""), "files": ["SKILL.md"]},
     ]})
 
 
@@ -4440,6 +4449,12 @@ async def well_known_make_ugc_md():
 async def well_known_lead_signals_md():
     """The third entry `index.json` promises; the same file as /skills/lead-signals/SKILL.md."""
     return _serve_md("skills/lead-signals/SKILL.md")
+
+
+@app.get("/.well-known/skills/web-access/SKILL.md", include_in_schema=False)
+async def well_known_web_access_md():
+    """The fourth entry `index.json` promises; the same file as /skills/web-access/SKILL.md."""
+    return _serve_md("skills/web-access/SKILL.md")
 
 
 @app.get("/connect-demo", include_in_schema=False)
