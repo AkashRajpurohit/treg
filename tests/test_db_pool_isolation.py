@@ -32,6 +32,8 @@ API, ADMIN, BACKGROUND = "session_maker", "admin_session_maker", "background_ses
 EXPECTED_MAKERS: dict[str, set[str]] = {
     # Request path.
     "api.py": {API}, "mcp.py": {API}, "routers/resources.py": {API},
+    # The CLI's judged search: the caller and the hub's reader in short sessions, closed before the judge.
+    "routers/catalog.py": {API},
     "application/auth.py": {API}, "application/billing.py": {API}, "application/connect.py": {API},
     "application/asynctasks.py": {API},
     # Organization resource CRUD uses short API-pool transactions around, never during, upstream I/O.
