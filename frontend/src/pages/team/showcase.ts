@@ -103,3 +103,11 @@ export function usageChanged(app: ShowcaseApp | null, d: { source: string, keyId
   if (d.source !== now.source) return true
   return d.source === 'keys' && [...d.keyIds].sort().join(',') !== [...now.keyIds].sort().join(',')
 }
+
+export const SHOW_FLAGS = ['show_calls', 'show_streak', 'show_providers', 'show_categories'] as const
+
+/** Whether two revisions differ in a reviewed field (anything but the show flags, which apply at once). */
+export function reviewedChanged(a: Revision, b: Revision): boolean {
+  const strip = (r: Revision) => JSON.stringify({ ...r, show_calls: 0, show_streak: 0, show_providers: 0, show_categories: 0 })
+  return strip(a) !== strip(b)
+}

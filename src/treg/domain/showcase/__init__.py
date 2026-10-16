@@ -242,8 +242,10 @@ CATEGORIES: dict[str, str] = {
 }
 TEXT_LIMITS = {"name": (1, 60), "tagline": (1, 80), "description": (0, 500), "maker_name": (0, 60)}
 REVISION_FIELDS = ("name", "url", "tagline", "description", "category", "maker_name", "x_handle",
-                   "launch_post_url", "icon_key", "shot_keys", "show_calls", "show_streak",
-                   "show_providers", "show_categories")
+                   "launch_post_url", "icon_key", "shot_keys")
+# What the maker lets the leaderboard show. Not reviewed: they change no public text, link or
+# picture, so a team turns any of them on or off at once (`split_submission`).
+SHOW_FLAGS = ("show_calls", "show_streak", "show_providers", "show_categories")
 _HANDLE = re.compile(r"[A-Za-z0-9_]{1,15}")
 
 
@@ -264,6 +266,17 @@ def _https_url(value: str, field: str, *, required: bool) -> str:
             or parts.username or parts.password or len(value) > 500:
         raise ApplicationInvalid(field, "use a full https:// link")
     return value
+
+
+def split_submission(raw: dict) -> tuple[dict, dict[str, bool]]:
+    """A submitted form as (the fields that are reviewed, the show flags that are not)."""
+    rest = {k: v for k, v in raw.items() if k not in SHOW_FLAGS}
+    return rest, {f: bool(raw.get(f, False)) for f in SHOW_FLAGS}
+
+
+def flag_changes(before: dict, after: dict) -> dict:
+    """{flag: [before, after]} for every show flag that differs."""
+    return {f: [bool(before.get(f)), after[f]] for f in SHOW_FLAGS if bool(before.get(f)) != after[f]}
 
 
 def clean_revision(raw: dict) -> dict:
@@ -295,8 +308,6 @@ def clean_revision(raw: dict) -> dict:
     if not isinstance(shots, list) or len(shots) > MAX_SHOTS or not all(isinstance(k, str) for k in shots):
         raise ApplicationInvalid("shot_keys", f"use at most {MAX_SHOTS} screenshots")
     out["shot_keys"] = list(dict.fromkeys(shots))
-    for flag in ("show_calls", "show_streak", "show_providers", "show_categories"):
-        out[flag] = bool(raw.get(flag, False))
     return out
 
 

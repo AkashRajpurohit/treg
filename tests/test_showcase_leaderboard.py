@@ -95,13 +95,13 @@ def test_tiers_streaks_growth_and_rising():
 
 
 def test_an_application_is_checked_field_by_field():
-    clean = rules.clean_revision(fields(name="  Spaced   Name  ", x_handle="@ada"))
+    clean = rules.clean_revision(rules.split_submission(fields(name="  Spaced   Name  ", x_handle="@ada"))[0])
     assert clean["name"] == "Spaced Name" and clean["x_handle"] == "ada" and clean["shot_keys"] == []
     for bad in ({"url": "http://example.com"}, {"url": "javascript:alert(1)"}, {"category": "nope"},
                 {"name": ""}, {"tagline": "x" * 81}, {"x_handle": "not a handle"},
                 {"launch_post_url": "ftp://x"}, {"shot_keys": ["a"] * 5}, {"surprise": 1}):
         with pytest.raises(rules.ApplicationInvalid):
-            rules.clean_revision(fields(**bad))
+            rules.clean_revision(rules.split_submission(fields(**bad))[0])
 
 
 def test_public_entry_shows_only_consented_buckets():
@@ -259,8 +259,9 @@ async def test_staff_create_hide_and_the_board_follows(clients, store, staff):
 
 async def _approved(org_id: int, **over) -> int:
     async with session_maker() as db:
-        app_ = ShowcaseApp(org_id=org_id, status="approved", approved_at=datetime(2026, 9, 1), **{**{
-            k: v for k, v in rules.clean_revision(fields()).items()}, **over})
+        rev, flags = rules.split_submission(fields())
+        app_ = ShowcaseApp(org_id=org_id, status="approved", approved_at=datetime(2026, 9, 1),
+                           **{**rules.clean_revision(rev), **flags, **over})
         db.add(app_)
         await db.commit()
         return app_.id
@@ -644,3 +645,35 @@ async def test_a_new_cursor_never_reads_before_the_window(clients):
                                           limit=100, domains={}, first=False)
         await db.commit()
     assert n == 1
+
+
+async def test_what_the_board_shows_is_the_teams_choice_and_applies_at_once(clients, staff):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    created = (await clients.post(f"/admin/showcase/teams/{org_id}/apps", headers=staff, json={
+        "fields": fields(show_calls=True, show_streak=True, show_providers=True, show_categories=True),
+        "approve": True})).json()
+    assert created["live"]["show_providers"] is True              # staff listed it with sharing on
+    await _calls(org_id, datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9), 150)
+    await showcase.refresh_activity(now=NOW)
+    assert (await clients.get("/showcase/leaderboard")).json()["apps"][0]["calls_tier"] == "100+"
+
+    # The team turns the call tier off: live at once, nothing waits for review.
+    off = await clients.patch(f"/showcase/apps/{created['id']}", json={
+        "expected_version": created["version"], "fields": fields(show_calls=False, show_streak=True,
+                                                                  show_providers=True, show_categories=True)})
+    assert off.status_code == 200 and off.json()["pending"] is None and off.json()["live"]["show_calls"] is False
+    assert "calls_tier" not in (await clients.get("/showcase/leaderboard")).json()["apps"][0]
+
+    # A text change and a flag together: the flag now, the text after review.
+    both = (await clients.patch(f"/showcase/apps/{created['id']}", json={
+        "expected_version": off.json()["version"], "fields": fields(name="Renamed", show_calls=False, show_streak=False,
+                                                                     show_providers=True, show_categories=True)})).json()
+    assert both["live"]["show_streak"] is False and both["live"]["name"] == "Example App"
+    assert both["pending"]["name"] == "Renamed" and both["pending"]["show_streak"] is False
+    approved = (await clients.post(f"/admin/showcase/apps/{created['id']}/approve", headers=staff,
+                                   json={"expected_version": both["version"]})).json()
+    assert approved["live"]["name"] == "Renamed" and approved["live"]["show_streak"] is False   # not reverted
+    history = (await clients.get(f"/admin/showcase/apps/{created['id']}", headers=staff)).json()["history"]
+    assert [h["action"] for h in history][:4] == ["approved", "edited", "sharing", "sharing"]
+    assert history[3]["changes"] == {"show_calls": [True, False]}

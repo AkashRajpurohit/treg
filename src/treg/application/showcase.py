@@ -100,20 +100,36 @@ def _check_keys(rev: dict) -> None:
             raise ShowcaseError("invalid", "shot_keys: unknown picture")
 
 
-def _clean(raw: dict) -> dict:
+def _clean(raw: dict) -> tuple[dict, dict[str, bool]]:
+    """The reviewed revision and the show flags, which apply at once."""
+    fields, flags = rules.split_submission(raw)
     try:
-        rev = rules.clean_revision(raw)
+        rev = rules.clean_revision(fields)
     except rules.ApplicationInvalid as exc:
         raise ShowcaseError("invalid", f"{exc.field}: {exc.detail}") from None
     _check_keys(rev)
-    return rev
+    return rev, flags
+
+
+def _flags_of(app: ShowcaseApp) -> dict[str, bool]:
+    return {f: bool(getattr(app, f)) for f in rules.SHOW_FLAGS}
+
+
+def _set_flags(db: AsyncSession, app: ShowcaseApp, flags: dict[str, bool], *, actor: str, source: str) -> bool:
+    """Apply show flags at once, with a "sharing" event when any changed."""
+    changed = rules.flag_changes(_flags_of(app), flags)
+    if changed:
+        for f, value in flags.items():
+            setattr(app, f, value)
+        _event(db, app, "sharing", changed, actor=actor, source=source)
+    return bool(changed)
 
 
 def _shot_urls(key: str) -> dict:
     return {"url": images.public_url(key), "small_url": images.public_url(key.replace(".webp", "-640.webp"))}
 
 
-def _preview(rev: dict | None, *, public: set[str] | None = None) -> dict | None:
+def _preview(rev: dict | None, *, flags: dict[str, bool], public: set[str] | None = None) -> dict | None:
     """A revision with picture URLs. Pictures in `public` (all of them for the live version; for a
     proposal, those it keeps from the live version) come from the public side; new ones are
     previewed from staging, as they are public only once approved."""
@@ -124,7 +140,7 @@ def _preview(rev: dict | None, *, public: set[str] | None = None) -> dict | None
         if not k:
             return None
         return images.public_url(k) if public is None or k in public else images.staging_url(k)
-    return {**rev, "icon_url": url(rev["icon_key"]), "shot_urls": [url(k) for k in rev["shot_keys"]]}
+    return {**rev, **flags, "icon_url": url(rev["icon_key"]), "shot_urls": [url(k) for k in rev["shot_keys"]]}
 
 
 def app_view(app: ShowcaseApp, *, org: Org | None = None, usage: dict | None = None) -> dict:
@@ -133,8 +149,8 @@ def app_view(app: ShowcaseApp, *, org: Org | None = None, usage: dict | None = N
     view = {
         "id": app.id, "org_id": app.org_id, "status": app.status, "version": app.version,
         "usage": usage or {"source": app.usage_source},
-        "live": _preview(live_of(app)) if app.approved_at else None,
-        "pending": _preview(app.pending, public=_live_keys(app)),
+        "live": _preview(live_of(app), flags=_flags_of(app)) if app.approved_at else None,
+        "pending": _preview(app.pending, flags=_flags_of(app), public=_live_keys(app)),
         "reject_reason": app.reject_reason, "approved_at": app.approved_at.isoformat() if app.approved_at else None,
         "created_at": app.created_at.isoformat(), "updated_at": app.updated_at.isoformat(),
     }
@@ -268,7 +284,7 @@ async def _team_full(db: AsyncSession, org_id: int, *, besides: int | None = Non
 async def apply(user: User, org_id: int, raw: dict) -> dict:
     """A new application for `org_id`. Owner or admin; one entry per team (MAX_APPS_PER_TEAM;
     a rejected one does not count)."""
-    rev = _clean(raw)
+    rev, flags = _clean(raw)
     async with session_maker() as db:
         if await team_role(db, user.id, org_id) not in ("owner", "admin"):
             raise ShowcaseError("forbidden", "owner or admin role in this team is required")
@@ -282,7 +298,7 @@ async def apply(user: User, org_id: int, raw: dict) -> dict:
         if await _team_full(db, org_id):
             await db.commit()
             raise ShowcaseError("limit", LIMIT_DETAIL)
-        app = ShowcaseApp(org_id=org_id, status="pending", pending=rev, submitted_by=user.id)
+        app = ShowcaseApp(org_id=org_id, status="pending", pending=rev, submitted_by=user.id, **flags)
         db.add(app)
         await db.flush()
         _event(db, app, "applied", rules.changes({}, rev), actor=user.email, source="web")
@@ -293,16 +309,20 @@ async def apply(user: User, org_id: int, raw: dict) -> dict:
 
 async def edit(user: User, app_id: int, raw: dict, expected_version: int) -> dict:
     """Propose a new revision. A live app stays live as it is until staff approve the change; a
-    rejected application goes back to review."""
-    rev = _clean(raw)
+    rejected application goes back to review. The show flags apply at once, unreviewed."""
+    rev, flags = _clean(raw)
     async with session_maker() as db:
         app = await _owned_app(db, user, app_id)
         if app.version != expected_version:
             raise ShowcaseError("conflict", "this app changed - reload it before saving")
         base = app.pending or (live_of(app) if app.approved_at else {})
         changed = rules.changes(base, rev)
+        shared = _set_flags(db, app, flags, actor=user.email, source="web")
         if not changed:
-            raise ShowcaseError("invalid", "nothing changed")
+            if not shared:
+                raise ShowcaseError("invalid", "nothing changed")
+            await db.commit()
+            return await _view(db, app)
         if app.status == "rejected":
             # Back in review, it counts towards the team's limit again.
             if await _team_full(db, app.org_id, besides=app.id):
@@ -532,8 +552,8 @@ async def set_hidden(app_id: int, expected_version: int, hidden: bool, *, actor:
 
 async def staff_edit(app_id: int, expected_version: int, raw: dict, *, actor: str, source: str = "admin") -> dict:
     """Staff correct an entry. A pending revision is edited in place (it still needs approval); a
-    live app without one is changed directly, its pictures published first."""
-    rev = _clean(raw)
+    live app without one is changed directly, its pictures published first. Show flags apply at once."""
+    rev, flags = _clean(raw)
     async with session_maker() as db:
         app = await _versioned(db, app_id, expected_version)
         direct = app.pending is None and app.approved_at is not None
@@ -550,9 +570,11 @@ async def staff_edit(app_id: int, expected_version: int, raw: dict, *, actor: st
             before = app.pending or {}
             app.pending = rev
         changed = rules.changes(before, rev)
-        if not changed:
+        shared = _set_flags(db, app, flags, actor=actor, source=source)
+        if not changed and not shared:
             raise ShowcaseError("invalid", "nothing changed")
-        _event(db, app, "edited", changed, actor=actor, source=source)
+        if changed:
+            _event(db, app, "edited", changed, actor=actor, source=source)
         await db.commit()
         view = await _view(db, app)
     if old_keys:
@@ -561,14 +583,15 @@ async def staff_edit(app_id: int, expected_version: int, raw: dict, *, actor: st
 
 
 async def staff_create(org_id: int, raw: dict, *, approve_now: bool, actor: str, source: str = "admin") -> dict:
-    """Staff list an app for a team, pending or approved at once. The team limit still applies."""
-    rev = _clean(raw)
+    """Staff list an app for a team, pending or approved at once, with the show flags they set.
+    The team limit still applies."""
+    rev, flags = _clean(raw)
     async with session_maker() as db:
         if await db.get(Org, org_id) is None:
             raise ShowcaseError("not_found", "no such team")
         if await _team_full(db, org_id):
             raise ShowcaseError("limit", LIMIT_DETAIL)
-        app = ShowcaseApp(org_id=org_id, status="pending", pending=rev)
+        app = ShowcaseApp(org_id=org_id, status="pending", pending=rev, **flags)
         db.add(app)
         await db.flush()
         _event(db, app, "applied", rules.changes({}, rev), actor=actor, source=source)

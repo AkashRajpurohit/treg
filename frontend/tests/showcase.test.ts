@@ -80,3 +80,10 @@ test('usage reads as one line and changes only when the source or keys differ', 
   expect(usageChanged(null, { source: 'team', keyIds: [] })).toBe(false)
   expect(usageChanged(null, { source: 'keys', keyIds: [3] })).toBe(true)
 })
+
+test('only a change outside the show flags goes to review', async () => {
+  const { reviewedChanged, revisionOf, draftOf } = await import('../src/pages/team/showcase')
+  const base = revisionOf(draftOf(app({})))
+  expect(reviewedChanged(base, { ...base, show_calls: !base.show_calls })).toBe(false)
+  expect(reviewedChanged(base, { ...base, tagline: 'New line' })).toBe(true)
+})

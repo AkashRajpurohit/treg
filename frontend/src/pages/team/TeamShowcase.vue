@@ -2,7 +2,7 @@
 import { useDashboard } from '../../state/context'
 import Avatar from '../../components/ui/Avatar.vue'
 import { IMAGE_RULES, imageProblem, uploadImage } from '../../images'
-import { CATEGORIES, MAX_APPS, MAX_SHOTS, blankDraft, draftOf, moved, revisionOf, slotsUsed, statusOf, usageChanged, usageDraftOf, usageText } from './showcase'
+import { CATEGORIES, MAX_APPS, MAX_SHOTS, blankDraft, draftOf, moved, reviewedChanged, revisionOf, slotsUsed, statusOf, usageChanged, usageDraftOf, usageText } from './showcase'
 
 // The team's entries on the public showcase (/showcase): apply, edit, withdraw. Owners and admins
 // only (TeamPage shows the tab on canAdmin). Every name here starts with `sc` so it never shadows
@@ -98,8 +98,10 @@ export default {
         } else if (JSON.stringify(fields) !== f.base) {
           const edited = await this.api('/showcase/apps/' + f.id, { method: 'PATCH', headers: json, body: JSON.stringify({ expected_version: f.version, fields }) })
           // Sent: a retry after a failed key step must not send the same change again.
+          const reviewed = reviewedChanged(JSON.parse(f.base), fields)
           Object.assign(f, { version: edited.version, app: edited, base: JSON.stringify(fields) })
-          this.scMsg = f.live ? 'Change sent for review. The live version stays until treg approves the change.'
+          this.scMsg = !reviewed ? 'Saved. The leaderboard shows it now.'
+            : f.live ? 'Change sent for review. The live version stays until treg approves the change. What the leaderboard may show is saved now.'
             : 'Change sent for review.'
           sent = true
         }
@@ -303,7 +305,7 @@ export default {
 
             <section class="sc-section" aria-labelledby="sc-consent-title">
               <h3 id="sc-consent-title" class="lbl">What the showcase may show</h3>
-              <p class="sub sc-hint" style="margin:0 0 8px">Upvotes always show. Each item below is off until you turn it on. Only rounded figures are shown, never exact counts, spend or your team's name.</p>
+              <p class="sub sc-hint" style="margin:0 0 8px">Upvotes always show. Each item below is saved at once, without review. Only rounded figures are shown, never exact counts, spend or your team's name.</p>
               <div class="sc-consent">
                 <label v-for="[k,title,text] in CONSENTS" :key="k" class="sc-check">
                   <input v-model="scForm.draft[k]" type="checkbox">
