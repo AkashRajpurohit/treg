@@ -985,6 +985,10 @@ async def test_upload_wait_is_not_transfer_timeout(r2, monkeypatch):
         await sem.acquire()
     observation = archive_bodies.StorageReport()
     task = asyncio.create_task(archive_bodies.prepare(RAW, archive.content_hash(RAW), mode="both", observation=observation))
+    # Time the wait from the moment the upload is queued on the semaphore: a loaded test worker
+    # can start the task late, and a fixed sleep then measured less than the 20 ms asserted below.
+    while not getattr(sem, "_waiters", None):
+        await asyncio.sleep(0)
     await asyncio.sleep(0.03)
     assert not task.done()
     for _ in range(get_settings().archive_r2_upload_concurrency):
