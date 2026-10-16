@@ -11,7 +11,7 @@ import hmac
 import json
 import time
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import FastAPI
@@ -181,6 +181,20 @@ async def test_bad_state_rejected(login):
     await c.get(f"/auth/{provider}", follow_redirects=False)
     cb = await c.get(f"/auth/{provider}/callback?code=abc&state=WRONG", follow_redirects=False)
     assert cb.status_code == 400
+
+
+async def test_configured_alias_keeps_social_login_on_its_own_origin(login, monkeypatch):
+    provider, client = login
+    monkeypatch.setenv("TREG_PUBLIC_HOST_ALIASES", '["alias.example"]')
+    get_settings.cache_clear()
+    client.base_url = "https://alias.example"
+    response = await client.get(f"/auth/{provider}")
+    query = parse_qs(urlsplit(response.headers["location"]).query)
+    assert query["redirect_uri"] == [f"https://alias.example/auth/{provider}/callback"]
+    state = client.cookies.get("treg_oauth_state")
+    callback = await client.get(f"/auth/{provider}/callback", params={"code": "abc", "state": state})
+    assert callback.status_code == 302 and callback.headers["location"] == "/app"
+    assert (await client.get("/auth/me")).status_code == 200
 
 
 async def test_cli_social_callback_returns_to_picker_without_issuing_token(login):

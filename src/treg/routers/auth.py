@@ -28,7 +28,7 @@ from ..application.auth import (
     OTP_START_NS,
     OTP_START_WINDOW_S,
 )
-from ..config import PUBLIC_HOST_ALIASES, get_settings
+from ..config import get_settings
 from ..domain.identity import mcp_oauth
 from ..domain.identity import session as sess
 from ..domain.identity.access import require_identity
@@ -198,7 +198,7 @@ def _login_callback_base(request: Request) -> str:
     keep building the OLD host's callback. Any recognized alias Host therefore wins — in BOTH
     directions, so a login minted on treg.to also survives a TREG_PUBLIC_URL rollback."""
     host = request.headers.get("host", "").split(":")[0].rstrip(".").lower()
-    if host in PUBLIC_HOST_ALIASES:
+    if host in get_settings().public_host_aliases:
         return f"https://{host}"
     return get_settings().public_url.rstrip("/")
 

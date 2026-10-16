@@ -799,8 +799,8 @@ def treg_hosts() -> set[str]:
     pointed at one of them turns a hub tool into a relay to another hub tool, which the depth-one rule
     and the review exist to stop (hub simulation run 3: `treg-relay` -> https://<treg>/call)."""
     from urllib.parse import urlsplit
-    from ...config import PUBLIC_HOST_ALIASES
-    return {h for h in {(urlsplit(get_settings().public_url).hostname or "").lower(), *PUBLIC_HOST_ALIASES} if h}
+    return {h for h in {(urlsplit(get_settings().public_url).hostname or "").lower(),
+                        *get_settings().public_host_aliases} if h}
 
 
 def points_at_treg(base_url: str) -> bool:

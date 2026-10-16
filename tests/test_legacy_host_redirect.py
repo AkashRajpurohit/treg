@@ -146,6 +146,24 @@ async def test_canonical_and_legacy_resources_are_the_same_server(raw_client):
     assert _same_mcp_resource("https://evil.example/mcp/", "https://evil.example/mcp/")
 
 
+async def test_configured_alias_is_a_valid_mcp_origin_and_resource(monkeypatch):
+    from treg import mcp
+    from treg.config import get_settings
+    from treg.domain.identity import mcp_oauth
+
+    monkeypatch.setattr(get_settings(), "public_host_aliases",
+                        (*get_settings().public_host_aliases, "alias.example"))
+    assert "alias.example:443" in mcp._allowed_hosts()
+    assert "https://alias.example" in mcp._allowed_origins()
+    for version, path in (("v1", "mcp/"), ("v2", "mcp/v2/")):
+        resource = f"https://alias.example/{path}"
+        assert resource in mcp_oauth.mcp_resource_audiences(version)
+        assert mcp_oauth.mcp_resource_version(resource) == version
+    foreign = mcp_oauth.make_access_token(user_id=1, org_id=1, scope="treg:read", token_version=0,
+                                         audience="https://untrusted.example/mcp/")
+    assert mcp_oauth.read_access_token_any(foreign) is None
+
+
 async def test_login_round_trip_is_anchored_to_the_host_it_started_on(raw_client):
     # The provider compares the exchange's redirect_uri byte-for-byte with the authorization
     # request's. A login in flight across the cutover deploy lives entirely on the legacy host —

@@ -411,7 +411,7 @@ challenge scopes while omitting the RFC 8707 `resource` parameter. In that case,
 requests keep the V1 default.
 
 **Each MCP version has its own audience set.** `mcp_resource_audiences(version)` includes the
-configured `public_url` plus `config.PUBLIC_HOST_ALIASES` for that version. This is symmetric so a
+configured `public_url` plus `Settings.public_host_aliases` for that version. This is symmetric so a
 grant survives a host change or rollback. Host and trailing-slash aliases can normalize within V1 or
 within V2, but they never cross versions. A V1 token fails on `/mcp/v2/`, and a V2 token fails on
 `/mcp/`.
