@@ -36,7 +36,6 @@ sources:
   - src/treg/alembic/versions/0005_capacity_policy_snapshot.py
   - tests/test_capacity_know.py
   - tests/test_capacity_collectors.py
-  - tests/test_blitzapi.py
   - tests/test_financialdatasets.py
   - tests/test_tinyfish.py
 related:
@@ -47,13 +46,6 @@ related:
 ---
 
 # Provider capacity
-
-BlitzAPI's platform key uses the subscription's monthly record allowance. The free
-`GET /v2/account/key-info` collector reads only a valid key's nonnegative integer
-`records_remaining`, reports the billing reset and reported per-endpoint request limit in its
-note, and stays outside the catalog. The shared-key smoother gives each catalog endpoint its
-own bucket for the published Start-plan rate; BYOK calls bypass it. The documented HTTP 402
-indicates an exhausted allowance. No automatic upgrade or top-up is inferred.
 
 Every platform-key slot is either on `BALANCE_ROUTES` (a free collector reads its balance) or on
 `NO_BALANCE_API` (with the reason none exists), under the slot's spelling;
