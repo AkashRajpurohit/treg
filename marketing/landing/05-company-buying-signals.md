@@ -77,7 +77,7 @@ in the catalog:
 | **Coresignal** | free: returns ids; cost lands on the read | not yet measured |: |
 | **Hunter Discover** | free | 100% (24 calls) | 1.7 s |
 | **The Companies API** | $0.0019, or free with `simplified=true` | 100% (339 calls) | 0.3 s |
-| **Lusha** | $0.004992 per 25 results | not yet measured |: |
+| **Lusha** | $0.1248 per 25 results | not yet measured |: |
 | **LeadMagic** | $0.025 | 70% (10 calls) | 3.2 s |
 | **Apollo** | $0.026 per page | not yet measured |: |
 | **Diffbot** | $0.0299 | 100% (5 calls) | 0.7 s |

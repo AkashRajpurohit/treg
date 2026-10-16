@@ -109,7 +109,7 @@ LeadMagic $0.025 · Lusha $0.2496 · Coresignal $0.392.
 | Coresignal | free (ids only; the cost lands on collect) | — (1) | — |
 | Hunter Discover | free | 100% (24) | 1.7 s |
 | The Companies API | $0.0019 / company returned; free with `simplified=true` | 100% (338) | 0.3 s |
-| Lusha | $0.004992 / up to 25 results | — (0) | — |
+| Lusha | $0.1248 / up to 25 results | — (0) | — |
 | LeadMagic | $0.025 / company returned | 70% (10) | 3.2 s |
 | Apollo | $0.026 / page returned | — (0) | — |
 | Diffbot | $0.0299 / record returned | 100% (5) | 0.7 s |

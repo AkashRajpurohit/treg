@@ -76,7 +76,7 @@ eleven providers for that one job: and this is the sharpest price spread in the 
 | **Akta** | free | 100% (248 calls) | 3.2 s |
 | **Hunter Discover** | free | 100% (24 calls) | 1.7 s |
 | **The Companies API** | $0.0019 | 100% (339 calls) | 0.3 s |
-| **Lusha** | $0.004992 per 25 results | not yet measured |: |
+| **Lusha** | $0.1248 per 25 results | not yet measured |: |
 | **LeadMagic** | $0.025 | 70% (10 calls) | 3.2 s |
 | **Apollo** | $0.026 per page | not yet measured |: |
 | **Diffbot** | $0.0299 | 100% (5 calls) | 0.7 s |
