@@ -1909,15 +1909,28 @@ Five rules worth keeping:
 
 ### Search scoring — most words must match, and the rare ones decide
 
-This is the shipped ranker: what `/catalog/search` and the CLI answer, the lexical page the
-discovery experiment measures against, and the page an agent's MCP search falls back to when the
-job-first answer abstains ([search-experiment](search-experiment.md)).
+This is the shipped ranker: what `/catalog/search` answers, the lexical page the discovery
+experiment measures against, and the page an agent's MCP search (and the CLI's, which asks
+`/catalog/search?engine=agent` for the same use case) falls back to when the job-first answer
+abstains ([search-experiment](search-experiment.md)).
 
 A query word matches only at the START of a word in a field (`store._needles`, haystacks stored
 word-padded by `_padded`): "search" matches "searches" but not "research", "ads" not "leads". A
 substring match tied a research-task status row with every search tool on "web search", and the
-evidence sort then put the free, always-200 status row first. CJK variants keep matching anywhere,
-since CJK text has no spaces between words.
+evidence sort then put the free, always-200 status row first. A one-word variant shorter than four
+letters matches only whole, or with a plural "s" (`WHOLE_WORD_BELOW`): "exa" had matched "exact" in
+summaries and outranked every Exa row. CJK variants keep matching anywhere, since CJK text has no
+spaces between words.
+
+**A provider named with a task** (`store.provider_focus`): "exa search", "people data labs company
+enrichment". A provider is named by its id or its display name as a token sequence, longest first;
+a domain is part of the name ("you.com"; "you" alone is a word); a platform's name names the
+platform, and a name of only short or function words names nothing.
+The rest of the query is searched without the name, so its words ("people") cannot pull the page to
+another job; the provider's rows need only one of the rest's words, match it by stem too
+("enrichment" meets "enrich"), and lead the page in their own relevance order, with no routed row
+(the caller chose the provider). Where none of its rows matches the rest, the query is searched as
+typed. A bare name is an ordinary search.
 
 `catalog_store.search` demanded EVERY query token match (AND). Right for the 2–3 word refinement
 ("tiktok comments" must not return every tiktok endpoint), and fatal for how agents actually query:
@@ -2028,7 +2041,9 @@ and the CLI so the three surfaces cannot disagree:
   provider's NAME; the row an agent should see first for that job — `treg.people.search`, where
   treg chooses among every provider — contained no word of the query. `search` now adds
   `treg.<capability>` at the best child's score whenever a child matched. The token-filter tests
-  exempt these pulled-in rows: their own text need not contain the query.
+  exempt these pulled-in rows: their own text need not contain the query. A query that names the
+  provider with a task ("leadsforge email") asked for that provider: its rows lead and no routed
+  row rides in.
 - **Vocabulary before ranking.** The same query first ranked `people.email.find` above
   `people.search` because `find` is a token of the former's capability NAME (weight 3) and only of
   the latter's summary (weight 2). The fix was to say in `capabilities.yaml` what the job is —

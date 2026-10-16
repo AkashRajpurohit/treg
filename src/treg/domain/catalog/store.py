@@ -127,6 +127,7 @@ class Catalog:
     _compared: dict | None = field(default=None, init=False, repr=False, compare=False)  # see compared()
     # lazy per-instance find index (see find_recall.index) — same pattern as _search_fields
     _find_index: object | None = field(default=None, init=False, repr=False, compare=False)
+    _provider_phrases: list | None = field(default=None, init=False, repr=False, compare=False)  # see provider_phrases()
     by_id: dict[str, dict] = field(default_factory=dict)
     provider_meta: dict[str, dict] = field(default_factory=dict)  # service -> {limits, pricing_url, docs}
     contracts: dict = field(default_factory=dict)   # capability -> routing.Contract
@@ -1160,16 +1161,33 @@ _CJK = re.compile(r"[\u3400-\u9fff]")
 
 
 def _padded(text: str) -> str:
-    """A haystack as space-separated words with a leading space, so a word can be matched at its start."""
-    return " " + _SPLIT.sub(" ", text.lower())
+    """A haystack as space-separated words between spaces, so a word can be matched at its start
+    or whole."""
+    return " " + _SPLIT.sub(" ", text.lower()).strip() + " "
+
+
+# A word shorter than this matches whole (or with a plural "s"), never as the start of a longer
+# word: "exa" must not find "exact", nor "ads" "adsense".
+WHOLE_WORD_BELOW = 4
 
 
 def _needles(variants: list[str]) -> list[str]:
     """Each variant as it must appear at the START of a word: " search" matches "search" and
     "searches", never "research" (2026-10-10: a research-task status row tied with every search
-    tool on "web search" and its measured success put it first). CJK has no spaces between words,
+    tool on "web search" and its measured success put it first). A one-word variant shorter than
+    `WHOLE_WORD_BELOW` matches only whole, or with a plural "s". CJK has no spaces between words,
     so a CJK variant keeps matching anywhere."""
-    return [v if _CJK.search(v) else " " + _SPLIT.sub(" ", v.lower()).strip() for v in variants]
+    out: list[str] = []
+    for v in variants:
+        if _CJK.search(v):
+            out.append(v)
+            continue
+        w = _SPLIT.sub(" ", v.lower()).strip()
+        if " " not in w and len(w) < WHOLE_WORD_BELOW:
+            out.extend((f" {w} ", f" {w}s "))
+        else:
+            out.append(" " + w)
+    return out
 
 
 def _search_fields(cat: Catalog) -> list[tuple[dict, list[tuple[int, str]]]]:
@@ -1190,16 +1208,29 @@ def _search_fields(cat: Catalog) -> list[tuple[dict, list[tuple[int, str]]]]:
 SOFT_DF_SHARE = 0.25
 
 
-def _match(query: str, cat: Catalog):
+_SUFFIXES = ("ments", "ment", "ings", "ing", "ies", "es", "s", "ed", "y", "e")
+
+
+def _stem(tok: str) -> str:
+    """A word's stem for prefix matching: "companies" and "company" -> "compan", "enrichment" ->
+    "enrich". Never shorter than five letters, so it stays a word's start rather than a fragment."""
+    for suffix in _SUFFIXES:
+        if tok.endswith(suffix) and len(tok) - len(suffix) >= 5:
+            return tok[:-len(suffix)]
+    return tok
+
+
+def _match(query: str, cat: Catalog, stems: bool = False):
     """The shared matching pass behind `search` and `near_misses`: tokens, per-row best-field
-    weights, idf, and the admission gate (which tokens are required, and how many must hit)."""
+    weights, idf, and the admission gate (which tokens are required, and how many must hit).
+    `stems` lets each word also match as its stem's prefix (a provider-named search only)."""
     raw = _tokens(query)
     # single letters can never select ("K&L" tokenizes to k + l, df 2,039 and 2,512) — they only
     # inflated the number of matches a row needed elsewhere
     tokens = [t for t in raw if t not in _STOPWORDS and len(t) > 1] or raw
     if not tokens:
         return None
-    variants = [_needles([tok, *cat.aliases.get(tok, ())]) for tok in tokens]
+    variants = [_needles([tok, *((_stem(tok),) if stems else ()), *cat.aliases.get(tok, ())]) for tok in tokens]
     # A token that IS a platform slug ("tiktok", "linkedin") is the caller's hard filter, but idf
     # prices it low — half the catalog serves the big platforms — so rows matching a rarer facet
     # word ("followers") outranked rows matching the asked-for platform. Double the weight where a
@@ -1248,21 +1279,118 @@ def search(query: str, cat: Catalog, limit: int = 25,
     same scoped or not. `keep` (the `added` window, `added_keep`) works the same way: it drops rows,
     never rescores them, and a routed parent rides in only if it passes it too.
     """
-    m = _match(query, cat)
+    focus = provider_focus(query, cat)
+    if focus is not None:
+        named, rest = focus
+        # No routed row: the caller chose the provider, and "let treg choose" is not that.
+        scored = [r for r in _scored(rest, cat, platform, keep, loose=named) if r[0].get("kind") != "routed"]
+        top = max((s for _, s in scored), default=0.0)
+        if any(ep["provider"] in named for ep, _ in scored):
+            # The named provider's rows first, each still in its own relevance order.
+            scored = [(ep, round(s + top + 1, 4)) if ep["provider"] in named else (ep, s) for ep, s in scored]
+            scored.sort(key=_search_order)
+            return scored[:max(limit, 0)], len(scored)
+    scored = _scored(query, cat, platform, keep)
+    scored = [r for r in with_routed_parents(scored, cat)
+              if (not platform or r[0]["platform"] == platform) and (keep is None or keep(r[0]))]
+    scored.sort(key=_search_order)
+    return scored[:max(limit, 0)], len(scored)
+
+
+def _search_order(row: tuple[dict, float]):
+    return (-row[1], row[0]["tier"] != "core", not row[0]["verified"], row[0]["id"])
+
+
+def _scored(query: str, cat: Catalog, platform: str | None, keep: Callable[[dict], bool] | None,
+            loose: set[str] = frozenset()) -> list[tuple[dict, float]]:
+    """Every row the admission gate lets in for `query`, with its score, unsorted. A row of a
+    provider in `loose` needs only one of the words: the query named it, so its few rows are
+    already the shortlist; the words then match by stem too."""
+    m = _match(query, cat, stems=bool(loose))
     if m is None:
-        return [], 0
+        return []
     tokens, rows, best, idf, required, need = m
     scored: list[tuple[dict, float]] = []
     for (ep, _), per_tok in zip(rows, best):
-        if sum(1 for i in required if per_tok[i]) < need or (platform and ep["platform"] != platform):
+        if platform and ep["platform"] != platform:
+            continue
+        if sum(1 for i in required if per_tok[i]) < (min(need, 1) if ep["provider"] in loose else need):
             continue
         if keep is not None and not keep(ep):
             continue
         scored.append((ep, round(sum(w * idf[i] for i, w in enumerate(per_tok)), 4)))
-    scored = [r for r in with_routed_parents(scored, cat)
-              if (not platform or r[0]["platform"] == platform) and (keep is None or keep(r[0]))]
-    scored.sort(key=lambda row: (-row[1], row[0]["tier"] != "core", not row[0]["verified"], row[0]["id"]))
-    return scored[:max(limit, 0)], len(scored)
+    return scored
+
+
+# ---- a provider named in the query ---------------------------------------------------------------
+def provider_labels() -> dict[str, str]:
+    """Each provider's display name ("pdl" -> "People Data Labs"), read once from the provider
+    registry; an empty table where it cannot be read leaves only the provider ids to match."""
+    global _PROVIDER_LABELS
+    if _PROVIDER_LABELS is None:
+        try:
+            from ...oauth_providers import get as provider
+        except Exception:  # noqa: BLE001 - names are an aid to search, never a reason it fails
+            _PROVIDER_LABELS = {}
+        else:
+            _PROVIDER_LABELS = {}
+            for ep in load().endpoints:
+                p = provider(ep["provider"])
+                if p is not None:
+                    _PROVIDER_LABELS[ep["provider"]] = p.display_name
+    return _PROVIDER_LABELS
+
+
+_PROVIDER_LABELS: dict[str, str] | None = None
+
+
+def provider_phrases(cat: Catalog) -> list[tuple[tuple[str, ...], str]]:
+    """Every way a query names a provider, as search tokens, longest first: its id ("pdl",
+    "brightdata") and its display name whole ("people data labs", "you com" for You.com, "context
+    dev" for Context.dev: the domain is part of the name, and "you" or "context" alone is a word). A
+    phrase that is a platform's name ("tiktok", "google ads") names the platform instead; one made
+    only of short or function words ("x", "you") names nothing."""
+    cached = cat._provider_phrases
+    if cached is not None:
+        return cached
+    labels = provider_labels()
+    platform_words = {tuple(_tokens(w)) for slug, p in cat.platforms.items()
+                      for w in (slug.replace("-", " "), p.get("label", ""))}
+    by_phrase: dict[tuple[str, ...], str] = {}
+    for prov in sorted({ep["provider"] for ep in cat.endpoints} - {"treg"}):
+        for name in (prov, labels.get(prov, "")):
+            phrase = tuple(_tokens(name))
+            if (phrase and phrase not in platform_words
+                    and any(t not in _STOPWORDS and len(t) >= 3 for t in phrase)):
+                by_phrase.setdefault(phrase, prov)
+    cached = sorted(by_phrase.items(), key=lambda t: (-len(t[0]), t[0]))
+    object.__setattr__(cat, "_provider_phrases", cached)   # frozen dataclass, deliberate
+    return cached
+
+
+def provider_focus(query: str, cat: Catalog) -> tuple[set[str], str] | None:
+    """`(providers, the rest of the query)` when the query names a provider AND says what it
+    wants from it ("exa search", "people data labs company enrichment"); None for a bare name or
+    no name. The rest is the query without the name, so the name's own words ("people" in People
+    Data Labs) cannot pull the search toward another job. Names are matched before function words
+    are dropped, so "you.com" is still a name."""
+    tokens = _tokens(query)
+    named: set[str] = set()
+    covered: set[int] = set()
+    i = 0
+    while i < len(tokens):
+        for phrase, prov in provider_phrases(cat):
+            if tuple(tokens[i:i + len(phrase)]) == phrase:
+                named.add(prov)
+                covered.update(range(i, i + len(phrase)))
+                i += len(phrase)
+                break
+        else:
+            i += 1
+    rest = [t for j, t in enumerate(tokens) if j not in covered and t not in _STOPWORDS and len(t) > 1]
+    if not named or not rest:
+        return None
+    return named, " ".join(rest)
 
 
 def with_routed_parents(scored: list[tuple[dict, float]], cat: Catalog) -> list[tuple[dict, float]]:

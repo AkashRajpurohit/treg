@@ -134,7 +134,7 @@ treg tool add google-ads --base-url https://googleads.googleapis.com \
 
 | Command | Options | What it does |
 |---|---|---|
-| `treg catalog search` | `"what you want to do"`, `--new [DAYS]`, `--sort newest` | find endpoints by capability; `--new` keeps tools added in the last DAYS days (30 when bare, max 365), `--sort newest` lists newest first; with either, the words are optional |
+| `treg catalog search` | `"what you want to do"`, `--new [DAYS]`, `--sort newest` | find endpoints by capability, with the same search agents get (name a provider, "exa search", to put its tools first); `--new` keeps tools added in the last DAYS days (30 when bare, max 365), `--sort newest` lists newest first; with either, the words are optional |
 | `treg catalog get` | `ENDPOINT_ID` | docs, parameters, **the price**, and how you would be served |
 | `treg call ENDPOINT_ID` | `--query K=V`, `--data STR` or `--data @FILE` | call it |
 | `treg --json call ENDPOINT_ID` | same | for scripts: one JSON line `{"result": <body>, "_treg": {http_status, call_id, charged_micro}}` on stdout, nothing on stderr |

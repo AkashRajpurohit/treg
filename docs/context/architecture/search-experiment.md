@@ -40,7 +40,9 @@ Three layers, imports pointing inward:
 - **`infra/judge.py`** — TypeSafe's System One API (Jev). One request carries the query and every
   candidate as `state`, and one Noul question per candidate; the answer is a probability per row.
   It never raises: timeout, non-200, malformed body all return `probs=None` with a reason, and the
-  caller serves the baseline. Answers are cached in-process by (model, query, candidate ids, and
+  caller serves the baseline. A refusal every later request will also meet (401, 402 no credit, 403)
+  is an outage the baseline page hides, so it is logged at ERROR, which reaches error tracking: at
+  most once per status every ten minutes. Answers are cached in-process by (model, query, candidate ids, and
   any criteria or extra questions). A caller may attach Noul `criteria` to every candidate question
   and add `extra` questions about the same state, Noul (a probability) or Choice (the option, its
   confidence and every option's probability); a candidate in `job_view`'s shape is asked about a

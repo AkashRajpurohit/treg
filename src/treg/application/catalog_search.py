@@ -173,11 +173,13 @@ def _groups(found: find.Found, cat: catalog_store.Catalog, hub: Rows, steer: boo
     if task:
         for g in out:
             g.rows.sort(key=lambda r: not _leads(r, high))     # stable: both classes keep their order
+            if found.providers:   # a provider the query named leads its job
+                g.rows.sort(key=lambda r: r["ep"]["provider"] not in found.providers)
         for ep, _ in hub:
             g = by_job.get(ep.get("capability") or "")
             if g is not None:
                 g.rows.append({"ep": ep, "p": None, "fit_from": None})
-    if task and steer:
+    if task and steer and not found.providers:   # a named provider is the choice; no "let treg choose"
         for g in out:
             parent = catalog_store.routed_parent(cat, g.capability)
             if parent is not None:
@@ -255,7 +257,8 @@ async def _v2(query: str, cat: catalog_store.Catalog, limit: int, *, page: Page,
     `serve_it=False` judges and records only (the lexical holdout): no rows are laid out."""
     r = await find.recall_with_meaning(query, cat, provider_display)
     found = await find.judge_and_decide(query, r.cands, cat, provider_display,
-                                        timeout_s=float(get_settings().typesafe_timeout_s), not_task=find.KEYWORD)
+                                        timeout_s=float(get_settings().typesafe_timeout_s), not_task=find.KEYWORD,
+                                        focus=r.focus)
     if serve_it:
         seen: dict[str, dict] = {}
 

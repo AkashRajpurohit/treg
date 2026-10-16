@@ -5291,7 +5291,11 @@ def _catalog_search(query: str, args, cfg) -> None:
         params["added_within_days"] = days
     if sort != "best":
         params["sort"] = sort
-    with _client(cfg, auth=False) as c:
+    if not added:
+        # the search an agent's catalog_search gets; an older server ignores this and answers by keyword
+        params["engine"] = "agent"
+    # the token, when there is one, only says who is searching (the judged search is capped per caller)
+    with _client(cfg, auth=not added) as c:
         r = c.get("/catalog/search", params=params)
     if r.status_code != 200 or _JSON_OVERRIDE:
         _show(r)
@@ -5313,6 +5317,10 @@ def _catalog_search(query: str, args, cfg) -> None:
             return
         what = (f"{about} added in the last {within} days" if within else about) \
             + (", newest first" if body.get("sort") == "newest" else "")
+    if body.get("verdict") == "none":
+        print(f"the catalog has no tool for \"{query}\"")
+        _dim(f"file it: treg catalog request \"{query}\"   # requests steer what gets added next")
+        return
     if not rows:
         print(f"nothing matches \"{query}\"")
         for n in (body.get("near") or [])[:3]:
@@ -5360,6 +5368,10 @@ def _catalog_search(query: str, args, cfg) -> None:
               f"{e.get('added') or '-':<10} "
               f"{'●' if e['provider'] in connected else ' '}  {_clip(e.get('summary', ''), 78)}")
     _close_group()
+    if body.get("verdict") == "closest":
+        _dim("\nno exact fit: read treg catalog get before relying on one of these, or say the task differently")
+    elif body.get("verdict") == "keyword" and body.get("reason") not in (None, "", "not_task"):
+        _dim("\nranked by keywords only (the judge did not answer)")
     _dim(f"\ntreg catalog get {rows[0]['id']}   # params, cost, example response")
 
 
