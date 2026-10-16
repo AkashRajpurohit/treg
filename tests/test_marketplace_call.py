@@ -2527,6 +2527,40 @@ def test_tomba_settles_at_the_estimate_without_countable_evidence(fields, body):
     assert call_settle._observed_cost_micro(_mk('tomba', **fields), body) is None
 
 
+@pytest.mark.parametrize(('email', 'credits'), [(None, 0), ('', 0), ('ada@news.example', 1)])
+async def test_tomba_author_finder_bills_only_a_found_email(
+    clients: AsyncClient, platform_on, monkeypatch, email, credits,
+):
+    """An article Tomba cannot resolve answers 200 with every field null and is not in its usage
+    log; one credit is billed only when an author email comes back."""
+    monkeypatch.setenv('TREG_PLATFORM_KEY_TOMBA', 'SYNTHETIC-TOMBA-KEY')
+    monkeypatch.setenv('TREG_PLATFORM_PROVIDERS', 'tomba')
+    get_settings.cache_clear()
+    body = json.dumps({'data': {'email': email, 'full_name': 'Ada Example' if email else None,
+                                'score': 90 if email else 0}}).encode()
+    monkeypatch.setattr(call_service, 'relay', _fake_relay(200, body))
+    before = await _balance(clients)
+    response = await clients.get('/call/tomba.people.email.find.author?url=https://news.example/a')
+    assert response.status_code == 200
+    assert response.content == body
+    assert await _balance(clients) == before - credits * 8_900
+    telemetry = await _telemetry(clients)
+    assert telemetry['cost_estimated_micro'] == 8_900
+    assert telemetry['cost_observed_micro'] == (0 if not credits else None)
+    assert telemetry['cost_charged_micro'] == credits * 8_900
+
+
+@pytest.mark.parametrize(('fields', 'body'), [
+    # unknown shapes keep the estimate
+    *[({'endpoint_id': 'tomba.people.email.find.author', 'cost_type': 'per_success'}, body)
+      for body in [b'{}', b'{"data": null}', b'{"data": {"full_name": null}}', b'{"data": []}']],
+    # the rule stays on the author finder
+    ({'endpoint_id': 'tomba.people.email.verify', 'cost_type': 'per_call'}, b'{"data": {"email": null}}'),
+])
+def test_tomba_author_rule_needs_an_email_field_on_its_own_endpoint(fields, body):
+    assert call_settle._observed_cost_micro(_mk('tomba', **fields), body) is None
+
+
 @pytest.mark.parametrize('endpoint,doc,expected', [
     *[('people.email.find', {'meta': {'credits_used': credits}}, expected) for credits, expected in
       [(0, 0), (1, 4834), (6, 29004), (-1, None), (True, None), ('1', None), (float('inf'), None)]],

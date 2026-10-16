@@ -770,6 +770,15 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
             if type(size) is int and size > 0 and mk.unit_micro > 0:
                 return ((size + 9) // 10) * mk.unit_micro
         return None
+    if provider == "tomba" and mk.endpoint_id == "tomba.people.email.find.author":
+        # DERIVED: the author finder bills one credit per author email found. An article it
+        # cannot resolve answers 200 with every `data` field null and never reaches Tomba's own
+        # usage log. Its capability (people.email.find) has no URL identity, so no adapter can
+        # carry this miss. A body without the `email` key keeps the estimate.
+        data = doc.get("data")
+        if isinstance(data, dict) and "email" in data:
+            return None if data["email"] else 0
+        return None
     if provider == "hunter" and mk.endpoint_id == "hunter.companies.emails":
         # DERIVED, like apollo. Hunter's domain search does not bill per row at all: it takes ONE
         # whole search credit per 10 emails RETURNED, rounded up, and a domain it knows nobody at is
