@@ -871,7 +871,10 @@ IC+ pricing · Volume discounts
     octen: 'Octen', diffbot: 'Diffbot', spidercloud: 'Spider', scrapegraphai: 'ScrapeGraphAI', brightdata: 'Bright Data' };
   var lbData = fetch('/web-arena/api/leaderboard', { credentials: 'same-origin' })
     .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
-    .then(function (d) { return d && d.task_results && d.task_results.search ? d : SNAP; })
+    .then(function (d) {
+      var rows = d && d.task_results ? Object.keys(d.task_results).reduce(function (a, k) { return a.concat(d.task_results[k]); }, []) : [];
+      return rows.some(function (r) { return r.success_rate != null; }) ? d : SNAP;   /* no measured runs yet (a fresh install): the snapshot */
+    })
     .catch(function () { return SNAP; });
 
   function price(task, p, d) {
