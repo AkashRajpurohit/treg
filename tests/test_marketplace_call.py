@@ -1437,6 +1437,67 @@ def test_platform_estimate_normalizes_per_result_pricing():
     assert call_resolution._platform_estimate_micro({"type": "per_call", "usd": 0.0000005}, {}) == 1
 
 
+def test_platform_estimate_adds_the_extra_results_rider_to_a_flat_call_price():
+    """A per-call price that covers the first N results reserves the rider for each result asked
+    beyond them, read from the caller's own limit param, capped at the page maximum."""
+    cost = {"type": "per_call", "usd": 0.007, "extra_results": {"included": 10, "usd": 0.001}}
+    estimate = call_resolution._platform_estimate_micro
+    assert estimate(cost, {}) == 7_000
+    assert estimate(cost, {}, b'{"numResults": 5}') == 7_000
+    assert estimate(cost, {}, b'{"numResults": 10}') == 7_000
+    assert estimate(cost, {}, b'{"numResults": 11}') == 8_000
+    assert estimate(cost, {}, b'{"numResults": 100}') == 97_000
+    assert estimate(cost, {}, b'{"numResults": 100000}') == 97_000  # the page maximum caps it
+    assert estimate(cost, {"numResults": "25"}) == 22_000
+    # Malformed counts add nothing: the reported charge settles whatever the provider bills.
+    for body in (b'{"numResults": "50"}', b'{"numResults": true}', b'{"numResults": -5}',
+                 b'not json', b'[]'):
+        assert estimate(cost, {}, body) == 7_000, body
+    # Only a per_call price carries the rider; a per_result price already counts every row.
+    assert estimate({**cost, "type": "per_result"}, {}, b'{"numResults": 50}') == 350_000
+
+
+@pytest.fixture
+def exa_platform_on(monkeypatch):
+    monkeypatch.setenv("TREG_PLATFORM_KEY_EXA", "PLATFORM-EXA")
+    monkeypatch.setenv("TREG_PLATFORM_PROVIDERS", "exa")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+async def test_extra_results_rider_reaches_the_hold_and_the_max_cost_gate(
+    clients, exa_platform_on, monkeypatch,
+):
+    """A 50-result search on a $0.007-for-10 price plus $0.001 a result after: the hold and the
+    caller's max-cost ceiling see $0.047, and the provider's reported charge still settles."""
+    endpoint = "exa.companies.search"
+    cost = catalog_store.load().by_id[endpoint]["cost"]
+    monkeypatch.setitem(cost, "extra_results", {"included": 10, "usd": 0.001})
+    reply = {"requestId": "req-example", "results": [{"url": "https://acme.example"}] * 50,
+             "costDollars": {"total": 0.047}}
+    monkeypatch.setattr(A.app.state, "http", AsyncClient(transport=httpx.MockTransport(
+        lambda request: _dropleads_response(200, reply))))
+    body = {"query": "vector database startups", "category": "company", "numResults": 50}
+
+    before = await _balance(clients)
+    refused = await clients.post(f"/call/{endpoint}", json=body,
+                                 headers={"X-Treg-Route-Max-Cost": "0.03"})
+    assert refused.status_code == 402, refused.text
+    detail = refused.json()["detail"]
+    assert detail["error"] == "route_max_cost"
+    assert detail["estimated_cost_micro"] == 47_000
+    assert await _balance(clients) == before
+
+    served = await clients.post(f"/call/{endpoint}", json=body,
+                                headers={"X-Treg-Route-Max-Cost": "0.05"})
+    assert served.status_code == 200, served.text
+    assert served.headers["X-Treg-Cost-Micro"] == "47000"
+    assert before - await _balance(clients) == 47_000
+    holds = [e for e in await _entries(clients) if e.get("kind") == "reserve"]
+    assert holds and -holds[0]["amount_micro"] == 47_000
+
+
 def test_platform_estimate_prices_text_to_speech_by_input_characters():
     """MiniMax publishes TTS per character, so the request's text length—not a result-page
     default or a flat call price—sets the reserve. Unicode code points count as characters."""

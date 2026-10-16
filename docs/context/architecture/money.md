@@ -1238,7 +1238,9 @@ check (`X-Treg-Route-Verify`, catalog.md) is one more such child: it gets what t
 its refusal leaves the find charged and the check unrun. A refusal is a 402
 `route_max_cost` and moves no money for that attempt. Overflow inherits the same field via its
 child snapshot and checks its own estimate; a preceding direct charge reduces the remainder.
-This is a pre-reservation guard, not a rewrite of provider-reported settlement evidence.
+This is a pre-reservation guard, not a rewrite of provider-reported settlement evidence. The
+estimate it checks includes a row's `cost.extra_results` rider (catalog.md), so a flat call price
+asked for more results than it covers is gated at what those results cost.
 
 ## Overflow money
 

@@ -85,6 +85,29 @@ def test_cost_modifiers_accept_only_supported_declarative_credit_rules():
     assert any("cost.settle currently supports only 'base', 'modifiers' or 'usage'" in error for error in bad_settle)
 
 
+def test_cost_extra_results_is_a_usd_rider_on_a_per_call_price():
+    base = {
+        "type": "per_call", "value": 7, "currency": "USD", "per": 1000,
+        "unit": "call", "source": "docs", "source_url": "https://example.com/pricing",
+        "checked": "2026-10-16", "confidence": "documented",
+    }
+    errors: list[str] = []
+    validator.check_cost(base | {"extra_results": {"included": 10, "usd": 0.001}},
+                         "catalog:test", errors, [])
+    assert errors == []
+    for broken in (
+        base | {"type": "per_result", "extra_results": {"included": 10, "usd": 0.001}},
+        base | {"currency": "credit", "extra_results": {"included": 10, "usd": 0.001}},
+        base | {"extra_results": {"included": "10", "usd": 0.001}},
+        base | {"extra_results": {"included": 10, "usd": 0}},
+        base | {"extra_results": {"included": 10}},
+        base | {"extra_results": {"included": 10, "usd": 0.001, "param": "numResults"}},
+    ):
+        found: list[str] = []
+        validator.check_cost(broken, "catalog:test", found, [])
+        assert any("cost.extra_results" in error for error in found), broken
+
+
 def test_status_marker_references_must_exist_and_end_at_a_live_endpoint():
     statuses = {"provider.old": "retired", "provider.live": "", "provider.dead": "broken"}
 

@@ -486,6 +486,15 @@ def _body_limit(body: bytes) -> int | None:
     return items
 
 
+def _asked_rows(query, body: bytes) -> int | None:
+    """The row count a request asks for: the first limit param in the query, else the body's."""
+    for name in _LIMIT_PARAMS:
+        raw = query.get(name)
+        if raw is not None and str(raw).strip().isdigit():
+            return int(str(raw).strip())
+    return _body_limit(body)  # POST providers put the row count in the body, not the query
+
+
 def _body_text_characters(body: bytes) -> int:
     """Count the provider-facing ``text`` field for character-priced generation calls.
 
@@ -533,18 +542,18 @@ def _platform_estimate_micro(cost: dict, query, body: bytes = b"") -> int:
         # 2026-09-05). The request names how many entities it asks about.
         n = 1 if cost.get("unit") == "call" else _entity_count(query, body)
     elif cost.get("type") in ("per_result", "quota_rows"):
-        asked = None
-        for name in _LIMIT_PARAMS:
-            raw = query.get(name)
-            if raw is not None and str(raw).strip().isdigit():
-                asked = int(str(raw).strip())
-                break
-        if asked is None:
-            asked = _body_limit(body)  # POST providers put the row count in the body, not the query
-        n = max(1, min(asked or _PLATFORM_PAGE_DEFAULT, _PLATFORM_PAGE_MAX))
+        n = max(1, min(_asked_rows(query, body) or _PLATFORM_PAGE_DEFAULT, _PLATFORM_PAGE_MAX))
     # Round to 9 dp BEFORE the ceil: float artifacts (0.0015 × 3 → 4500.000000001) must not
     # over-reserve a phantom micro-dollar.
     raw_micro = round(usd * n * 1_000_000, 9)
+    rider = cost.get("extra_results")
+    if cost.get("type") == "per_call" and isinstance(rider, dict):
+        # A flat call price covering the first `included` results, plus a rider for each one asked
+        # beyond them (Exa: $0.007 for 10, $0.001 a result after). The provider's reported charge
+        # still settles; the rider makes the hold, the 402 gate and a max-cost ceiling see it.
+        asked = min(_asked_rows(query, body) or 0, _PLATFORM_PAGE_MAX)
+        raw_micro = round(raw_micro + float(rider["usd"]) * max(0, asked - int(rider["included"]))
+                          * 1_000_000, 9)
     whole = int(raw_micro)
     return whole + 1 if raw_micro > whole else whole
 

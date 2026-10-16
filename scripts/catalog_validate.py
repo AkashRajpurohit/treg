@@ -862,6 +862,14 @@ def check_cost(cost: dict, where: str, errors: list[str], warnings: list[str],
                 or any(not isinstance(p, str) or not p.startswith("body.")
                        or "array" not in str((fields.get(p) or {}).get("type", "")) for p in per)):
             fail(errors, where, "cost.call_fee_per must list declared body array fields beside call_fee")
+    if "extra_results" in cost:
+        rider = cost["extra_results"]
+        if (cost.get("type") != "per_call" or cost.get("currency", "USD") != "USD"
+                or not isinstance(rider, dict) or set(rider) != {"included", "usd"}
+                or type(rider.get("included")) is not int or rider["included"] < 0
+                or not _finite_number(rider.get("usd")) or rider["usd"] <= 0):
+            fail(errors, where, "cost.extra_results needs an integer `included` and a positive "
+                                "`usd` per extra result on a USD per_call price")
     if "display" in cost:
         display = cost["display"]
         if (not isinstance(display, dict) or not isinstance(display.get("unit"), str)

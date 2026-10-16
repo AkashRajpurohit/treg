@@ -1176,6 +1176,13 @@ ceiling. A finite nonnegative response value settles the call at that amount; mi
 non-finite evidence falls back to the normal estimate/miss rules. `reported_charge` is generic
 catalog metadata, not a provider-specific billing branch, and cannot be combined with `cost.settle`.
 
+A USD `per_call` price that covers only the first results may declare
+`extra_results: {included: N, usd: X}`: the reserve adds `X` for each result the request asks for
+beyond `N`, read from the caller's own limit parameter (the same names a `per_result` row reads,
+capped at the 100-row page maximum). Exa's search price is $0.007 for ten results plus $0.001 a
+result after, so a 100-result sweep holds $0.097, and the 402 gate and `X-Treg-Route-Max-Cost`
+see that figure. It moves only the hold: the reported charge still settles.
+
 `spooled_response: true` marks a synchronous endpoint whose answer inlines media too large for
 the 8 MiB settlement buffer (Gemini returns images as base64 in its JSON: ~9 MB at 2K, ~23 MB at
 4K; Lyria songs arrive as base64 MP3). Its metered 2xx is read to disk and settled from exactly
