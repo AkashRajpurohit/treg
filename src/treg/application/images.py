@@ -21,7 +21,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 
 from .. import ratestore
 from ..config import get_settings
@@ -57,7 +57,12 @@ def store() -> stores.MediaStore | None:
     s = get_settings()
     sig = (s.media_store_endpoint, s.media_store_access_key_id, s.media_staging_bucket, s.media_public_bucket)
     if _store_cache is None or _store_cache[0] != sig:
-        _store_cache = (sig, stores.open_media_store(s))
+        try:
+            opened = stores.open_media_store(s)
+        except ValueError as exc:   # an endpoint that is neither https nor localhost: pictures stay off
+            log.error("picture storage is off: %s", exc)
+            opened = None
+        _store_cache = (sig, opened)
     return _store_cache[1]
 
 
@@ -160,13 +165,16 @@ async def sweep(*, now: datetime | None = None) -> dict:
 
 
 async def _still_used(key: str) -> bool:
+    """Whether any row names `key`: the same rule as the sweep (`_used_keys`)."""
     async with session_maker() as db:
         for column in (User.avatar_key, Org.avatar_key, ShowcaseApp.icon_key):
             if (await db.execute(select(func.count()).where(column == key))).scalar_one():
                 return True
-        apps = (await db.execute(select(ShowcaseApp.shot_keys).where(
-            or_(ShowcaseApp.status == "approved", ShowcaseApp.status == "hidden")))).scalars().all()
-        return any(key in (shots or []) for shots in apps)
+        for shots, pending in (await db.execute(select(ShowcaseApp.shot_keys, ShowcaseApp.pending))).all():
+            if key in (shots or []) or (pending and (key == pending.get("icon_key")
+                                                     or key in (pending.get("shot_keys") or []))):
+                return True
+    return False
 
 
 async def retire(keys: list[str | None]) -> None:

@@ -96,7 +96,9 @@ export default {
           this.scMsg = 'Sent for review. Nothing is public until treg approves it.'
           sent = true
         } else if (JSON.stringify(fields) !== f.base) {
-          await this.api('/showcase/apps/' + f.id, { method: 'PATCH', headers: json, body: JSON.stringify({ expected_version: f.version, fields }) })
+          const edited = await this.api('/showcase/apps/' + f.id, { method: 'PATCH', headers: json, body: JSON.stringify({ expected_version: f.version, fields }) })
+          // Sent: a retry after a failed key step must not send the same change again.
+          Object.assign(f, { version: edited.version, app: edited, base: JSON.stringify(fields) })
           this.scMsg = f.live ? 'Change sent for review. The live version stays until treg approves the change.'
             : 'Change sent for review.'
           sent = true

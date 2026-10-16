@@ -127,5 +127,7 @@ prefix. Staging is treg's alone, with a lifecycle rule that expires every object
 
 URLs are built from `TREG_MEDIA_BASE_URL` (a media domain) or, while it is empty, treg's own
 `/media-files/`; the database stores only keys, so moving to a domain changes no data. With no media
-settings the feature is off: uploads answer 503 and pages show initials. No database connection is
+settings the feature is off: uploads answer 503 and pages show initials; an endpoint that is neither
+https nor localhost also leaves it off (logged), never breaking sign-in. Uploads and avatar changes
+refuse a cross-site Origin, like every cookie-authenticated mutation. No database connection is
 held during storage I/O; each step opens its own short session.

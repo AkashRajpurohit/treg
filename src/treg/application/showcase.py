@@ -240,8 +240,9 @@ async def my_teams(user: User) -> list[dict]:
             .where(Membership.user_id == user.id, Membership.role.in_(("owner", "admin")), Org.demo.is_(False))
             .order_by(Org.name))).all()
         counts = dict((await db.execute(
-            select(ShowcaseApp.org_id, func.count()).where(ShowcaseApp.status != "rejected")
-            .group_by(ShowcaseApp.org_id))).all())
+            select(ShowcaseApp.org_id, func.count())
+            .where(ShowcaseApp.status != "rejected", ShowcaseApp.org_id.in_([r[0] for r in rows]))
+            .group_by(ShowcaseApp.org_id))).all()) if rows else {}
     return [{"id": i, "slug": s, "name": n, "apps": counts.get(i, 0), "limit": rules.MAX_APPS_PER_TEAM}
             for i, s, n in rows]
 
@@ -319,6 +320,8 @@ async def withdraw(user: User, app_id: int) -> None:
     async with session_maker() as db:
         app = await _owned_app(db, user, app_id)
         if app.approved_at is None:
+            for child in (ShowcaseAppEvent, ShowcaseAppKey, ShowcaseVote):
+                await db.execute(delete(child).where(child.app_id == app.id))
             await db.delete(app)
         elif app.pending is not None:
             app.pending = None
@@ -630,7 +633,7 @@ async def _fold_batch(db: AsyncSession, source: Source, *, since: date, young: d
     the caller's transaction. Returns (calls read, caught up)."""
     org_id, key_id = source
     cursor = await _locked_cursor(db, source)
-    if first:
+    if first or cursor.through_id < 0:   # a new cursor never reads history before the window
         cursor.through_id = max(cursor.through_id, await _window_floor(db, org_id, since))
     which = [CallRecord.org_id == org_id, CallRecord.id > cursor.through_id]
     if key_id != TEAM:
@@ -694,14 +697,22 @@ async def refresh_activity(session_factory: Callable = session_maker, *, now: da
             read += n
             if done:
                 waiting.remove(source)
-    wanted = set(sources)
     async with session_factory() as db:
         await db.execute(delete(ShowcaseWeek).where(ShowcaseWeek.week_start < rules.keep_from(now.date()).isoformat()))
-        for model in (ShowcaseWeek, ShowcaseCursor):
-            stored = set((await db.execute(select(model.org_id, model.api_key_id).distinct())).all())
-            for org_id, key_id in stored - wanted:
-                await db.execute(delete(model).where(model.org_id == org_id, model.api_key_id == key_id))
         await db.commit()
+        # What is wanted now, not at the start of the run: an app approved meanwhile keeps its rows.
+        _, current = await _approved_sources(db)
+        wanted = {src for srcs in current.values() for src in srcs}
+        stored = set((await db.execute(select(ShowcaseCursor.org_id, ShowcaseCursor.api_key_id))).all())
+        stored |= set((await db.execute(select(ShowcaseWeek.org_id, ShowcaseWeek.api_key_id).distinct())).all())
+        await db.commit()
+    for org_id, key_id in sorted(stored - wanted):
+        # A source's cursor and rows go together, under the cursor lock, so a run counting it waits.
+        async with session_factory() as db:
+            await _locked_cursor(db, (org_id, key_id))
+            for model in (ShowcaseWeek, ShowcaseCursor):
+                await db.execute(delete(model).where(model.org_id == org_id, model.api_key_id == key_id))
+            await db.commit()
     log.info("showcase activity: %d sources, %d calls read, caught up %s", len(sources), read, not waiting)
     return {"sources": len(sources), "calls": read, "caught_up": not waiting,
             "newest_week": rules.last_complete_week(now.date()).isoformat()}

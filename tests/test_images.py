@@ -11,6 +11,7 @@ from sqlmodel import select
 
 from fake_media_store import MemoryMediaStore
 from treg.application import images
+from treg.config import get_settings
 from treg.domain import images as rules
 from treg.domain.identity import session
 from treg.infra.db import session_maker
@@ -175,3 +176,43 @@ async def test_a_missing_object_reads_as_none_not_an_error(monkeypatch):
         raise FileNotFoundError(path)
     monkeypatch.setattr(obstore, "get_async", missing)
     assert await S3MediaStore({"staging": object(), "public": object()}).get("public", "x") is None
+
+
+async def test_a_cross_site_page_cannot_upload_or_set_a_picture(clients, store):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    evil = {"Origin": "https://evil.example", "content-type": "text/plain"}
+    assert (await clients.post("/images/user_avatar", content=picture(300, 300), headers=evil)).status_code == 403
+    assert store.keys("staging") == []
+    assert (await clients.put("/me/avatar", json={"key": None}, headers={"Origin": "https://evil.example"})).status_code == 403
+    assert (await clients.put(f"/orgs/{org_id}/avatar", json={"key": None},
+                              headers={"Origin": "https://evil.example"})).status_code == 403
+
+
+async def test_a_plain_http_storage_endpoint_turns_pictures_off_without_breaking_sign_in(clients, monkeypatch):
+    user, _ = await _tim()
+    _cookie(clients, user)
+    for name, value in (("ENDPOINT", "http://minio:9000"), ("ACCESS_KEY_ID", "k"), ("SECRET_ACCESS_KEY", "s"),
+                        ("STAGING_BUCKET", "a"), ("PUBLIC_BUCKET", "b")):
+        monkeypatch.setenv(f"TREG_MEDIA_{'STORE_' if name in ('ENDPOINT', 'ACCESS_KEY_ID', 'SECRET_ACCESS_KEY') else ''}{name}", value)
+    get_settings.cache_clear()
+    try:
+        me = await clients.get("/auth/me")
+        assert me.status_code == 200 and me.json()["uploads"] is False
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_retire_keeps_a_picture_another_app_proposes(clients, store):
+    from treg.application import images as app_images
+    from treg.models import ShowcaseApp
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    key = (await clients.post("/images/showcase_icon", content=picture(300, 300),
+                              headers={"content-type": "image/png"})).json()["key"]
+    await app_images.publish(key)
+    async with session_maker() as db:
+        db.add(ShowcaseApp(org_id=org_id, status="pending", pending={"icon_key": key, "shot_keys": []}))
+        await db.commit()
+    await app_images.retire([key])
+    assert key in store.keys("public")

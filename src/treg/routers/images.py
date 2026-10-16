@@ -20,6 +20,7 @@ from ..domain.images import KINDS, ImageRejected
 from ..infra.db import get_session
 from ..infra.media_store import CACHE_FOREVER, MediaStoreError
 from ..models import Membership, User
+from .auth_helpers import _same_origin
 
 router = APIRouter()
 
@@ -58,6 +59,8 @@ async def _body(request: Request, limit: int) -> bytes:
 async def upload_image(kind: str, request: Request, user: User = Depends(require_identity),
                        db: AsyncSession = Depends(get_session)):
     await db.commit()  # release the request's connection: no session is held during storage I/O
+    if not _same_origin(request):   # a cross-site form could otherwise spend someone's upload budget
+        raise HTTPException(status_code=403, detail="cross-origin request rejected")
     if not may_upload(user):
         raise HTTPException(status_code=403, detail="verify your email to upload pictures")
     if kind not in KINDS:
@@ -107,9 +110,11 @@ class AvatarIn(BaseModel):
 
 
 @router.put("/me/avatar", include_in_schema=False)
-async def set_my_avatar(body: AvatarIn, user: User = Depends(require_identity),
+async def set_my_avatar(body: AvatarIn, request: Request, user: User = Depends(require_identity),
                         db: AsyncSession = Depends(get_session)):
     await db.commit()
+    if not _same_origin(request):
+        raise HTTPException(status_code=403, detail="cross-origin request rejected")
     if not may_upload(user):
         raise HTTPException(status_code=403, detail="verify your email to set a picture")
     try:
@@ -124,8 +129,10 @@ async def set_my_avatar(body: AvatarIn, user: User = Depends(require_identity),
 
 
 @router.put("/orgs/{org_id}/avatar", include_in_schema=False)
-async def set_team_avatar(org_id: int, body: AvatarIn, user: User = Depends(require_identity),
+async def set_team_avatar(org_id: int, body: AvatarIn, request: Request, user: User = Depends(require_identity),
                           db: AsyncSession = Depends(get_session)):
+    if not _same_origin(request):
+        raise HTTPException(status_code=403, detail="cross-origin request rejected")
     role = (await db.execute(select(Membership.role).where(
         Membership.org_id == org_id, Membership.user_id == user.id))).scalars().first()
     await db.commit()  # release the dependency's connection before the storage I/O

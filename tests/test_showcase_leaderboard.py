@@ -27,7 +27,7 @@ from treg.config import get_settings
 from treg.domain import showcase as rules
 from treg.domain.identity import session
 from treg.infra.db import session_maker
-from treg.models import (ApiKey, CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseCursor,
+from treg.models import (ApiKey, CallRecord, Membership, Org, ShowcaseApp, ShowcaseAppEvent, ShowcaseAppKey, ShowcaseCursor,
                          ShowcaseVote, ShowcaseWeek, User)
 from treg.timeutil import utcnow_naive
 
@@ -616,3 +616,31 @@ async def test_the_sweep_deletes_only_pictures_no_row_names(clients, store):
         await cascade_delete_org(await db.get(Org, other_id), db)
         await db.commit()
     assert (await images.sweep(now=later))["deleted"] == 0                         # `shared` is still Tim's
+
+
+async def test_withdrawing_an_application_removes_its_history_and_key_links(clients):
+    user, org_id = await _tim()
+    _cookie(clients, user)
+    entry = (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields())).json()
+    key = await _key(org_id, "prod")
+    assert (await clients.put(f"/showcase/apps/{entry['id']}/usage",
+                              json={"source": "keys", "key_ids": [key]})).status_code == 200
+    assert (await clients.delete(f"/showcase/apps/{entry['id']}")).status_code == 200
+    async with session_maker() as db:
+        for model in (ShowcaseApp, ShowcaseAppEvent, ShowcaseAppKey):
+            assert (await db.execute(select(model))).scalars().all() == [], model.__name__
+    again = (await clients.post(f"/showcase/teams/{org_id}/apps", json=fields(name="Again"))).json()
+    assert (await clients.put(f"/showcase/apps/{again['id']}/usage",
+                              json={"source": "keys", "key_ids": [key]})).status_code == 200   # the key is free
+
+
+async def test_a_new_cursor_never_reads_before_the_window(clients):
+    _, org_id = await _tim()
+    await _approved(org_id)
+    await _calls(org_id, rules.window_start(TODAY) - timedelta(days=20), 4)            # long before the window
+    await _calls(org_id, datetime(NEWEST.year, NEWEST.month, NEWEST.day, 9), 1)
+    async with session_maker() as db:            # a cursor created mid-run, as if another run dropped it
+        n, _ = await showcase._fold_batch(db, (org_id, 0), since=rules.window_start(TODAY), young=NOW,
+                                          limit=100, domains={}, first=False)
+        await db.commit()
+    assert n == 1

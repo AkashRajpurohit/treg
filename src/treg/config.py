@@ -606,7 +606,7 @@ class Settings(BaseSettings):
     # Pictures (team and user avatars, /showcase leaderboard icons and screenshots): two S3-API
     # buckets, separate from the archive's. Uploads land in the private STAGING bucket; publishing
     # copies a file to the PUBLIC bucket, which `media_base_url` serves (a custom domain such as
-    # https://media.treg.to). Off until endpoint, keys and both buckets are set: then uploads are
+    # https://media.example.com). Off until endpoint, keys and both buckets are set: then uploads are
     # refused and pages show initials. With no `media_base_url`, treg serves the public bucket
     # itself at /media-files/. The endpoint must be https, except a local MinIO on localhost.
     media_store_endpoint: str = ""
