@@ -837,6 +837,9 @@ def check_cost(cost: dict, where: str, errors: list[str], warnings: list[str],
     per = cost.get("per")
     if per is not None and (not isinstance(per, int) or isinstance(per, bool) or per < 1):
         fail(errors, where, f"cost.per '{per}' must be a positive integer (the quantity `value` covers)")
+    if "bills_miss" in cost and (cost["bills_miss"] is not True or cost.get("type") != "per_success"):
+        fail(errors, where, "cost.bills_miss must be true on a per_success price (per_call and "
+                            "per_result already bill every answer)")
     reported = cost.get("reported_charge")
     if reported is not None:
         if (not isinstance(reported, dict) or set(reported) != {"path", "unit"}
@@ -1219,6 +1222,8 @@ def main(argv: list[str]) -> int:
         need = "spec_urls" if extended_file else "docs"
         if not isinstance(src, dict) or not src.get(need):
             fail(errors, name, f"source.{need} missing")
+        if "bills_miss" in data and data["bills_miss"] is not True:
+            fail(errors, name, "a provider-wide bills_miss must be true (it marks every per_success price)")
         proposed = set(data.get("proposed_capabilities") or {})
         known = capabilities | proposed
 

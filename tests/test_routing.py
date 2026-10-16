@@ -129,6 +129,24 @@ def test_a_route_false_adapter_is_never_routed():
     assert C.parse_adapters({"adapters": {"c.find": {"route": False}}})["c.find"].route is False
 
 
+def test_a_per_success_child_whose_provider_bills_a_miss_is_disclosed_and_ranked_as_billed():
+    from treg.domain.catalog.routing import contracts as C, synthetic
+    contract = C.Contract(capability="x.find", summary="", identity=(("q",),), identity_types={"q": "str"},
+                          derive={}, filters={}, output={"rows": {"required": True}}, miss="rows == []")
+    adapters = {eid: C.Adapter(eid, (("q",),), {"q": "body.q"}, {"rows": "rows"}, "rows == []", verified=True)
+                for eid in ("a.find", "b.find")}
+    endpoints = [{"id": "a.find", "provider": "a", "cost": {"type": "per_success", "value": 0.01}},
+                 {"id": "b.find", "provider": "b", "cost": {"type": "per_success", "value": 0.01, "bills_miss": True}}]
+    row = synthetic.routed_endpoint(contract, endpoints, adapters, lambda cost, provider: {"usd": cost["value"]})
+    assert row["miss_billed_by"] == ["b.find"] and row["cost"]["varies"] is True
+    assert row["cost"]["note"].startswith("NOT free") and "(1 of 2 do)" in row["cost"]["note"]
+    free, billed = (Candidate(ep, None, ("q",), "platform", 20_000, hit_rate=0.25, ok_rate=None, p50_ms=100,
+                              last_ok_days=1) for ep in endpoints)
+    assert free.expected_cost_per_hit == pytest.approx(20_000)
+    assert billed.expected_cost_per_hit == pytest.approx(80_000), "every answer billed: price / P(hit)"
+    assert call_route._free_on_failure(free) and not call_route._free_on_failure(billed)
+
+
 def test_every_shipped_adapter_round_trips_its_fixture():
     cat = catalog_store.load()
     bad = {eid: a.verify_note for eid, a in cat.adapters.items() if not a.verified}
@@ -785,6 +803,30 @@ async def test_caller_fault_on_a_child_stops_and_own_key_ranks_first(clients: As
          "tomba": [(200, {"data": {"email": "p@stripe.com", "score": 90, "verification": {"status": "valid"}}})]}, seen))
     r = await clients.post(f"/call/{ROUTED}", json={"full_name": "Patrick Collison", "domain": "stripe.com"})
     assert r.status_code == 200 and r.json()["_treg"]["served_by"] == "tomba.people.email.find", r.text
+
+
+async def test_a_vendor_4xx_is_not_retried_on_a_paid_child_whose_provider_bills_a_miss(clients: AsyncClient, enrichment_on, monkeypatch):
+    # hunter (2.45 cents a find) is asked after tomba's 400 because a per-success miss is free; once its
+    # row says the provider bills an answered miss, a retry of a rejected question would be paid for.
+    hunter = catalog_store.load().by_id["hunter.people.email.find"]
+    headers = {"X-Treg-Route-Prefer": "tomba,hunter"}
+    seen = []
+    monkeypatch.setattr(call_service, "relay", _relay_by_provider(
+        {"tomba": [(400, {"error": "bad"})], "hunter": [(400, {"error": "bad"})], "*": [(400, {"error": "bad"})] * 3}, seen))
+    r = await clients.post(f"/call/{ROUTED}", json={"full_name": "Patrick Collison", "domain": "stripe.com"}, headers=headers)
+    assert r.status_code == 400 and [p for p, *_ in seen][:2] == ["tomba", "hunter"], r.text
+    assert {t["endpoint_id"]: t["outcome"] for t in r.json()["detail"]["tried"]}["hunter.people.email.find"] == "error"
+    monkeypatch.setitem(hunter, "cost", {**hunter["cost"], "bills_miss": True})
+    seen.clear()
+    monkeypatch.setattr(call_service, "relay", _relay_by_provider(
+        {"tomba": [(400, {"error": "bad"})], "hunter": [(400, {"error": "bad"})], "*": [(400, {"error": "bad"})] * 3}, seen))
+    before = await _balance(clients)
+    r = await clients.post(f"/call/{ROUTED}", json={"full_name": "Patrick Collison", "domain": "stripe.com"}, headers=headers)
+    assert r.status_code == 400 and r.json()["detail"]["error"] == "route_caller_fault", r.text
+    tried = {t["endpoint_id"]: t for t in r.json()["detail"]["tried"]}
+    assert tried["hunter.people.email.find"]["outcome"] == "skipped"
+    assert tried["hunter.people.email.find"]["charged_micro"] == 0 and r.json()["detail"]["charged_micro"] == 0
+    assert "hunter" not in [p for p, *_ in seen] and await _balance(clients) == before
 
 
 async def test_a_2xx_without_the_required_core_is_a_miss_not_a_hit(clients: AsyncClient, enrichment_on, monkeypatch):
@@ -2025,3 +2067,17 @@ def test_a_contract_default_the_caller_did_not_send_is_not_an_ignored_filter():
     quote = [cand(c.endpoint["id"], c.price_micro, ()) for c in plan]
     assert [c.endpoint["id"] for c in rank(plan, given={"keywords"})] == \
         [c.endpoint["id"] for c in rank(quote)] == ["seranking.google.keywords.volume", "dataforseo.google.keywords.volume"]
+
+
+def test_a_provider_wide_bills_miss_marks_every_per_success_price_of_both_tiers(tmp_path):
+    import yaml
+    core = {"provider": "test", "bills_miss": True, "endpoints": [
+        {"id": "test.find", "cost": {"type": "per_success", "value": 1}},
+        {"id": "test.list", "cost": {"type": "per_call", "value": 1}}]}
+    extended = {"provider": "test", "endpoints": [{"id": "test.x.find", "cost": {"type": "per_success", "value": 1}}]}
+    (tmp_path / "test.yaml").write_text(yaml.safe_dump(core))
+    (tmp_path / "test.extended.yaml").write_text(yaml.safe_dump(extended))
+    cat = catalog_store.load(directory=tmp_path)
+    assert cat.by_id["test.find"]["cost"]["bills_miss"] is True
+    assert cat.by_id["test.x.find"]["cost"]["bills_miss"] is True
+    assert "bills_miss" not in cat.by_id["test.list"]["cost"]

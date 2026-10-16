@@ -1069,7 +1069,17 @@ cost:
   checked: 2026-07-28     # when the PRICE was confirmed — not when the route was called
   confidence: documented  # verified | documented | inferred | unknown
   note: "…"               # free text: the half of the charge the schema cannot hold, caveats, traps
+  bills_miss: true        # per_success only: the provider charges some answers treg judges a miss
 ```
+
+`bills_miss` changes no reserve or settlement: the row still settles on whatever its rules read
+(often the provider's own reported charge). It says that a per-success price is not free on a
+miss, and `routing.contracts.bills_miss` is the one reader: the routed row's `miss_billed_by`,
+the ranking's `P(billed)` and the router's free-on-failure test all treat such a child like one
+priced per call. The row's `note` says which misses the provider bills. A provider that bills every
+answer it gives declares `bills_miss: true` once at the top of either of its files, and
+`store.load` marks every per-success price of both tiers with it, so a generated extended file
+needs no re-ingest.
 
 For finite AIGC matrices, linear rates, and usage-settled generation, `value` is replaced by an
 ordered first-match `table` plus an explicit fallback upper bound:
@@ -2169,8 +2179,8 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
 - **The generated row** — `routing/synthetic.py`: every capability with ≥ 2 verified children gets
   `treg.<capability>` (`store.load` skips a `routed: false` contract) (`provider: treg`, `kind: routed`, `POST /<capability>`, `input` = the
   contract, `cost` = the children's range, `routed_children`, `miss_billed_by` = the children priced
-  per call or per result, whose provider bills an answer treg judges a miss: the caller pays those
-  too, and the cost note says so). When `miss_billed_by` is non-empty the cost carries `varies:
+  per call or per result, or per success with `cost.bills_miss`, whose provider bills an answer treg
+  judges a miss: the caller pays those too, and the cost note says so). When `miss_billed_by` is non-empty the cost carries `varies:
   true` and `advertised_usd` quotes `usd_per_call: null`: the $0 floor of the range read as "free"
   to an agent that then paid for hundreds of billed misses. The note leads with "NOT free" and
   carries the range. Never hand-written; not in any
@@ -2178,7 +2188,8 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   `catalog_get` on it returns the contract and the ranked **plan** (the quote) —
   nothing is reserved.
 - **Ranking** — `routing/plan.py`: own keys (tier 2) first at cost 0; then
-  `expected_cost_per_hit = cost_at(request) × P(billed) / P(hit)` where `cost_at` prices *this*
+  `expected_cost_per_hit = cost_at(request) × P(billed) / P(hit)` (`P(billed)` is `P(hit)` for a
+  per-success child without `bills_miss`, else 1) where `cost_at` prices *this*
   request at its requested size (per-result × limit, credit-with-minimum rounded up) and `P(hit)`
   is the measured hit rate when ≥ 20 decided samples exist, else `ok_rate`, else 1.0 (flagged
   `unmeasured`). `build_plan` reads that evidence through bootstrap's shared process cache; cold or
@@ -2196,7 +2207,7 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   like a 5xx. Vendor
   4xx (not 402/405/408/410/429) = usually the caller's fault, but scrapers answer 400 for their own outages
   (tikhub, live 2026-08-28), so the waterfall goes on ONLY to candidates that bill nothing for a
-  rejected request — per_success, free, the org's own key, or per_call ≤ 1¢ (`CHEAP_RETRY_MICRO`;
+  rejected request — per_success without `bills_miss`, free, the org's own key, or per_call ≤ 1¢ (`CHEAP_RETRY_MICRO`;
   since 2026-09-07 a per_call rejection settles only at a charge the vendor itself reports, so this
   is a bound on the reported-charge risk, not on the estimate — see money.md)
   — never the same provider again, within the error bound; if every one rejects it, the caller

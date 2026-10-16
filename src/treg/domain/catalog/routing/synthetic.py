@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .contracts import Adapter, Contract
+from .contracts import Adapter, Contract, bills_miss
 
 ROUTED_KIND = "routed"
 # Example values for the generated row's `test_request`, by identity key (the call template reads it).
@@ -31,10 +31,9 @@ def routed_endpoint(contract: Contract, children: list[dict], adapters: dict[str
     lo, hi = (prices[0], prices[-1]) if prices else (None, None)
     # A child priced per call or per result bills its provider's answer even when treg judges it a
     # miss and moves on: the caller pays those too (hub simulation runs 1-3: a people search shown
-    # as $0 charged $0.0905 for four misses, then a $0.05 hit). Only per-success and free children
-    # are free on a miss.
-    billed_miss = sorted(e["id"] for e in kids
-                         if ((e.get("cost") or {}).get("type") not in ("per_success", "free", None)))
+    # as $0 charged $0.0905 for four misses, then a $0.05 hit), and so does a per-success child
+    # whose provider charges an answered miss (`cost.bills_miss`).
+    billed_miss = sorted(e["id"] for e in kids if bills_miss(e))
     max_usd = contract.default_max_cost_usd or 1.00
     body = {}
     variants = " | ".join("{" + ", ".join(v) + "}" for v in contract.identity)
@@ -65,7 +64,7 @@ def routed_endpoint(contract: Contract, children: list[dict], adapters: dict[str
                            f"matches each provider on the variants it accepts ({variants}) and sends each provider only "
                            f"the fields it wants. "
                            "On a miss treg keeps trying providers, cheapest first, within X-Treg-Route-Max-Cost "
-                           f"(default ${contract.default_max_cost_usd or 1.00:g} per call; misses on per-success providers are free). Options ride as "
+                           f"(default ${contract.default_max_cost_usd or 1.00:g} per call; a miss is billed only by the children in miss_billed_by). Options ride as "
                            "headers, never in the body: X-Treg-Route-Waterfall: 0 (stop at the first miss), "
                            "X-Treg-Route-Max-Cost: <usd>, X-Treg-Route-Prefer / X-Treg-Route-Exclude: <provider>. The "
                            "response is {output, raw, _treg: {served_by, tried}}; X-Treg-Served-By names the child."

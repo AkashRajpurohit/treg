@@ -456,6 +456,8 @@ def _parse(directory: Path) -> Catalog:
         _validate_cache(doc.get("cache"), header=True)
         if doc.get("cache") and not meta.get("cache"):
             meta["cache"] = doc["cache"]
+        if doc.get("bills_miss") is True:
+            meta["bills_miss"] = True
         for raw in doc.get("endpoints") or []:
             if not isinstance(raw, dict) or not raw.get("id"):
                 continue
@@ -491,6 +493,14 @@ def _parse(directory: Path) -> Catalog:
             if not ep["status"]:
                 endpoints.append(ep)
 
+    # A provider that bills every answer it gives (TikHub's "This request will incur a charge.") says
+    # so once, at the top of either file, and every per-success price of both tiers inherits
+    # `cost.bills_miss` (catalog.md, Cost): a generated extended file needs no re-ingest for it.
+    for ep in by_id.values():
+        cost = ep.get("cost")
+        if (provider_meta.get(ep["provider"]) or {}).get("bills_miss") and isinstance(cost, dict) \
+                and cost.get("type") == "per_success" and "bills_miss" not in cost:
+            ep["cost"] = {**cost, "bills_miss": True}
     for ep in endpoints:  # a platform seen only in provider files still deserves a label
         platforms.setdefault(ep["platform"], {"label": ep["platform"], "category": "Other"})
     # Routing: contracts + adapters, each adapter verified against its endpoint's fixtures, then one

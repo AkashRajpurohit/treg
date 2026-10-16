@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import paths as P
-from .contracts import Adapter, Contract, adapter_accepts
+from .contracts import Adapter, Contract, adapter_accepts, bills_miss
 
 MAX_ERROR_FALLBACKS = 2
 MIN_HIT_SAMPLES = 50
@@ -119,7 +119,7 @@ class Candidate:
         p_hit = self.hit_rate if self.hit_rate is not None else (self.ok_rate if self.ok_rate is not None else 1.0)
         p_hit = max(p_hit, 0.01)
         cost_type = (self.endpoint.get("cost") or {}).get("type")
-        p_billed = p_hit if cost_type == "per_success" else 1.0
+        p_billed = p_hit if cost_type == "per_success" and not bills_miss(self.endpoint) else 1.0
         return self.price_micro * p_billed / p_hit
 
     @property

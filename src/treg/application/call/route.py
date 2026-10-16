@@ -45,7 +45,8 @@ from ...domain.catalog import results as catalog_results
 from ...domain.catalog import stats as endpoint_stats
 from ...domain.catalog import store as catalog_store
 from ...domain.catalog.routing import paths as P
-from ...domain.catalog.routing.contracts import canonical_identity, declared_miss, declared_not_found, miss_status
+from ...domain.catalog.routing.contracts import (bills_miss, canonical_identity, declared_miss, declared_not_found,
+                                                 miss_status)
 from ...domain.catalog.routing.plan import (
     MAX_ERROR_FALLBACKS, Candidate, Plan, candidates_for, cost_at, ignored_filters, rank, unscoped,
 )
@@ -110,11 +111,12 @@ ROUTED_ASYNC_WAIT_SECONDS = 60
 
 def _free_on_failure(cand: Candidate) -> bool:
     """A candidate worth asking after another provider's 4xx: it bills nothing for a rejected request
-    (per_success pricing, a free endpoint, the org's own key) or so little (≤ 1¢ per call) that a
-    repeated mistake costs less than failing the caller — scrapers answer 400 for their own outages."""
+    (per_success pricing whose provider does not bill a miss, a free endpoint, the org's own key) or
+    so little (≤ 1¢ per call) that a repeated mistake costs less than failing the caller — scrapers
+    answer 400 for their own outages."""
     if cand.tier == "credential" or not cand.price_micro:
         return True
-    if (cand.endpoint.get("cost") or {}).get("type") == "per_success":
+    if (cand.endpoint.get("cost") or {}).get("type") == "per_success" and not bills_miss(cand.endpoint):
         return True
     return cand.price_micro <= CHEAP_RETRY_MICRO
 

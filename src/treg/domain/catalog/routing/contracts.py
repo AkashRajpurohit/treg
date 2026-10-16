@@ -258,6 +258,17 @@ def parse_adapters(doc: dict) -> dict[str, Adapter]:
 
 # ---- identity -------------------------------------------------------------------------------
 
+def bills_miss(endpoint: dict) -> bool:
+    """True when the caller pays for an answer treg judges a miss: a child priced per call or per
+    result bills every answer, and a per-success one declaring `cost.bills_miss: true` has a
+    provider that charges an answered miss (Datagma's `creditBurn` on a nameless person, AnyAPI's
+    `costUsd` on `found: false`). Only the rest are free on a miss."""
+    cost = endpoint.get("cost") or {}
+    if cost.get("type") in ("per_success", "free", None):
+        return cost.get("bills_miss") is True
+    return True
+
+
 def miss_status(endpoint: dict) -> int | None:
     """The ERROR status this endpoint's YAML declares as "no result" (`miss: {status, means}`),
     or None. Only a 4xx counts: a `status: 200` block documents a 2xx the adapter's own `miss`

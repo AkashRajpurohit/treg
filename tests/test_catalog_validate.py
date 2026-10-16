@@ -1014,3 +1014,17 @@ def test_the_fast_catalog_loader_reads_every_file_like_the_pure_python_one():
         text = path.read_text(encoding="utf-8")
         assert yaml.load(text, Loader=store._Loader) == yaml.load(text, Loader=Pure), path.name  # noqa: S506
     assert yaml.load("checked: 2026-09-01", Loader=store._Loader) == {"checked": "2026-09-01"}  # noqa: S506
+
+
+@pytest.mark.parametrize('cost_type,flag,valid', [
+    ('per_success', True, True),
+    ('per_success', False, False),
+    ('per_success', 'yes', False),
+    ('per_call', True, False),
+])
+def test_bills_miss_is_a_true_flag_on_a_per_success_price(cost_type, flag, valid):
+    cost = dict(catalog_store.load().by_id['trykitt.people.email.find']['cost'])
+    cost.update(type=cost_type, bills_miss=flag)
+    errors = []
+    validator.check_cost(cost, 'test', errors, [], provider='trykitt')
+    assert any('cost.bills_miss' in error for error in errors) is (not valid)
