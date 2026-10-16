@@ -20,7 +20,7 @@ export class UploadError extends Error {
 
 /** Why this file cannot be uploaded as `kind`, or '' when it may be. */
 export function imageProblem(kind: ImageKind, file: { type: string, size: number }): string {
-  if (!TYPES.includes(file.type)) return 'Use a PNG, JPEG or WebP picture.'
+  if (!TYPES.includes(file.type)) return 'Use a PNG, JPEG or WebP image.'
   if (!file.size) return 'The file is empty.'
   if (file.size > IMAGE_RULES[kind].maxBytes) return `The file is too large (up to ${IMAGE_RULES[kind].maxBytes / MB} MB).`
   return ''
@@ -35,7 +35,7 @@ export async function uploadImage(kind: ImageKind, file: Blob, headers: Record<s
   })
   const body = await r.json().catch(() => null)
   if (!r.ok) {
-    const detail = body && typeof body.detail === 'string' ? body.detail : 'the picture could not be uploaded (' + r.status + ')'
+    const detail = body && typeof body.detail === 'string' ? body.detail : 'the image could not be uploaded (' + r.status + ')'
     throw new UploadError(r.status, detail)
   }
   return body as Staged
