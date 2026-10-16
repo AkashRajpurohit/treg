@@ -2,6 +2,7 @@
 connections per pool, next to capacity. Sizing by arithmetic got both minor pools wrong once each
 (ops/deploy.md § Database pools); this is what settles the number."""
 import asyncio
+import types
 
 import pytest
 
@@ -31,10 +32,14 @@ async def test_gauge_emits_one_event_per_window_with_peak_capacity_and_headroom(
     monkeypatch.setattr(infra_db, "pool_snapshot", lambda: next(samples, last))
     captured: list[tuple[str, str, dict]] = []
     monkeypatch.setattr(analytics, "capture", lambda d, e, p=None, **kw: captured.append((d, e, p)))
-    task = asyncio.create_task(bootstrap.pool_gauge(sample_s=0.01, emit_s=0.05))
+    # A clock that moves 10 ms per read, so the window closes after the same five samples however
+    # slowly a loaded runner schedules the task; on the wall clock it sometimes closed after one.
+    ticks = iter(range(10_000))
+    monkeypatch.setattr(bootstrap, "time", types.SimpleNamespace(monotonic=lambda: next(ticks) / 100))
+    task = asyncio.create_task(bootstrap.pool_gauge(sample_s=0, emit_s=0.05))
     try:
-        for _ in range(100):
-            await asyncio.sleep(0.01)
+        for _ in range(1000):
+            await asyncio.sleep(0)
             if captured:
                 break
     finally:
