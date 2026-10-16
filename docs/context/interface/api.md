@@ -555,9 +555,11 @@ shared HTTP client. `/auth/logout` remains an HTTP-only cookie action.
   disappear from discovery, and return 410 on call/access checks. `platform_blocked` entries
   remain discoverable for BYOK but cannot use treg's key.
 
-  A platform access check normally estimates the default page size. Openmart is the provider-specific
-  exception: its runnable catalog example is priced with the same whole-credit request formula used
-  for reserve, so the pre-call estimate reflects that example's requested record count.
+  A platform access check prices the endpoint's runnable `test_request` (its `queryParams` and
+  `body`) with the same request pricing the reserve uses, for every provider, so the pre-call
+  estimate reflects that example's requested rows, targets or records. Before, every provider but
+  Openmart was estimated with an empty request, which priced a `per_result` row at the 20-row page
+  default.
 
   Zero-result searches emit `SearchMiss` rows through the lossy audit queue. A team-pinned Default
   token provides the same human and team attribution as an older hash-backed membership token.

@@ -26,7 +26,7 @@ from treg import api as A, audit, oauth_providers
 from treg.domain import money as ledger
 from treg.domain.money import settlement as settlement_basis
 from treg.domain.catalog import store as catalog_store
-from treg.application.call import contactout, octen
+from treg.application.call import access as access_app, contactout, octen
 from treg.application.call import resolve as call_resolution
 from treg.application.call import settle as call_settle
 from treg.application.call import service as call_service
@@ -1392,6 +1392,22 @@ async def test_access_probe_reports_the_platform_tier(clients: AsyncClient, plat
     assert d["tier"] == "platform"
     assert d["estimated_cost_micro"] == EP_MICRO
     assert "no key needed" in d["detail"] and "0.001" in d["detail"]
+
+
+async def test_access_estimate_prices_the_runnable_example_not_the_default_page(clients: AsyncClient, monkeypatch):
+    """The RUN IT line prices the row's own example. An empty request priced every `per_result`
+    row except one provider's at the 20-row default, so a one-row example quoted twenty rows."""
+    monkeypatch.setenv("TREG_PLATFORM_KEY_MOZ", "PLATFORM-MOZ-KEY")
+    monkeypatch.setenv("TREG_PLATFORM_PROVIDERS", "moz")
+    get_settings.cache_clear()
+    cat = catalog_store.load()
+    ep = cat.by_id["moz.web.backlinks.list"]
+    assert ep["test_request"]["body"]["limit"] == 1
+    row = _usd_to_micro_for_test(cat.cost_view(ep["cost"], "moz")["usd"])
+    d = (await clients.get(f"/catalog/endpoints/{ep['id']}/access")).json()
+    assert d["tier"] == "platform" and d["estimated_cost_micro"] == row
+    assert access_app._example_query({"size": 5, "simplified": True, "id": ["a", "b"]}).multi_items() == [
+        ("size", "5"), ("simplified", "true"), ("id", "a"), ("id", "b")]
 
 
 async def test_a_user_may_not_forge_a_platform_binding(clients: AsyncClient, platform_on):

@@ -17,6 +17,7 @@ from ...domain.catalog import store as catalog_store
 from ...domain.connections import authorization as connection_authorization
 from ...domain.identity.access import Caller
 from .resolve import (
+    QueryValues,
     _authorization_method,
     _anonymous_offer,
     _enforce_catalog_status,
@@ -150,17 +151,28 @@ async def catalog_endpoint_access(
 
 
 def _platform_access_estimate(endpoint: dict, service: str, cost: dict) -> int:
-    """Estimate the catalog's runnable example, including provider-specific request pricing."""
-    if service != "openmart":
-        return _platform_estimate_micro(cost, {})
+    """Estimate the catalog's runnable example, including provider-specific request pricing.
+
+    The example's own query and body, for every provider: an empty request priced a `per_result`
+    row at the 20-row default, so a one-row example quoted twenty rows."""
     test_request = endpoint.get("test_request") or {}
     body_value = test_request.get("body")
     body = json.dumps(body_value).encode() if body_value is not None else b""
-    query = dict(test_request.get("query") or {})
     estimate, _unit = _marketplace_pricing(
-        service, endpoint["id"], cost, query, body,
+        service, endpoint["id"], cost,
+        _example_query(test_request.get("queryParams") or test_request.get("query")), body,
     )
     return estimate
+
+
+def _example_query(query) -> QueryValues:
+    """A `test_request.query` as the query string the call would send: a list repeats its key and
+    a boolean reads as the word a provider parses."""
+    items: list[tuple[str, str]] = []
+    for name, value in (query or {}).items() if isinstance(query, dict) else ():
+        for one in value if isinstance(value, list) else [value]:
+            items.append((name, str(one).lower() if isinstance(one, bool) else str(one)))
+    return QueryValues(tuple(items))
 
 
 async def _routed_access(endpoint: dict, caller: Caller, catalog) -> dict:
