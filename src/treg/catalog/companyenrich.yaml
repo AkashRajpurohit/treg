@@ -60,7 +60,6 @@ proposed_capabilities:
   people.email.bulk.start: "Queue a bulk work-email lookup job"
   people.email.bulk.status: "Check a bulk work-email lookup job"
   account.jobs.list: "List every background job on your account"
-  account.jobs.get: "Get one background job's details"
 
 endpoints:
 

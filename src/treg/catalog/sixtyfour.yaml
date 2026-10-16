@@ -40,7 +40,8 @@ endpoints:
       note: "0.5 credit for a found work email. The response's cost_credits settles the exact charge, including a free miss."
     docs_url: https://docs.sixtyfour.ai/api-reference/endpoint/find-email
     added: '2026-10-16'
-    untestable: "A useful fixture would disclose a real person's email; live billing was checked without storing the result."
+    test_request: {body: {lead: {name: Jane Doe, domain: example.com}, mode: PROFESSIONAL}}
+    example_response: examples/sixtyfour.people.email.find.work.json
 
   - id: sixtyfour.people.email.find.personal
     capability: people.email.find
@@ -87,10 +88,11 @@ endpoints:
       type: per_success
       value: 3
       unit: call
-      note: "3 credits per phone number found. The hold covers one number; reported cost_credits settles every number actually returned, which may exceed the hold."
+      note: "3 credits for the single phone field returned by /find-phone; an empty phone is free. Reported cost_credits settles the actual charge."
     docs_url: https://docs.sixtyfour.ai/api-reference/endpoint/find-phone
     added: '2026-10-16'
-    untestable: "A useful fixture would disclose a real person's phone number; live billing was checked without storing it."
+    test_request: {body: {lead: {name: Jane Doe, domain: example.com}}}
+    example_response: examples/sixtyfour.people.phone.find.json
 
   - id: sixtyfour.people.email.reverse
     capability: people.enrich
@@ -111,7 +113,8 @@ endpoints:
       note: "0.5 credit for a resolved email. Exact cost_credits controls settlement."
     docs_url: https://docs.sixtyfour.ai/api-reference/endpoint/reverse-email
     added: '2026-10-16'
-    untestable: "A useful fixture would disclose a real person's profile."
+    test_request: {body: {lead: {email: jane@example.com}}}
+    example_response: examples/sixtyfour.people.email.reverse.json
 
   - id: sixtyfour.people.phone.reverse
     capability: people.enrich
@@ -184,9 +187,9 @@ endpoints:
         param: {in: pathParams, name: job_id}
       status:
         path: status
-        progress: [pending, queued, running, processing, in_progress]
+        progress: [pending, queued, running, processing, in_progress, continued_as_new]
         success: [completed]
-        failure: [failed, cancelled, canceled]
+        failure: [failed, cancelled, canceled, terminated, timed_out]
       result: {path: result}
       interval: 5
     input:
@@ -304,7 +307,7 @@ endpoints:
       source_url: https://docs.sixtyfour.ai/guides/credits-and-pricing
       checked: '2026-10-16'
       confidence: verified
-      note: "A successful enrichment costs 0.3 credit; this response has no charge field."
+      note: "A deliberately nonexistent LinkedIn URL returned HTTP 200 and consumed 0.3 credit; the response has no charge field."
     docs_url: https://docs.sixtyfour.ai/api-reference/enrichment/enrich-linkedin-profile
     added: '2026-10-16'
     untestable: "A useful fixture would contain a person's or company's enrichment result."
@@ -375,9 +378,9 @@ endpoints:
     untestable: "Search may return contact data; live count and charge were checked without storing rows."
 
   - id: sixtyfour.jobs.get
-    capability: people.enrich
-    platform: people
-    domain: contacts
+    capability: account.jobs.get
+    platform: account
+    domain: account
     scope: any_account
     kind: utility
     method: GET

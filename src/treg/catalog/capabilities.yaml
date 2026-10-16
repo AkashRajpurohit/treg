@@ -867,6 +867,7 @@ capabilities:
 
   # --- Meta -------------------------------------------------------------------------------------
   account.usage: "Check your usage, quota & balance"
+  account.jobs.get: "Get one background job's details"
 
   # --- taxonomy-fill 2026-07-28 -----------------------------------------------------------------
   # ai-search

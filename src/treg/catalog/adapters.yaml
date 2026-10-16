@@ -135,6 +135,13 @@ adapters:
     out: {email: data.email, first_name: "split_first(data.name)",
           last_name: "split_last(data.name)", verified: "data.email_status == 'valid'"}
     miss: "data.email == null"
+  sixtyfour.people.email.find.work:
+    accepts: [[full_name, domain], [first_name, last_name, domain], [linkedin_url]]
+    in: {full_name: body.lead.name, domain: body.lead.domain, linkedin_url: body.lead.linkedin_url}
+    in_expr: {body.lead.name: "coalesce(full_name, join(first_name, last_name))"}
+    const: {body.mode: PROFESSIONAL}
+    out: {email: "email[0].[0]", verified: "email[0].[1] == 'OK'"}
+    miss: "email[0].[0] == null"
 
   # ---- instagram.user.profile ---------------------------------------------------------------
   # Instagram users come in GraphQL (edge_*.count) or private API (*_count) shape; read both.
@@ -380,6 +387,13 @@ adapters:
     out: {phone: "coalesce(data.mobile_phone, data.phone_number, data.phones[0].number)",
           line_type: "data.phones[0].type"}
     miss: "coalesce(data.mobile_phone, data.phone_number, data.phones[0].number) == null"
+  sixtyfour.people.phone.find:
+    accepts: [[linkedin_url], [email], [full_name, domain], [first_name, last_name, domain]]
+    in: {linkedin_url: body.lead.linkedin_url, email: body.lead.email,
+         full_name: body.lead.name, domain: body.lead.domain}
+    in_expr: {body.lead.name: "coalesce(full_name, join(first_name, last_name))"}
+    out: {phone: "null_if(phone, '')"}
+    miss: "null_if(phone, '') == null"
 
   tomba.people.phone.verify:
     accepts: [[phone]]
@@ -592,6 +606,15 @@ adapters:
           title: results.title, company: results.company.name, company_domain: results.company.website_url,
           linkedin_url: results.linkedin_url, location: results.country}
     miss: "status != 'ok'"
+  sixtyfour.people.email.reverse:
+    accepts: [[email]]
+    in: {email: body.lead.email}
+    out: {full_name: "join(reverse_firstname, reverse_lastname)",
+          first_name: reverse_firstname, last_name: reverse_lastname,
+          title: reverse_title, company: reverse_company_name,
+          company_domain: reverse_company_domain,
+          linkedin_url: reverse_linkedin_url, location: reverse_location}
+    miss: "join(reverse_firstname, reverse_lastname) == null"
 
   # ---- instagram.user.posts -----------------------------------------------------------------
   tikhub.instagram.user.posts:
