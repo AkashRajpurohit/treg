@@ -1182,7 +1182,7 @@ endpoints:
     source_url: https://openrouter.ai/api/v1/videos/models
     checked: '2026-09-18'
     confidence: documented
-    note: Table rows quote the live rate card. Indistinguishable mode-specific SKUs collapse to the highest rate. The matched row is reserved and the terminal usage.cost settles; observed charges can include a minimum or fee absent from pricing_skus, so a settle may exceed its reserve (reconcile lists overruns).
+    note: Table rows quote the live rate card. Indistinguishable mode-specific SKUs collapse to the highest rate. The matched row is reserved and the terminal usage.cost settles; observed charges can include a minimum or fee absent from pricing_skus, so a settle may exceed its reserve (reconcile lists overruns). The clip runs as long as the speech (the prompt script or the audio reference) and bills that length; `duration` only sets the reserve, which is a lower bound for a longer script.
   docs_url: https://openrouter.ai/heygen/avatar-iv
 - id: openrouter.x.kwaivgi-kling-v3-0-pro
   added: '2026-09-04'
@@ -1237,15 +1237,18 @@ endpoints:
         body.generate_audio: true
       value: 0.168
       times: body.duration
+      times_min: 5
     - when:
         body.model: kwaivgi/kling-v3.0-pro
         body.resolution: 720p
       value: 0.112
       times: body.duration
+      times_min: 5
     - when:
         body.model: kwaivgi/kling-v3.0-pro
       value: 0.112
       times: body.duration
+      times_min: 5
     fallback:
       value: 2.520000001
       note: The highest live SKU multiplied by the model's maximum duration is the global usage-settlement reservation ceiling.
@@ -1258,7 +1261,7 @@ endpoints:
     source_url: https://openrouter.ai/api/v1/videos/models
     checked: '2026-09-02'
     confidence: documented
-    note: Table rows quote the live rate card. Indistinguishable mode-specific SKUs collapse to the highest rate. The matched row is reserved and the terminal usage.cost settles; observed charges can include a minimum or fee absent from pricing_skus, so a settle may exceed its reserve (reconcile lists overruns).
+    note: Table rows quote the live rate card. Indistinguishable mode-specific SKUs collapse to the highest rate. The matched row is reserved and the terminal usage.cost settles; observed charges can include a minimum or fee absent from pricing_skus, so a settle may exceed its reserve (reconcile lists overruns). Kling bills at least 5 seconds, so a shorter clip is reserved and billed as 5 s (`times_min`).
   docs_url: https://openrouter.ai/kwaivgi/kling-v3.0-pro
 - id: openrouter.x.kwaivgi-kling-v3-0-std
   added: '2026-09-04'
@@ -1313,15 +1316,18 @@ endpoints:
         body.generate_audio: true
       value: 0.126
       times: body.duration
+      times_min: 5
     - when:
         body.model: kwaivgi/kling-v3.0-std
         body.resolution: 720p
       value: 0.084
       times: body.duration
+      times_min: 5
     - when:
         body.model: kwaivgi/kling-v3.0-std
       value: 0.084
       times: body.duration
+      times_min: 5
     fallback:
       value: 1.890000001
       note: The highest live SKU multiplied by the model's maximum duration is the global usage-settlement reservation ceiling.
@@ -1334,7 +1340,7 @@ endpoints:
     source_url: https://openrouter.ai/api/v1/videos/models
     checked: '2026-09-02'
     confidence: documented
-    note: Table rows quote the live rate card. Indistinguishable mode-specific SKUs collapse to the highest rate. The matched row is reserved and the terminal usage.cost settles; observed charges can include a minimum or fee absent from pricing_skus, so a settle may exceed its reserve (reconcile lists overruns).
+    note: Table rows quote the live rate card. Indistinguishable mode-specific SKUs collapse to the highest rate. The matched row is reserved and the terminal usage.cost settles; observed charges can include a minimum or fee absent from pricing_skus, so a settle may exceed its reserve (reconcile lists overruns). Kling bills at least 5 seconds, so a shorter clip is reserved and billed as 5 s (`times_min`).
   docs_url: https://openrouter.ai/kwaivgi/kling-v3.0-std
 - id: openrouter.x.kwaivgi-kling-video-o1
   added: '2026-09-04'
@@ -1665,7 +1671,7 @@ endpoints:
     source_url: https://openrouter.ai/api/v1/videos/models
     checked: '2026-09-02'
     confidence: documented
-    note: Table rows quote the live rate card. Indistinguishable mode-specific SKUs collapse to the highest rate. The matched row is reserved and the terminal usage.cost settles; observed charges can include a minimum or fee absent from pricing_skus, so a settle may exceed its reserve (reconcile lists overruns).
+    note: Table rows quote the live rate card. Indistinguishable mode-specific SKUs collapse to the highest rate. The matched row is reserved and the terminal usage.cost settles; observed charges can include a minimum or fee absent from pricing_skus, so a settle may exceed its reserve (reconcile lists overruns). An edit bills `duration` seconds (default 5) whatever the input clip's length, so set `duration` to the input length.
   docs_url: https://openrouter.ai/runway/aleph-2
 - id: openrouter.x.runway-gen-4-5
   added: '2026-09-04'
