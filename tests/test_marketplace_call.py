@@ -1215,17 +1215,19 @@ def test_apollo_settles_a_2xx_miss_at_zero():
 
 def test_apollo_people_enrich_stub_is_a_free_miss():
     """A people/match no-match is a 200 whose `person` echoes what was sent, with
-    `match_confidence: "none"`; Apollo drew no credit for it on the live meter. The rule is
-    Monid's: bill when the confidence is not `none` or the person carries an email."""
+    `match_confidence: "none"`, the sent email included; Apollo drew no credit for any of them on
+    the live meter. Bill when the confidence is not `none`, or when there is none and the person
+    carries an email."""
     enrich = _mk("apollo", endpoint_id="apollo.people.enrich", cost_type="per_success")
     stub = b'{"person": {"id": "x", "name": "Qwvx Brindlemoor", "match_confidence": "none", "email": null, "employment_history": []}}'
     assert call_settle._observed_cost_micro(enrich, stub) == 0
     assert call_settle._observed_cost_micro(enrich, b'{"person": null}') == 0
     assert call_settle._observed_cost_micro(enrich, b'{"person": {"id": "x", "email": ""}}') == 0
+    echo = b'{"person": {"id": "x", "match_confidence": "none", "email": "a@company.example", "email_status": null}}'
+    assert call_settle._observed_cost_micro(enrich, echo) == 0, "a stub echoing the sent email is a miss"
     for hit in (b'{"person": {"id": "x", "match_confidence": "high"}}',
                 b'{"person": {"id": "x", "match_confidence": "low", "email": null}}',
-                b'{"person": {"id": "x", "match_confidence": "none", "email": "a@stripe.com"}}',
-                b'{"person": {"id": "x", "email": "a@stripe.com"}}'):
+                b'{"person": {"id": "x", "email": "a@company.example"}}'):
         assert call_settle._observed_cost_micro(enrich, hit) is None, hit
 
 
