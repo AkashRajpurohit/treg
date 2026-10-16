@@ -171,11 +171,15 @@ def core_routes(provider: str) -> set[tuple[str, str]]:
 
 
 def carry_verification(provider: str, endpoints: list[dict], *, carry_capability: bool = True,
-                       carry_input: bool = True) -> int:
+                       carry_input: bool = True, carry_cost: bool = True) -> int:
     """Re-attach reviewed fields from the extended file being replaced.
 
     Those fields are the only ones NOT derived from upstream: verification stamps are the result
     of an actual paid call made by scripts/catalog_verify_extended.py.
+
+    `carry_cost=False` for a provider whose price is derived on every run from its live rate card
+    and supplied evidence (AnyAPI): carrying `cost` froze each row at its first ingest, so a re-run
+    rewrote the note's ceiling while the price beside it stayed stale.
 
     `carry_input=False` for a provider that publishes a machine-readable request schema. Carrying
     `input` freezes a generated row's parameters at the revision that first created it, and no
@@ -228,6 +232,8 @@ def carry_verification(provider: str, endpoints: list[dict], *, carry_capability
             "authorization_method", "authorization_methods", "authorization_paths",
             "required_scopes", "required_resource", "token_type",
         ]
+        if not carry_cost:
+            carried_fields.remove("cost")
         if carry_input:
             carried_fields.append("input")
         if carry_capability:
@@ -276,9 +282,10 @@ def place_added(ep: dict) -> None:
 
 
 def write_extended(provider: str, source: dict, endpoints: list[dict], notes: list[str],
-                   *, carry_capability: bool = True, carry_input: bool = True) -> Path:
+                   *, carry_capability: bool = True, carry_input: bool = True,
+                   carry_cost: bool = True) -> Path:
     carried = carry_verification(provider, endpoints, carry_capability=carry_capability,
-                                 carry_input=carry_input)
+                                 carry_input=carry_input, carry_cost=carry_cost)
     if carried:
         print(f"  carried {carried} verification stamp(s) forward", file=sys.stderr)
     endpoints = sorted(endpoints, key=lambda e: (e["platform"], e["path"], e["method"]))
@@ -1473,7 +1480,7 @@ ANYAPI_SKIP_PARAMS = {"preferLatencyUnderMs", "requireCursor", "requireSinglePag
 ANYAPI_RATE_CARD = "https://api.getanyapi.com/v1/apis?limit=1000"
 ANYAPI_OPENAPI = "https://api.getanyapi.com/openapi.json"
 # Bumped by hand when the rate card is re-read, so a re-run with no price change is byte-identical.
-ANYAPI_CHECKED = "2026-10-02"
+ANYAPI_CHECKED = "2026-10-16"
 
 # Measured pricing evidence is supplied by the operator, outside the public checkout.
 _ANYAPI_MEASURED: dict[str, dict] | None = None
@@ -1493,6 +1500,16 @@ _ANYAPI_MEASURED: dict[str, dict] | None = None
 # lower number there would be a smaller reserve with no upside. It also does NOT apply to a
 # single-source per-result row like linkedin.company_employees or linkedin.jobs, where the price at
 # the input maximum is HIGHER than the measured p90 and switching would raise the shelf price.
+# Linear SKUs with no base fee, priced per page returned and bounded by the caller's `limit`: the
+# row is `per_result` at the rate card's per-unit price rather than a p90 of whole calls, which
+# quoted a crawl at $0.0045 whether it returned one page ($0.00125) or ten ($0.0125).
+ANYAPI_PER_PAGE = {"web.crawl"}
+
+# The one sentence every AnyAPI note carries about a miss. A source that answers not-found is a 2xx
+# AnyAPI bills: linkedin.email billed $0.011 for a profile that does not exist (probed 2026-09-19).
+ANYAPI_MISS_SENTENCE = ("A request no source could serve answers non-2xx and is not charged; a "
+                        "not-found answer (`output.found: false`) is a 2xx that AnyAPI charges.")
+
 ANYAPI_CORE_ROWS_PRICED_AT_CHEAPEST_SOURCE = {
     "maps.search",
     "maps.place",
@@ -1547,7 +1564,7 @@ def _anyapi_cost(api: dict) -> dict:
     """What a caller really pays for one request: the p90 of AnyAPI's own measured charges.
 
     `cost.value` is the 90th percentile of every charge AnyAPI billed for this SKU over the
-    trailing 60 days (ANYAPI_MEASURED_FILE), so the shelf price is what nine calls in ten settle at
+    trailing evidence window (`window_days`, 60 by default), so the shelf price is what nine calls in ten settle at
     or below. That replaces the rate card's `pricing.from.maxUsd` - the CHEAPEST source's price at
     the input maximum - which is wrong in both directions wherever the ledger can check it: it
     reads far LOW on a multi-source SKU whose cheap source rarely wins (ebay.search lists $0.0005
@@ -1575,13 +1592,26 @@ def _anyapi_cost(api: dict) -> dict:
     `reported_charge` stays on every row either way: `costUsd` is the only number that knows which
     source served and how many rows came back, and it is what settles.
     """
+    pricing = api["pricing"]
+    if api["id"] in ANYAPI_PER_PAGE:
+        return {
+            "type": "per_result",
+            "value": pricing["from"]["perUnitUsd"],
+            "currency": "USD",
+            "unit": "page",
+            "reported_charge": {"path": "costUsd", "unit": "usd"},
+            "source": "rate_card_api",
+            "source_url": f"https://api.getanyapi.com/v1/apis/{api['id']}",
+            "checked": ANYAPI_CHECKED,
+            "confidence": "verified",
+        }
     measured = (None if api["id"] in ANYAPI_CORE_ROWS_PRICED_AT_CHEAPEST_SOURCE
                 else _anyapi_measured().get(api["id"]))
-    price = measured["p90_usd"] if measured else api["pricing"]["from"]["maxUsd"]
+    price = measured["p90_usd"] if measured else pricing["from"]["maxUsd"]
     if measured:
         price = max(price, _anyapi_flat_floor(api))
-        price = min(price, api["pricing"].get("failoverMaxUsd") or price)
-    return {
+        price = min(price, pricing.get("failoverMaxUsd") or price)
+    cost = {
         "type": "per_success",
         "value": price,
         "currency": "USD",
@@ -1592,6 +1622,10 @@ def _anyapi_cost(api: dict) -> dict:
         "checked": ANYAPI_CHECKED,
         "confidence": "verified",
     }
+    # A dearer source (or more work) can settle above the listed price: the shelf shows "$x+".
+    if (pricing.get("failoverMaxUsd") or 0) > price:
+        cost["display"] = {"unit": "call", "variable": True}
+    return cost
 
 
 def _anyapi_flat_floor(api: dict) -> float:
@@ -1624,15 +1658,33 @@ def anyapi_price_basis(sku: str, api: dict | None = None) -> str:
         return ("Price is the cheapest source's advertised price, because the sources that "
                 "serve this endpoint charge very different amounts for the same number of "
                 "results; a rescue on a dearer source settles above it.")
+    if sku in ANYAPI_PER_PAGE:
+        page = ((api or {}).get("pricing") or {}).get("from") or {}
+        return (f"AnyAPI prices it per page returned: ${page.get('perUnitUsd', 0):g} a page, up to "
+                f"${page.get('maxUsd', 0):g} for the {round(page.get('maxUsd', 0) / page['perUnitUsd'])}-page "
+                "maximum, so `limit` is the cost dial; an omitted `limit` is held at the 20-page default "
+                "and settles at what was returned." if page.get("perUnitUsd") else "")
     as_of, days = _anyapi_measured_window()
     m = _anyapi_measured().get(sku)
     if m:
-        basis = (f"Price is the p90 of what AnyAPI really charged for this endpoint over the {days} "
-                 f"days to {as_of} ({m['calls']} charged calls, ${m['p50_usd']:g} median), not "
-                 "a list price; roughly one call in ten settles above it.")
-        return basis + (_anyapi_clamp_clause(m["p90_usd"], api) if api else "")
+        basis = (f"Price is the p90 of what AnyAPI charged for this endpoint over the {days} "
+                 f"days to {as_of} (${m['p50_usd']:g} median), not a list price; roughly one call "
+                 "in ten settles above it.")
+        return basis + (_anyapi_clamp_clause(m["p90_usd"], api) if api else "") \
+            + _anyapi_unit_clause(api)
     return (f"Too few charged calls in the {days} days to {as_of} to measure, so the price is "
-            "the live rate card's cheapest source at the input maximum.")
+            "the live rate card's cheapest source at the input maximum.") + _anyapi_unit_clause(api)
+
+
+def _anyapi_unit_clause(api: dict | None) -> str:
+    """The rate card's own unit when AnyAPI prices a SKU per something no request field fixes in
+    advance (audio minutes, profiles found): the listed price is then a typical call, not a rate."""
+    page = (((api or {}).get("pricing") or {}).get("from") or {})
+    if page.get("model") != "linear" or page.get("unit") in ("request", "result"):
+        return ""
+    unit = page["unit"]
+    return (f" AnyAPI prices it per {unit}: ${page.get('baseUsd', 0):g} plus "
+            f"${page.get('perUnitUsd', 0):g} a {unit}, up to ${page.get('maxUsd', 0):g} a call.")
 
 
 def _anyapi_clamp_clause(p90: float, api: dict) -> str:
@@ -1705,8 +1757,8 @@ def ingest_anyapi(refresh: bool = False):
             f"{lanes} source{'s' if lanes != 1 else ''} can serve it; the "
             f"cheapest serves first and a failed attempt is retried on the next, up to a "
             f"${ceiling:g} ceiling per request. `costUsd` on the response is the exact charge, "
-            f"which is what reported_charge settles. Send `max_cost_usd` to refuse any source "
-            f"dearer than a price you name."
+            f"which is what reported_charge settles. {ANYAPI_MISS_SENTENCE} Send `max_cost_usd` "
+            f"to refuse any source dearer than a price you name."
         )
         endpoints.append(ep)
         unknown_platform.add(platform)
@@ -1717,13 +1769,13 @@ def ingest_anyapi(refresh: bool = False):
         "anyapi.yaml and the SKUs AnyAPI excludes from this listing (ANYAPI_KEEP_PLATFORMS and",
         "ANYAPI_EXCLUDE in scripts/catalog_ingest.py).",
         "Prices are MEASURED: cost.value is the p90 of what AnyAPI actually billed for that SKU",
-        "over the 60 days to the ingest date (operator-supplied pricing evidence), so it is",
+        "over the evidence window named in each note (operator-supplied pricing evidence), so it is",
         "what nine calls in ten settle at or below rather than the cheapest source's list price. A",
         "SKU with too few charged calls to measure keeps the rate card's cheapest-source price and",
         "says so in its note (cost.source: rate_card_api vs observed). One call in ten settles",
         "ABOVE the reserve by design; every response reports its exact charge as costUsd, which is",
         "what reported_charge settles on.",
-    ], carry_capability=True, carry_input=False)
+    ], carry_capability=True, carry_input=False, carry_cost=False)
     return out, {"endpoints": len(endpoints)}
 
 

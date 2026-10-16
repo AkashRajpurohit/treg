@@ -2492,3 +2492,10 @@ than silently replacing measured prices with estimates or dropping dashboard pri
 providers do not require these files. Published catalog prices remain part of the public product;
 private ledger exports and account evidence do not. Hosted operators maintain the inputs in
 `treg-internal/tools/catalog-evidence/`.
+
+AnyAPI prices are derived on every run from the live rate card and that evidence, so its ingest
+does not carry `cost` forward from the file it replaces (`carry_cost=False`); a re-run refreshes
+the price beside the note. A row whose `failoverMaxUsd` sits above its listed price carries
+`display.variable`, `web.crawl` is `per_result` per page at the rate card's per-unit price, and a
+SKU priced per audio minute or per profile says so in its note. The provider-wide
+`bills_miss: true` in `anyapi.yaml` covers both files: AnyAPI bills a not-found 2xx.
