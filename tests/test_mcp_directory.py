@@ -692,23 +692,42 @@ async def test_review_hint_wins_over_feedback_and_replay_wins_over_review(client
 
 
 @pytest.mark.parametrize(('path', 'tool'), [('/mcp/', 'call'), ('/mcp/v2/', 'catalog_call_read')])
-async def test_balance_hint_wins_with_all_sampling_enabled(clients, monkeypatch, path, tool):
+@pytest.mark.parametrize('refusal', ['balance', 'ceiling', 'provider'])
+async def test_a_402_hint_names_which_402_it_is(clients, monkeypatch, path, tool, refusal):
+    """Three different 402s, three different next steps: a short team balance is topped up, a price
+    ceiling the caller sent is raised or narrowed (nothing was charged), and a provider's own 402 is
+    neither. Every one of them used to say the team's balance was short. The hint also wins over
+    the sampled review and feedback invitations."""
     from treg import hints
     from treg.application.call import service as call_service
+    from treg.domain import money as ledger
+    from treg.infra.db import session_maker
     from test_marketplace_call import _fake_relay
 
     monkeypatch.setenv('TREG_PLATFORM_KEY_TIKHUB', 'SYNTHETIC-PLATFORM-KEY')
     monkeypatch.setenv('TREG_PLATFORM_PROVIDERS', 'tikhub')
     get_settings.cache_clear()
     monkeypatch.setattr(hints, 'sampled', lambda kind, ref: True)
-    monkeypatch.setattr(call_service, 'relay', _fake_relay(402, b'{"error":"payment required"}'))
+    upstream = (402, b'{"error":"payment required"}') if refusal == 'provider' else (200, b'{"data":{}}')
+    monkeypatch.setattr(call_service, 'relay', _fake_relay(*upstream))
+    if refusal == 'balance':
+        org_id = (await clients.get('/orgs')).json()[0]['org_id']
+        async with session_maker() as db:
+            await ledger.reserve(db, org_id, 'drain', 1_000_000)
+    args = {'endpoint_id': 'tikhub.tiktok.video.comments', 'params': {'aweme_id': '7'}}
+    if refusal == 'ceiling':
+        args['headers'] = {'X-Treg-Route-Max-Cost': '0.000001'}
     try:
         async with paired_mcp_session() as client:
-            result = await _call_tool(client, tool, {
-                'endpoint_id': 'tikhub.tiktok.video.comments', 'params': {'aweme_id': '7'},
-            }, clients.headers['X-Treg-Token'], path=path)
+            result = await _call_tool(client, tool, args, clients.headers['X-Treg-Token'], path=path)
         assert result['status'] == 402
-        assert result['hint'] == "the team's prepaid balance is not enough for this call"
+        hint = result['hint']
+        if refusal == 'balance':
+            assert hint == "the team's prepaid balance is not enough for this call"
+        elif refusal == 'ceiling':
+            assert 'price ceiling' in hint and 'nothing was charged' in hint and 'balance' not in hint
+        else:
+            assert hint.startswith('the provider itself answered 402')
     finally:
         get_settings.cache_clear()
 

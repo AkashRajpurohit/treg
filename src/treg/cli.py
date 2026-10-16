@@ -331,10 +331,15 @@ def _show(resp: httpx.Response) -> None:
         _show_hint_line(resp)
     if resp.status_code >= 400:
         _show_failure_diagnostics(resp)
-        # 402 = the team balance can't cover a call on treg's key. The JSON above already carries the
-        # numbers an agent needs; a human gets the two commands that fix it.
+        # treg's own 402 is a short balance or a price ceiling the caller sent. The JSON above already
+        # carries the numbers an agent needs; a human gets the commands that fix it.
         if resp.status_code == 402 and isinstance(body, dict) and isinstance(body.get("detail"), dict):
-            print("(check the balance with `treg balance`, add funds with `treg topup`)", file=sys.stderr)
+            if body["detail"].get("error") in ("route_max_cost", "hub_run_max_cost"):
+                print("(the call would cost more than the price ceiling sent with it; nothing was charged."
+                      " Raise X-Treg-Route-Max-Cost (X-Treg-Run-Max-Cost for a hub tool) or ask for fewer rows)",
+                      file=sys.stderr)
+            else:
+                print("(check the balance with `treg balance`, add funds with `treg topup`)", file=sys.stderr)
         # The server's org-picking 400 names its header, not the caller's mistake. Say which
         # org value was sent and where it came from (`--org` beats the saved active org).
         if isinstance(body, dict) and "choose an org" in str(body.get("detail", "")):

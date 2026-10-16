@@ -545,6 +545,24 @@ def _price_range(cost: dict) -> dict:
     return {"usd_range": span, **({"misses_billed": True} if cost.get("misses_billed") else {})}
 
 
+# Which 402 this is decides what the agent should do next: a price ceiling the caller set is raised
+# or narrowed, a short balance is topped up, and a provider's own 402 is neither of those.
+_CEILING_402 = frozenset({"route_max_cost", "hub_run_max_cost"})
+
+
+def _payment_required_hint(r: httpx.Response, body: Any) -> str:
+    detail = body.get("detail") if isinstance(body, dict) else None
+    error = detail.get("error") if isinstance(detail, dict) else None
+    if not r.headers.get("X-Treg-Error"):
+        return ("the provider itself answered 402 (its account or plan for this call); the team's "
+                "treg balance and price ceilings were not the reason")
+    if error in _CEILING_402:
+        return ("the call would cost more than the price ceiling sent with it (X-Treg-Route-Max-Cost "
+                "or X-Treg-Run-Max-Cost); nothing was charged. Raise the ceiling or ask for fewer "
+                "rows or targets")
+    return "the team's prepaid balance is not enough for this call"
+
+
 def _without_purchase_pointers(body: Any) -> Any:
     """Strip anything that points at a payment page out of a relayed 402.
 
@@ -1600,7 +1618,7 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
         # and the dashboard, where no such policy applies and the shortcut is genuinely useful.
         out["body"] = _without_purchase_pointers(out.get("body"))
         if not out.get("replayed"):
-            out["hint"] = "the team's prepaid balance is not enough for this call"
+            out["hint"] = _payment_required_hint(r, out.get("body"))
     elif r.status_code >= 400:
         # Whose fault it was matters to an agent deciding whether to retry elsewhere.
         out["whose_error"] = "treg" if r.headers.get("X-Treg-Error") else "provider"

@@ -157,7 +157,9 @@ saved only stdout filed 115 relayed Moz quota 403s as a bare "cli_error" with no
 metered 2xx gets the matching line (`_show_charge_line`: `treg: charged $0.006667 · call id …`,
 replay-aware), plus a provider-failure line for `X-Treg-Upstream-Failed` ([api](api.md)). An async submission instead says `reserved up to $… for async settlement`, because
 its header is the open hold ceiling rather than the final charge. No cost header (own key,
-non-call response) → nothing extra.
+non-call response) → nothing extra. treg's own 402 adds a line: a `route_max_cost` /
+`hub_run_max_cost` refusal says the ceiling sent with the call was too low (nothing charged), any
+other says to check the balance and top up.
 
 **Per-process identity:** `TREG_TOKEN` (+ optional `TREG_ORG`) in the environment beat
 `~/.treg/config.json`, so each coding agent on one machine can run as its own scoped agent —

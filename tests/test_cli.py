@@ -1159,6 +1159,8 @@ def test_show_prints_failure_diagnostics_on_stderr_and_keeps_stdout_the_body(cap
         cli._show(refused)
     _, err = capsys.readouterr()
     assert "HTTP 402" in err and "treg refused" in err
+    # a ceiling the caller sent, not a short balance: no top-up advice
+    assert "price ceiling" in err and "treg topup" not in err
 
     ok = httpx.Response(200, content=b'{"ok":true}', headers={"content-type": "application/json"})
     cli._show(ok)
