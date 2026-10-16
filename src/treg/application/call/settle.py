@@ -239,7 +239,8 @@ def _icypeas_search_row_count(endpoint_id: str, doc: object) -> int | None:
 
 def _serpstat_result_count(doc: object) -> int | None:
     """Credits a Serpstat JSON-RPC answer bills, in rows. HTTP 200 carries both outcomes: an `error`
-    envelope (bad token, exhausted limit, "Data not found") bills nothing; a `result` bills per row
+    envelope (bad token, exhausted limit, "Data not found") bills the caller nothing, though Serpstat
+    itself charges one credit for a 32017 "Data not found" and treg absorbs it; a `result` bills per row
     with the documented 1-credit minimum on an empty list. Rows live in `result.data[]`, or one
     level deeper for getKeywordTop (`result.data.top[]`). Any other shape (results keyed by the
     thing asked about) settles at the estimate rather than guessing a row count."""
