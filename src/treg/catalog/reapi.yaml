@@ -70,19 +70,19 @@ endpoints:
       table:
         - {when: {body.resolution: 480p, body.duration: -1}, value: 3.558}
         - {when: {body.resolution: 720p, body.duration: -1}, value: 8.0049}
-        - {when: {body.resolution: 1080p, body.duration: -1}, value: 13.86}
+        - {when: {body.resolution: 1080p, body.duration: -1}, value: 19.2825}
         - {when: {body.resolution: 480p}, value: 0.1186, times: body.duration, times_min: 4}
         - {when: {body.resolution: 720p}, value: 0.26683, times: body.duration, times_min: 4}
-        - {when: {body.resolution: 1080p}, value: 0.462, times: body.duration, times_min: 4}
-      fallback: {value: 13.87, note: "Thirty seconds of 1080p output at the documented per-second rate ($13.86), rounded up a cent to clear float comparison. The -1 (auto) rows reserve thirty seconds at the requested resolution; the table is the reserve only, the reported credits settle."}
+        - {when: {body.resolution: 1080p}, value: 0.64275, times: body.duration, times_min: 4}
+      fallback: {value: 19.29, note: "Thirty seconds of 1080p output at the per-second rate ($19.2825), rounded up to clear float comparison. The -1 (auto) rows reserve thirty seconds at the requested resolution; the table is the reserve only, the reported credits settle."}
       currency: USD
       settle: usage
       usage: {path: usage.credits, unit: credit}
       source: observed
       source_url: https://reapi.ai/models/seedance-2-5
-      checked: 2026-09-14
+      checked: 2026-10-16
       confidence: verified
-      note: "Billed per second of output; failed or moderated tasks are refunded in full. 480p and 720p rates are the credits observed live on 2026-09-14 (593 credits for 5 s at 480p; 4,803 for 18 s at 720p), which sit just under the pricing page's rounded $0.119 / $0.267. Video references (video_urls) add their own length to the billable seconds and are deliberately not listed so the table stays exact."
+      note: "Billed per second of output; failed or moderated tasks are refunded in full. 480p and 720p rates are the credits observed live on 2026-09-14 (593 credits for 5 s at 480p; 4,803 for 18 s at 720p), which sit just under the pricing page's rounded $0.119 / $0.267. reAPI raised 1080p to 642.75 credits a second ($0.64275, re-read 2026-10-16); settled 1080p tasks since match duration x 642.75 exactly. Video references (video_urls) add their own length to the billable seconds and are deliberately not listed so the table stays exact."
     verified: 2026-09-14
     added: '2026-09-14'
     example_response: examples/reapi.video-gen.seedance-2-5.json
@@ -118,19 +118,19 @@ endpoints:
       table:
         - {when: {body.resolution: 480p, body.duration: -1}, value: 3.558}
         - {when: {body.resolution: 720p, body.duration: -1}, value: 8.0049}
-        - {when: {body.resolution: 1080p, body.duration: -1}, value: 13.86}
+        - {when: {body.resolution: 1080p, body.duration: -1}, value: 19.2825}
         - {when: {body.resolution: 480p}, value: 0.1186, times: body.duration, times_min: 4}
         - {when: {body.resolution: 720p}, value: 0.26683, times: body.duration, times_min: 4}
-        - {when: {body.resolution: 1080p}, value: 0.462, times: body.duration, times_min: 4}
-      fallback: {value: 13.87, note: "Thirty seconds of 1080p output at the documented per-second rate ($13.86), rounded up a cent to clear float comparison. The -1 (auto) rows reserve thirty seconds at the requested resolution; the table is the reserve only, the reported credits settle."}
+        - {when: {body.resolution: 1080p}, value: 0.64275, times: body.duration, times_min: 4}
+      fallback: {value: 19.29, note: "Thirty seconds of 1080p output at the per-second rate ($19.2825), rounded up to clear float comparison. The -1 (auto) rows reserve thirty seconds at the requested resolution; the table is the reserve only, the reported credits settle."}
       currency: USD
       settle: usage
       usage: {path: usage.credits, unit: credit}
       source: observed
       source_url: https://reapi.ai/models/seedance-2-5
-      checked: 2026-09-14
+      checked: 2026-10-16
       confidence: verified
-      note: "Same meter as the default row: per second of output, refunded on failure. Live 2026-09-14: an 18 s 720p clip from one face image plus one voice clip settled 4,803 credits ($4.80); the 5 s 480p probe from a reference image settled 593."
+      note: "Same meter and rates as the default row (1080p $0.64275 a second since reAPI's raise): per second of output, refunded on failure. Live 2026-09-14: an 18 s 720p clip from one face image plus one voice clip settled 4,803 credits ($4.80); the 5 s 480p probe from a reference image settled 593."
     verified: 2026-09-14
     added: '2026-09-14'
     example_response: examples/reapi.video-gen.seedance-2-5.unrestricted.json
@@ -200,12 +200,13 @@ endpoints:
         - {when: {body.model: gpt-image-2.5-sunburst-official, body.quality: high, body.size: 1536x1024}, value: 0.031, times: body.n}
       fallback: {value: 0.41, note: "Ten high-quality 1024x1024 images on the official channel ($0.40), rounded up a cent to clear float comparison."}
       currency: USD
-      settle: table
+      settle: usage
+      usage: {path: usage.credits, unit: credit}
       source: observed
       source_url: https://reapi.ai/models/gpt-image-2-5
       checked: 2026-09-14
       confidence: verified
-      note: "Official channel cells are the credits observed live on 2026-09-14 (5/4/4 low, 10/8/8 medium, 40/31/31 high for 1024x1024 / 1024x1536 / 1536x1024; Flare and Sunburst meter identically). Upstream is token-metered, so a very long prompt adds a fraction of a cent the table does not carry. Flat-rate channel rows ($0.0173 Flare / $0.023 Sunburst per image) are documented only: both answered 'No available channel' upstream at listing time and charged nothing."
+      note: "Official channel cells are the credits observed live on 2026-09-14 (5/4/4 low, 10/8/8 medium, 40/31/31 high for 1024x1024 / 1024x1536 / 1536x1024; Flare and Sunburst meter identically). Upstream is token-metered (a long prompt or edit images add to it), so the table is the reserve and the task's reported usage.credits settles. Flat-rate channel rows ($0.0173 Flare / $0.023 Sunburst per image) are documented only: both answered 'No available channel' upstream at listing time and charged nothing."
     verified: 2026-09-14
     added: '2026-09-14'
     example_response: examples/reapi.image-gen.gpt-image-2-5.json
@@ -251,12 +252,13 @@ endpoints:
         - {when: {body.resolution: 4k}, value: 0.08}
       fallback: {value: 0.081, note: "One 4K image at the documented flat rate, rounded up a tenth of a cent to clear float comparison."}
       currency: USD
-      settle: table
+      settle: usage
+      usage: {path: usage.credits, unit: credit}
       source: observed
       source_url: https://reapi.ai/models/gpt-image-2
       checked: 2026-09-14
       confidence: verified
-      note: "One image per request (n is fixed at 1). Failed or moderated requests are not charged. Live 2026-09-14: one 1k image settled 30 credits; 2k and 4k are documented only."
+      note: "One image per request (n is fixed at 1). Failed or moderated requests are not charged. Live 2026-09-14: one 1k image settled 30 credits; 2k and 4k are documented only. The table is the reserve; the task's reported usage.credits settles."
     verified: 2026-09-14
     added: '2026-09-14'
     example_response: examples/reapi.image-gen.gpt-image-2.json
@@ -302,12 +304,13 @@ endpoints:
         - {when: {body.resolution: 4K}, value: 0.033}
       fallback: {value: 0.034, note: "One 4K image at the documented flat rate, rounded up a tenth of a cent to clear float comparison."}
       currency: USD
-      settle: table
+      settle: usage
+      usage: {path: usage.credits, unit: credit}
       source: observed
       source_url: https://reapi.ai/models/gemini-3-pro-image-preview
       checked: 2026-09-14
       confidence: verified
-      note: "Default channel; live 2026-09-14 one 1K image settled 30 credits (4K documented only). The -official Google channel ($0.108 / $0.192) is token-metered and not listed. One image per request."
+      note: "Default channel; live 2026-09-14 one 1K image settled 30 credits (4K documented only). The -official Google channel ($0.108 / $0.192) is token-metered and not listed. One image per request. The table is the reserve; the task's reported usage.credits settles."
     verified: 2026-09-14
     added: '2026-09-14'
     example_response: examples/reapi.image-gen.gemini-3-pro-image.json
