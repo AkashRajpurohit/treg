@@ -86,3 +86,50 @@ async def test_datagma_connection_probe_is_internal_and_generic(clients, monkeyp
         assert bad.status_code == 422 and "must-not-leak" not in bad.text
         good = await clients.post("/connections/token", json={"provider": "datagma", "token": "own"})
         assert good.status_code == 200 and "currentCredit" not in good.text and "must-not-leak" not in good.text
+
+
+async def test_an_expansion_flag_declared_off_cannot_be_switched_on_with_treg_key(clients, monkeypatch):
+    """people.enrich is priced at one credit with phoneFull/personFull off (`enum: [false]`). On
+    treg's key a request that switches one on is refused before any money moves, whatever the
+    spelling; an own key relays it unchanged, and leaving the flag off still works."""
+    from treg.config import get_settings
+    monkeypatch.setenv("TREG_PLATFORM_KEY_DATAGMA", "PLATFORM-DATAGMA")
+    monkeypatch.setenv("TREG_PLATFORM_PROVIDERS", "datagma")
+    get_settings.cache_clear()
+    seen = []
+
+    def upstream(request):
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, headers={"content-type": "application/json"}, stream=httpx.ByteStream(
+            json.dumps({"person": {"fullName": "Ada Example"}, "creditBurn": 1}).encode()))
+
+    base = {"data": "acme.example", "fullName": "Ada Example", "companyPremium": "False",
+            "companyFull": "False", "personFull": "False", "phoneFull": "False",
+            "deepTraffic": "False", "debug": "False"}
+    org_id = (await clients.get("/orgs")).json()[0]["org_id"]
+
+    async def balance():
+        return (await clients.get(f"/orgs/{org_id}/balance")).json()["balance_micro"]
+
+    try:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as client:
+            monkeypatch.setattr(A.app.state, "http", client)
+            before = await balance()
+            for spelling in ("True", "true", "1"):
+                refused = await clients.get("/call/datagma.people.enrich",
+                                            params={**base, "phoneFull": spelling})
+                assert refused.status_code == 400, refused.text
+                assert refused.json()["detail"]["parameter"] == "queryParams.phoneFull"
+            assert seen == [] and await balance() == before
+
+            served = await clients.get("/call/datagma.people.enrich", params=base)
+            assert served.status_code == 200, served.text
+            assert served.headers["X-Treg-Cost-Micro"] == "22580"
+            assert before - await balance() == 22_580
+
+            await clients.post("/secrets", json={"name": "datagma", "value": "OWN-DATAGMA"})
+            own = await clients.get("/call/datagma.people.enrich", params={**base, "personFull": "true"})
+            assert own.status_code == 200, own.text
+            assert seen[-1]["personFull"] == "true" and seen[-1]["apiId"] == "OWN-DATAGMA"
+    finally:
+        get_settings.cache_clear()

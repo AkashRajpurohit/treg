@@ -1187,7 +1187,10 @@ field beside `async`, `resource_ownership` or `managed_resource`, which need the
 
 A `pathParams` field that declares an `enum` is enforced on treg's key: the value names what the
 shared credential is spent on (Google AI's `model`), so any other value is a 400 before reserve.
-Own-key calls still relay whatever path the caller asks for.
+Own-key calls still relay whatever path the caller asks for. A `queryParams` flag declared
+`enum: [false]` is an expansion the shared-key price leaves off (Datagma's `phoneFull`, Bright
+Data's `compress`): on treg's key a request that sends any value but `false`/`0` (either case) is a
+400 before reserve, and omitting the flag passes.
 
 `platform_request` fixes exact body, header or query values needed only on the shared credential.
 A `queryParams.*` pin must appear exactly once and is read as the pinned value's type, so a run

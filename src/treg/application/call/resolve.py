@@ -1668,6 +1668,22 @@ def _enforce_platform_request(ep: dict, body: bytes, headers=None, query=None) -
                     "message": f"{ep['id']} serves {name} " + ", ".join(map(str, allowed))
                                + " on treg's key; connect your own key for other values",
                 })
+    # A query flag declared `enum: [false]` is an expansion the shared-key price leaves off
+    # (Datagma's phoneFull bills about 30 credits against a one-credit price; Bright Data's
+    # compress gzips away the record count the settle reads). Switching it on is refused on
+    # treg's key; leaving it out is fine. Callers spell booleans either way ("False", "false").
+    for name, spec in sorted((input_schema.get("queryParams") or {}).items()):
+        if not isinstance(spec, dict) or spec.get("enum") != [False] or query is None:
+            continue
+        if any(key == name and str(value).strip().lower() not in ("false", "0")
+               for key, value in query.multi_items()):
+            raise ResolutionFailed(
+                "catalog_parameter_invalid", status_code=400, detail={
+                    "error": "catalog_parameter_invalid", "endpoint_id": ep["id"],
+                    "parameter": f"queryParams.{name}", "expected": False,
+                    "message": f"{ep['id']} serves {name}=false on treg's key; connect your own "
+                               "key to turn it on",
+                })
     rules = ep.get("platform_request") or {}
     for path, expected in sorted(rules.items()):
         if not str(path).startswith("headers."):
