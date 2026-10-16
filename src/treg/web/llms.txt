@@ -252,8 +252,8 @@ inputs you hold, and treg relays your request rather than rewriting it. One thin
 tells you when it does: if treg's OWN account for the provider is out, it can serve the **same
 endpoint** through a treg-owned relay account — same request, same response shape, the relay's
 real price — with `X-Treg-Served-Via: overflow:<name>` on the response, or `served_via` plus a hint
-on the MCP `call` result (a team can opt out with `treg org overflow off`). `catalog_get` shows that
-relay price up front as `overflow_price_usd` when the deployment can relay the endpoint: a "free"
+on the MCP `call` result (a team can opt out with `treg org overflow off`). `catalog_get` and each
+`catalog_search` row show that relay price up front as `overflow_price_usd` when the deployment can relay the endpoint: a "free"
 endpoint with one may bill exactly that, so quote it. Your own keys are never relayed.
 
 <!--hub-->

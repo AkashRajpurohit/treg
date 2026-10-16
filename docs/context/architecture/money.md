@@ -1257,8 +1257,8 @@ child requires the authenticated caller and releases `{call_ref}:overflow` under
 overflow:<aggregator>` with `X-Treg-Cost-Micro` the child's charge; the MCP `call` result (both
 `/mcp/` and `/mcp/v2/`, one `_call_impl`) lifts that header into `served_via` and a one-line `hint`
 naming the relay and the exhausted provider, because an MCP client never sees headers.
-`GET /catalog/endpoints/{id}` and `catalog_get` carry `overflow_price_usd`, `overflow_price_unit`
-and `overflow_via` on a platform-eligible endpoint the deployment can relay (mode on, a key for the
+`GET /catalog/endpoints/{id}`, `catalog_get` and each MCP `catalog_search` row carry
+`overflow_price_usd`, `overflow_price_unit` and `overflow_via` on a platform-eligible endpoint the deployment can relay (mode on, a key for the
 aggregator, an enabled route), so a catalog-free endpoint is never silently a paid one: on 2026-09-08
 `apollo.people.search` (cost `free`) billed $0.002 through Orthogonal 8,810 times while treg's
 Apollo account was out, and no read surface said it could. What still is NOT disclosed up front is

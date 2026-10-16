@@ -277,7 +277,8 @@ refuses it before anything is sent and names the accepted arguments. Advertised 
 `/call/` discloses a relayed answer in `X-Treg-Served-Via`; an MCP client never sees headers, so
 `_call_impl` lifts it into `served_via` on the result with a one-line `hint` naming the relay and
 the exhausted provider (`cost_usd` is then the relay's real price, not the catalog's direct one).
-Both surfaces share the impl, so `/mcp/` and `/mcp/v2/` say it identically. `catalog_get` carries
+Both surfaces share the impl, so `/mcp/` and `/mcp/v2/` say it identically. `catalog_get` and each
+`catalog_search` row carry
 `overflow_price_usd` / `overflow_price_unit` / `overflow_via` for the same reason - the price to
 tell the human BEFORE the call includes the one the relay may bill (`architecture/money.md`
 § Overflow money).

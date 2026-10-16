@@ -365,6 +365,9 @@ class SearchResult(TypedDict, total=False):
     usd_per_call: float | None
     usd_range: list[float] | None  # a routed row: its children's hit prices, low to high (usd_per_call is null when they vary)
     misses_billed: bool | None     # a routed row: some children bill a miss too, so a call can cost more than one hit
+    overflow_price_usd: float | None  # what a call bills when treg's own account is out and the overflow relay serves it
+    overflow_price_unit: str | None   # "call" | "result": what one unit of that price buys
+    overflow_via: str | None          # the relay aggregator that price belongs to
     no_key_needed: bool | None
     added: str | None            # the UTC day the tool reached the catalog (YYYY-MM-DD); null on a routed row
     score: float | None          # the lexical score; null on a judged answer (no probability is shown)
@@ -896,7 +899,7 @@ async def _catalog_search_impl(
         token = _bearer(ctx) if ctx is not None else ""
         if token:
             hub_slug, hub_email = await _hub_reader(token)
-    from .routers.catalog import _provider_display
+    from .routers.catalog import _overflow_disclosure, _provider_display
     if opts.active:
         page = await search_app.added_page(
             query, cat, limit, opts, caller=search_app.Caller(hub_slug=hub_slug, hub_email=hub_email),
@@ -942,6 +945,9 @@ async def _catalog_search_impl(
             **({"more_providers": hidden[ep["id"]]} if page.judged and ep["id"] in hidden else {}),
             "usd_per_call": cat.advertised_usd(cost),
             **_price_range(cost),
+            # The other price this row can bill, beside the direct one: a "free" row served through
+            # the overflow relay bills the relay's price, and catalog_get alone used to say so.
+            **(await _overflow_disclosure(ep, cat) if ep.get("kind") not in ("hub", "routed") else {}),
             # BOTH halves of tier 4's own truth, not just the price side: `platform_eligible` says
             # the row is priceable, `platform_key_for` says this deploy actually holds an enabled
             # key. Eligible-but-keyless rows used to advertise `no_key_needed: true` here and then

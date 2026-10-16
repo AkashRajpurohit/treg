@@ -198,7 +198,8 @@ Notes:
     you know which inputs you hold, and treg relays rather than rewrites your request. If treg's
     own account for a provider is out it may serve the **same endpoint** through a treg-owned relay
     (`X-Treg-Served-Via: overflow:<name>`, or `served_via` + a hint on the MCP `call` result; real
-    price, same shape). `catalog_get` shows that price up front as `overflow_price_usd` when the
+    price, same shape). `catalog_get` and `catalog_search` show that price up front as
+    `overflow_price_usd` when the
     deployment can relay the endpoint - a "free" endpoint with one may bill exactly that, so quote
     it. A team opts out with `treg org overflow off`.
   - **For a common job, call the routed tool, not a provider you remember.** Scraping a page

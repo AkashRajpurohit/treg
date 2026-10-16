@@ -1521,6 +1521,27 @@ async def test_catalog_get_shows_what_a_FREE_endpoint_bills_through_the_relay(cl
         assert any("overflow relay (orthogonal)" in h for h in out["hints"])
 
 
+async def test_catalog_search_shows_the_relay_price_beside_the_direct_one(clients, overflow_on):  # noqa: F811 - fixture imported above
+    """Search is where an agent picks: a row listed free that bills the relay's price when treg's
+    own account is out must say so there, not only in catalog_get."""
+    from test_capacity_overflow import APOLLO_SEARCH_EP, APOLLO_SEARCH_PATH
+    from test_mcp_directory import _call_tool as _directory_call, directory_session
+
+    token = clients.headers["X-Treg-Token"]
+    await _route(endpoint_id=APOLLO_SEARCH_EP, provider="apollo", method="POST", path=APOLLO_SEARCH_PATH,
+                 price_micro=2_000, ratio=None)
+    args = {"query": "apollo people search", "limit": 10}
+    async with mcp_session(clients) as c:
+        team = await _call_tool(c, "catalog_search", args, token=token)
+    async with directory_session() as client:
+        directory = await _directory_call(client, "catalog_search", args, token)
+    for out in (team, directory):
+        row = next(r for r in out["results"] if r["endpoint_id"] == APOLLO_SEARCH_EP)
+        assert row["usd_per_call"] == 0 and row["overflow_price_usd"] == 0.002
+        assert row["overflow_price_unit"] == "call" and row["overflow_via"] == "orthogonal"
+        assert all(r.get("overflow_price_usd") is None for r in out["results"] if r["endpoint_id"] != APOLLO_SEARCH_EP)
+
+
 async def test_a_lone_surrogate_in_an_upstream_body_still_returns_the_paid_answer(clients, monkeypatch):
     """A JavaScript scraper that cuts a LinkedIn post mid-pair sends `"\\ud835"`. The SDK's pydantic
     dump refused it, so the agent got "Error serializing to JSON" and lost the body, call_id and cost
