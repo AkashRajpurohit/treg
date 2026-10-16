@@ -129,3 +129,49 @@ async def test_the_cli_search_falls_back_to_keywords_when_the_judge_is_down(clie
     out = (await clients.get("/catalog/search", params={"q": "verify an email address", "engine": "agent"})).json()
     assert out["verdict"] == "keyword" and out["reason"] == "http_402"
     assert out["results"] and "people.email.verify" in out["results"][0]["capability"]
+
+
+async def test_the_cli_search_holds_no_connection_while_the_judge_thinks(clients, monkeypatch):
+    """Non-negotiable 3: a signed-in search resolves its caller (and the hub's reader) in sessions
+    of its own, closed before the embedding and the judge are awaited."""
+    from treg.infra import db as infra_db
+    _on(monkeypatch, search_experiment="v2", search_experiment_holdout_percent=0,
+        hub_enabled=True, hub_teams="some-team")   # a list: the reader is looked up
+    held = []
+    judged = _fake_v2({"people.email.find": 0.92})
+
+    async def watching(query, cands, **kw):
+        held.append(infra_db._engine.sync_engine.pool.checkedout())
+        return await judged(query, cands, **kw)
+    monkeypatch.setattr(judge_infra, "judge", watching)
+    out = (await clients.get("/catalog/search", params={"q": "find the work email of a hotel manager in Cape Town",
+                                                         "engine": "agent"})).json()
+    assert out["verdict"] == "strong" and held == [0]
+
+
+async def test_a_signed_out_cli_search_is_capped_per_address_not_in_one_shared_bucket(clients, monkeypatch):
+    _on(monkeypatch, search_experiment="v2", search_judge_max_per_caller_hour=1)
+    monkeypatch.setattr(judge_infra, "judge", _fake_v2({"people.email.find": 0.92}))
+    clients.headers.pop("X-Treg-Token", None)
+    q = {"q": "find the work email of a hotel manager in Cape Town", "engine": "agent"}
+
+    async def search(ip):
+        return (await clients.get("/catalog/search", params=q, headers={"X-Forwarded-For": ip})).json()
+    assert (await search("198.51.100.7"))["verdict"] == "strong"
+    capped = await search("198.51.100.7")
+    assert capped["verdict"] == "keyword" and capped["reason"] == cs.RATE_LIMITED
+    assert (await search("203.0.113.9"))["verdict"] == "strong"      # another address keeps its own
+
+
+async def test_a_failed_caller_lookup_searches_as_signed_out(clients, monkeypatch):
+    """Who is asking is attribution, never a reason to fail the search."""
+    from treg.domain.identity import access
+    _on(monkeypatch, search_experiment="v2", search_experiment_holdout_percent=0)   # the token deals no holdout
+    monkeypatch.setattr(judge_infra, "judge", _fake_v2({"people.email.find": 0.92}))
+
+    async def broken(*a, **kw):
+        raise RuntimeError("identity store down")
+    monkeypatch.setattr(access, "require_member", broken)
+    r = await clients.get("/catalog/search", params={"q": "find the work email of a hotel manager in Cape Town",
+                                                      "engine": "agent"})
+    assert r.status_code == 200 and r.json()["verdict"] == "strong"

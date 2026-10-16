@@ -325,7 +325,7 @@ async def catalog_search(request: Request, q: str = "", limit: int = 25,
     if opts.active:
         return await _added_search(request, q, limit, opts, cat, observations, db)
     if engine == "agent" and q.strip():
-        return await _agent_search(request, q, limit, cat, observations, db)
+        return await _agent_search(request, q, limit, cat, observations)
     # Rank a WIDER band than the page: collapsing a routed group (below) frees rows, and the next
     # jobs down the ranking should fill them rather than the page coming up short.
     ranked, total, tie_truncated = catalog_store.rank_band(q, cat, min(100, limit * 4))
@@ -397,12 +397,19 @@ async def catalog_search(request: Request, q: str = "", limit: int = 25,
 
 
 async def _agent_search(request: Request, q: str, limit: int, cat,
-                        observations: endpoint_stats.EndpointObservationReader, db: AsyncSession) -> dict:
+                        observations: endpoint_stats.EndpointObservationReader) -> dict:
     """`/catalog/search?engine=agent`: `application.catalog_search.search`, the use case behind an
-    agent's `catalog_search`, shaped as this route's rows plus the answer's verdict and jobs."""
+    agent's `catalog_search`, shaped as this route's rows plus the answer's verdict and jobs.
+
+    The judge and the embedding are awaited inside the use case, so nothing here may hold a
+    database connection across it: the hub's reader and the caller are each resolved in a session
+    of their own, closed at once, and the route's session is never touched. A caller who is not
+    signed in (or whose token does not resolve) is capped by address, not in one shared bucket."""
     from ..application import catalog_search as search_app
     from ..application import search_experiment
-    from ..domain.identity.access import require_member
+    from ..domain.identity import access
+    from ..infra.db import session_maker
+    from .auth import _client_ip   # auth imports web, which imports this module
     from .hub_gate import reader
 
     token = request.headers.get("x-treg-token", "")
@@ -415,17 +422,19 @@ async def _agent_search(request: Request, q: str, limit: int, cat,
         if not token:
             return key, None, None
         try:
-            member = await require_member(request, x_treg_token=token, x_treg_org=request.headers.get("x-treg-org", ""),
-                                          treg_session="", db=db)
-        except HTTPException:
+            async with session_maker() as s:
+                member = await access.require_member(request, x_treg_token=token, treg_session="", db=s,
+                                                     x_treg_org=request.headers.get("x-treg-org", ""))
+        except Exception:  # noqa: BLE001 - who is asking is attribution, never a reason to fail a search
             return key, None, None
         return key, (member.org.id if member.org is not None else None), member.email
 
-    slug, email = await reader(request, db)
+    async with session_maker() as s:
+        slug, email = await reader(request, s)
     page = await search_app.search(
         q, limit, cat=cat, source="cli", caller=search_app.Caller(hub_slug=slug, hub_email=email),
         observed=lambda ids: _observed_or_empty(observations, ids), identify=identify,
-        provider_display=_provider_display)
+        provider_display=_provider_display, client_ip=_client_ip(request))
     results = [
         (dict(ep) | {"score": None, "observed": page.stats.get(ep["id"])}) if ep.get("kind") == "hub" else
         (catalog_store.endpoint_view(ep, _provider_display(ep["provider"]), cat)

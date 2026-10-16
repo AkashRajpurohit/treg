@@ -281,7 +281,8 @@ async def _v2(query: str, cat: catalog_store.Catalog, limit: int, *, page: Page,
 
 
 async def search(query: str, limit: int, *, cat: catalog_store.Catalog, source: str, caller: Caller,
-                 observed: Observed, identify: Identify, provider_display=lambda s: s) -> Page:
+                 observed: Observed, identify: Identify, provider_display=lambda s: s,
+                 client_ip: str | None = None) -> Page:
     """The page this caller sees, recorded. The lexical page first; while the experiment is on, the
     judge reads a wider recall (v1) or the jobs (v2) and the arm decides what is shown - whatever
     it does, the result is a page. The miss log: in v1 modes it is judged by the LEXICAL page (it
@@ -306,8 +307,11 @@ async def search(query: str, limit: int, *, cat: catalog_store.Catalog, source: 
 
     # The cap is keyed by WHO the caller is; a token the search could not resolve (the tool reads
     # the catalog without validating a per-team token, so any string reaches here) shares one
-    # bucket, or a caller rotating made-up tokens would have a fresh cap per search.
-    if mode == "v2" and not await _judge_cap(identity or UNRESOLVED):
+    # bucket, or a caller rotating made-up tokens would have a fresh cap per search. A surface that
+    # knows the caller's address (`client_ip`, the open HTTP route) keys the unresolved by it
+    # instead, so one script cannot spend every signed-out caller's judge.
+    unresolved = f"ip:{client_ip}" if client_ip else UNRESOLVED
+    if mode == "v2" and not await _judge_cap(identity or unresolved):
         # past the cap no judge runs for this caller this hour, whichever arm: the lexical page,
         # recorded as such (a search is not metered; this is the bound on what one can spend)
         page.arm = arm
