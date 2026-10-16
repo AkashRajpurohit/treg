@@ -463,6 +463,11 @@ adapters:
     in:  {email: body.email}
     out: {valid: "email_status == 'valid'", status: email_status}
     miss: "email_status == null"
+  sixtyfour.people.email.verify:
+    accepts: [[email]]
+    in: {email: body.email}
+    out: {valid: "status == 'VALID'", status: status}
+    miss: "status == 'UNKNOWN'"
   tomba.people.email.verify:
     accepts: [[email]]
     in:  {email: queryParams.email}

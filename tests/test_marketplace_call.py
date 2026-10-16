@@ -853,6 +853,19 @@ def _mk(provider: str, **kw) -> call_resolution.MarketplaceCall:
     return call_resolution.MarketplaceCall(tool=None, upstream="", consumed=set(), provider=provider, **kw)
 
 
+def test_sixtyfour_settlement_uses_reported_credits_and_free_unknown_verdict():
+    phone = _mk("sixtyfour", endpoint_id="sixtyfour.people.phone.find",
+                cost_type="per_success", estimate_micro=720_000,
+                reported_charge_unit_micro=240_000)
+    assert call_settle._observed_cost_micro(phone, b'{"cost_credits":6}') == 1_440_000
+    assert call_settle._observed_cost_micro(phone, b'{"cost_credits":0}') == 0
+
+    verify = _mk("sixtyfour", endpoint_id="sixtyfour.people.email.verify",
+                 cost_type="per_success", estimate_micro=24_000)
+    assert call_settle._observed_cost_micro(verify, b'{"status":"UNKNOWN"}') == 0
+    assert call_settle._observed_cost_micro(verify, b'{"status":"INVALID"}') is None
+
+
 def test_litescrape_ai_overview_unserved_is_free():
     mk = _mk("litescrape", endpoint_id="litescrape.google.serp.ai_overview",
              cost_type="per_success", estimate_micro=150)
