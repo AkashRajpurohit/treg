@@ -382,6 +382,15 @@ async def _fetchinio(c, key):
     }
 
 
+async def _sixtyfour(c, key):
+    d = await _get(c, "https://api.sixtyfour.ai/check-balance",
+                   headers={"x-api-key": key})
+    remaining = d.get("credits") if isinstance(d, dict) else None
+    if type(remaining) not in (int, float) or not math.isfinite(remaining) or remaining < 0:
+        raise ValueError("Sixtyfour returned no valid credit balance")
+    return {"value": remaining, "unit": "credits", "note": "Organization credit balance"}
+
+
 async def _dropleads(c, key):
     d = await _get(c, "https://prime.dropleads.io/api/v2/prime-db/credits/balance",
                    headers={"X-API-Key": key})
@@ -982,6 +991,7 @@ BALANCE_ROUTES = {
     "hunter": _hunter,
     "harvestapi": _harvestapi,
     "fetchinio": _fetchinio,
+    "sixtyfour": _sixtyfour,
     "prospeo": _prospeo,
     "aiark": _aiark,
     "wiza": _wiza,

@@ -17,6 +17,27 @@ from treg.domain.capacity import collectors, policy, sweep
 from treg.timeutil import utcnow_naive
 
 
+async def test_sixtyfour_balance_uses_the_free_credit_route():
+    def probe(request):
+        assert request.method == "GET"
+        assert request.url == "https://api.sixtyfour.ai/check-balance"
+        assert request.headers["x-api-key"] == "test"
+        return httpx.Response(200, json={"credits": 12.5})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(probe)) as client:
+        row = await collectors._sixtyfour(client, "test")
+    assert row == {"value": 12.5, "unit": "credits", "note": "Organization credit balance"}
+
+
+@pytest.mark.parametrize("credits", [None, True, "12.5", float("nan"), -1])
+async def test_sixtyfour_balance_rejects_invalid_credit_values(credits):
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, content=b'{"credits": NaN}' if isinstance(credits, float)
+                                     and math.isnan(credits) else json.dumps({"credits": credits})))) as client:
+        with pytest.raises(ValueError, match="Sixtyfour returned no valid credit balance"):
+            await collectors._sixtyfour(client, "test")
+
+
 async def test_spidercloud_balance_converts_api_credits_to_usd():
     def probe(request):
         assert request.method == "GET"

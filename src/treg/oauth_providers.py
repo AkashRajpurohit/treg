@@ -1448,6 +1448,22 @@ FETCHINIO = OAuthProvider(
     probe_path="/api/v1/subscription",
 )
 
+SIXTYFOUR = OAuthProvider(
+    service="sixtyfour", display_name="Sixtyfour AI", auth_kind="key",
+    token_label="API key", token_placeholder="your Sixtyfour API key",
+    token_header="x-api-key", token_format="{secret}",
+    setup_url="https://app.sixtyfour.ai",
+    setup_action_label="Get your Sixtyfour API key",
+    setup_steps=("Sign in to Sixtyfour and open Settings → API Keys.",
+                 "Create an API key for your team and paste it here."),
+    setup_note="Research, search, and contact tools consume Sixtyfour credits. Connection verification is free.",
+    auth_uri="", token_uri="", scopes={}, client_id_setting="", client_secret_setting="",
+    category="Enrichment",
+    summary="Research people and companies, search for prospects, and find or verify contact details.",
+    base_url="https://api.sixtyfour.ai", docs_url="https://docs.sixtyfour.ai/introduction",
+    probe_path="/check-balance",
+)
+
 DROPLEADS = OAuthProvider(
     service="dropleads", display_name="Dropleads", auth_kind="key",
     token_label="API key", token_placeholder="your Dropleads API key",
@@ -3950,7 +3966,7 @@ REGISTRY: dict[str, OAuthProvider] = {
         GOOGLE_ADS, YOUTUBE,
         LINKEDIN, SLACK, X, TIKTOK, FACEBOOK, INSTAGRAM, META_ADS,
         # API-key providers
-        ANYAPI, APOLLO, PDL, AKTA, HUNTER, SUMBLE, MOLTSETS, OPENMART, HARVESTAPI, FETCHINIO, DROPLEADS,
+        ANYAPI, APOLLO, PDL, AKTA, HUNTER, SUMBLE, MOLTSETS, OPENMART, HARVESTAPI, FETCHINIO, SIXTYFOUR, DROPLEADS,
         QUICKENRICH, PROSPEO, AIARK, WIZA, LIMADATA, GETLEADSIO, SCRUBBY, ZEROBOUNCE, DATAGMA,
         TRYKITT, CONTACTOUT, MILLIONVERIFIER, BOUNCEBAN, CRUNCHBASE, MINIMAX, FISHAUDIO,
         OPENROUTER,

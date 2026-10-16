@@ -25,6 +25,7 @@ _KNOWN: dict[str, tuple[str, str, str]] = {
     "trykitt": ("cash", "manual", "api"),
     "harvestapi": ("cash", "auto_recharge", "api"),  # Owner will enable vendor auto top-up for production.
     "fetchinio": ("credits", "manual", "api"),
+    "sixtyfour": ("credits", "subscription", "api"),
     "dataforseo": ("cash", "auto_recharge", "api"),
     "tikhub": ("cash", "auto_recharge", "api"),
     "tinyfish": ("cash", "manual", "api"),
@@ -117,6 +118,9 @@ _RATE_LIMITS: dict[str, dict] = {
     # The account reports 5 requests/s, but /post/engagement consumes two rate-limit units. The
     # provider-wide limiter cannot weight one endpoint, so two calls/s is the safe shared-key pace.
     "fetchinio": {"limit": 2, "window_s": 1, "source": "policy"},
+    # No published provider-wide limit. The shared-key smoother uses the documented
+    # balance-check allowance as a conservative policy ceiling for all routes.
+    "sixtyfour": {"limit": 60, "window_s": 60, "source": "policy"},
     "adyntel": {"limit": 5, "window_s": 1, "source": "docs"},
     # HLR Lookup caps each customer at 210 concurrent requests and throttles per telephone
     # network, answering 429 (unbilled) above about 200 requests/s. It publishes no per-second

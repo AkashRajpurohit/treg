@@ -309,6 +309,7 @@ class Settings(BaseSettings):
     platform_key_openmart: str = ""  # Bearer; monthly subscription credits, no auto-top-up
     platform_key_harvestapi: str = ""  # X-API-Key; prepaid USD wallet
     platform_key_fetchinio: str = ""  # X-API-Key; subscription + PAYG credit balance
+    platform_key_sixtyfour: str = ""  # x-api-key; monthly credits, free balance check
     platform_key_anyapi: str = ""  # X-API-Key; prepaid USD wallet, exact charge settles from costUsd
     platform_key_dropleads: str = ""  # X-API-Key; PAYG credits priced in fx.yaml
     platform_key_quickenrich: str = ""  # Bearer; monthly subscription credits, not auto-top-up
