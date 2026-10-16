@@ -1131,6 +1131,9 @@ that slice: it bills one whole credit (~$0.0245) for one email or ten (observed 
 `cost.display` with `grouped` + `round_up` advertises the credit (`display_usd: 0.0245`, "started
 10 emails"); `Catalog.advertised_usd` is what `catalog_search` / `catalog_get` put on
 `usd_per_call`. Settlement still reads `usd` and the derived email-count rule — display only.
+A `grouped` meter without `round_up` (Fish Audio per 1M UTF-8 bytes, MiniMax per 10,000
+characters) is a rate, not what one call bills, so `usd_per_call` is null there rather than the
+whole group's price. A price table quotes its cheapest row (`usd_min`), not the fallback ceiling.
 `Catalog.cost_view` reads the provider-neutral `cost.display` flags: `unit` names the shown unit,
 `grouped` shows the price for `cost.per` units, `round_up` labels a started block, `variable` adds
 a plus sign for selected additions, and `maximum` labels a validated reserve ceiling as "up to"
@@ -1284,7 +1287,9 @@ having to be written out for it, which is why the extended tier's unpriced route
 annotation. Where an endpoint carries only `observed_cost` (DataForSEO prices per API family, not
 per route), `_effective_cost` synthesizes the block with `source: observed, confidence: verified`
 and `checked` = the verify date: a figure the provider itself reported charging is the strongest
-provenance the catalog has.
+provenance the catalog has. It is one small call's charge, though, not the price of a bigger
+request, so the block also carries `display.variable` (shown as "$0.0124+/call") and a note that
+the provider-reported cost settles each call.
 
 ### Core-wins dedup compares NORMALISED paths — except on Graph
 

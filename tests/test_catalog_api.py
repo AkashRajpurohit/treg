@@ -1147,6 +1147,65 @@ def test_generic_display_prices_match_web_and_cli():
     assert _price_label(maximum) == _cost_usd(maximum) == _cost_label(maximum) == 'up to $0.064/call'
 
 
+def test_usd_per_call_quotes_what_one_call_bills():
+    """`advertised_usd` is the figure MCP puts on usd_per_call: a started block billed whole, a
+    table's cheapest row, and no figure at all for a grouped meter (a rate, not a call's price)."""
+    from treg.domain.catalog import store
+    cat = store.load()
+    block = cat.cost_view({'type': 'per_result', 'currency': 'USD', 'value': 0.0245, 'per': 10,
+                           'display': {'unit': 'emails', 'grouped': True, 'round_up': True}}, 'p')
+    assert cat.advertised_usd(block) == 0.0245
+    meter = cat.cost_view({'type': 'per_success', 'currency': 'USD', 'value': 15, 'per': 1_000_000,
+                           'unit': 'utf8_byte', 'display': {'unit': 'UTF-8 bytes', 'grouped': True}}, 'p')
+    assert meter['display_usd'] == 15 and cat.advertised_usd(meter) is None
+    table = cat.cost_view({'type': 'per_success', 'currency': 'USD', 'unit': 'call',
+                           'table': [{'when': {'body.mode': 'a'}, 'value': 0.001},
+                                     {'when': {'body.mode': 'b'}, 'value': 0.01}],
+                           'fallback': {'value': 0.01}, 'table_min': 0.001}, 'p')
+    assert table['usd'] == 0.01 and cat.advertised_usd(table) == 0.001
+    flat = cat.cost_view({'type': 'per_call', 'currency': 'USD', 'value': 0.002}, 'p')
+    assert cat.advertised_usd(flat) == 0.002
+
+
+def test_a_price_from_one_observed_call_is_shown_as_variable():
+    """A row priced only by `observed_cost` (one small verification call) is not a fixed price: the
+    provider-reported cost settles each call, so every surface shows a plus and the note says so."""
+    from treg.domain.catalog import store
+    from treg.routers.web import _price_label
+    from treg.cli import _cost_usd
+    cat = store.load()
+    raw = store._effective_cost({'observed_cost': 0.01236, 'verified': '2026-09-01'})
+    assert raw['type'] == 'per_call' and raw['value'] == 0.01236
+    assert 'varies with the request' in raw['note']
+    cost = cat.cost_view(raw, 'p')
+    assert _price_label(cost) == _cost_usd(cost) == '$0.0124+/call'
+    assert cat.advertised_usd(cost) == 0.01236
+    assert store._effective_cost({'observed_cost': 0, 'verified': '2026-09-01'})['type'] == 'free'
+    declared = {'type': 'per_call', 'value': 0.5, 'currency': 'USD'}
+    assert store._effective_cost({'cost': declared, 'observed_cost': 0.01}) is declared
+
+
+async def test_mcp_usd_per_call_matches_the_catalog_rows_cheapest_charge(clients):
+    """Through catalog_get: a table row quotes its cheapest row (never the fallback ceiling), and
+    a grouped byte meter quotes no per-call figure (it used to say $15 for a short voice line)."""
+    from tests.test_mcp import _call_tool, mcp_session
+    from treg.domain.catalog import store
+    cat = store.load()
+    table_id = next(e['id'] for e in cat.endpoints if (e.get('cost') or {}).get('table')
+                    and (cat.cost_view(e['cost'], e['provider']) or {}).get('usd_min', 1) < 0.01
+                    and not (e['cost'].get('display') or {}))
+    meter_id = next(e['id'] for e in cat.endpoints
+                    if ((e.get('cost') or {}).get('display') or {}).get('grouped')
+                    and not e['cost']['display'].get('round_up'))
+    token = (await clients.post('/users', json={'email': 'price@superdesign.dev'})).json()['token']
+    async with mcp_session(clients) as c:
+        table = await _call_tool(c, 'catalog_get', {'endpoint_id': table_id}, token=token)
+        meter = await _call_tool(c, 'catalog_get', {'endpoint_id': meter_id}, token=token)
+    cost = table['endpoint']['cost']
+    assert table['usd_per_call'] == cost['usd_min'] < cost['usd']
+    assert meter['endpoint']['cost']['display_usd'] > 1 and meter['usd_per_call'] is None
+
+
 async def test_every_comparison_page_in_the_sitemap_serves(clients):
     """A capability several providers serve on a shelf has a public comparison page
     (/catalog/<slug>/<key>), listed in the sitemap by the same rule the shelf uses for its comparison

@@ -243,7 +243,18 @@ class Catalog:
             return None  # a routed row whose children bill misses: the note carries the range
         shown = cost.get("display_usd")
         if isinstance(shown, (int, float)) and not isinstance(shown, bool):
+            display = cost.get("display") or {}
+            # A grouped METER (per 1M bytes, per 10,000 characters) is a rate, not what one call
+            # bills: quoting the whole group made a short voice line read $15. Only a block that is
+            # billed whole once started (`round_up`) is a per-call figure.
+            if display.get("grouped") and not display.get("round_up"):
+                return None
             return shown
+        # A price table quotes its cheapest row: `usd` is the fallback ceiling, which read 9-10x the
+        # usual charge (one image of nine, a standard fetch priced as a rendered pro one).
+        low = cost.get("usd_min")
+        if isinstance(low, (int, float)) and not isinstance(low, bool):
+            return low
         usd = cost.get("usd")
         return usd if isinstance(usd, (int, float)) and not isinstance(usd, bool) else None
 
@@ -661,8 +672,12 @@ def _effective_cost(raw: dict):
     if oc == 0:
         return {"type": "free", "value": 0, "currency": "USD", "per": 1, "unit": "call", **seen,
                 "note": "no charge observed at verification"}
+    # One small verification call is not the price of a bigger request: the provider's own
+    # reported cost settles every call and grows with targets, keywords and depth. Say so.
     return {"type": "per_call", "value": oc, "currency": "USD", "per": 1, "unit": "call", **seen,
-            "note": "price observed at live verification (provider-reported charge)"}
+            "display": {"unit": "call", "variable": True},
+            "note": ("charge observed on one live verification call, not a fixed price: the cost the "
+                     "provider reports for each call settles it, and it varies with the request")}
 
 
 _IGNORE_PATH = re.compile(r"(?:[A-Za-z0-9_][A-Za-z0-9_-]*|\[\*\])(?:\[\*\])*(?:\.[A-Za-z0-9_][A-Za-z0-9_-]*(?:\[\*\])*)*")
