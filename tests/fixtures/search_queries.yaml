@@ -24,6 +24,10 @@ cases:
      job: companies.enrich, recall: '^companies\.enrich$'}
   - {q: "apollo person enrichment", word_top5: '^apollo\.people\.enrich$', provider: apollo, job: people.enrich}
   - {q: "you.com web search", word_first: '^you\.', provider: you, job: web.search, recall: '^web\.search$'}
+  - {q: "hunter email", word_first: '^hunter\.'}
+  - {q: "spider a website", word_first: '^spidercloud\.', word_top5: 'web\.crawl'}
+  # ---- a short word that is not a provider still starts longer words ("web" finds "website") ------
+  - {q: "web page screenshot", word_top5: 'web\.screenshot'}
   # ---- a described job -----------------------------------------------------------------------------
   - {q: "search the web for recent news about Nvidia earnings", recall: '^web\.search\.news$'}
   - {q: "find companies using Shopify in Germany", recall: '^companies\.tech_stack\.users$'}

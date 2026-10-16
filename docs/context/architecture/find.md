@@ -142,9 +142,10 @@ sequence, longest first, matched before function words are dropped: a domain is 
 channel and the judge read, so the name's own words ("people") cannot pull the answer to another
 job; the provider's jobs take the first seats, its uncatalogued endpoints come first, and on the
 page its rows lead each job (never folded away), its jobs lead the page and no routed row leads
-(the caller chose the provider). The focus holds only where the rest alone reaches one of the
-provider's units: "does perplexity mention my brand" is a question about the AI engine, and reads as
-typed. A bare name is the name table's.
+(the caller chose the provider). The focus holds only where one of the provider's rows matches a
+word of the rest (`store.provider_focus`, the keyword page's own decision, so the two pages cannot
+disagree): "does perplexity mention my brand" is a question about the AI engine, and reads as typed.
+A bare name is the name table's.
 
 ## v2: the semantic channel
 

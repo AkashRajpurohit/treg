@@ -212,6 +212,8 @@ def bench(cases: list[Case], *, limit: int = 8, cache: Path | None = None, concu
 
 
 def main(argv: list[str] | None = None) -> None:
+    from treg import bootstrap
+    bootstrap.configure_provider_labels()   # provider display names, as the server wires them
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cases", type=Path, required=True, help="JSONL of agent searches with what they called")
     ap.add_argument("--limit", type=int, default=8, help="the page size scored (MCP's default is 8)")

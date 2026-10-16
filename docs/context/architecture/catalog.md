@@ -1917,10 +1917,11 @@ abstains ([search-experiment](search-experiment.md)).
 A query word matches only at the START of a word in a field (`store._needles`, haystacks stored
 word-padded by `_padded`): "search" matches "searches" but not "research", "ads" not "leads". A
 substring match tied a research-task status row with every search tool on "web search", and the
-evidence sort then put the free, always-200 status row first. A one-word variant shorter than four
-letters matches only whole, or with a plural "s" (`WHOLE_WORD_BELOW`): "exa" had matched "exact" in
-summaries and outranked every Exa row. CJK variants keep matching anywhere, since CJK text has no
-spaces between words.
+evidence sort then put the free, always-200 status row first. A query word that is a provider's
+one-word name shorter than four letters matches only whole, or with a plural "s"
+(`WHOLE_WORD_BELOW`): "exa" had matched "exact" in summaries and outranked every Exa row. Any other
+short word still matches a word's start, so "web" finds "website" and "geo" "geolocation". CJK
+variants keep matching anywhere, since CJK text has no spaces between words.
 
 **A provider named with a task** (`store.provider_focus`): "exa search", "people data labs company
 enrichment". A provider is named by its id or its display name as a token sequence, longest first;
@@ -1929,8 +1930,12 @@ platform, and a name of only short or function words names nothing.
 The rest of the query is searched without the name, so its words ("people") cannot pull the page to
 another job; the provider's rows need only one of the rest's words, match it by stem too
 ("enrichment" meets "enrich"), and lead the page in their own relevance order, with no routed row
-(the caller chose the provider). Where none of its rows matches the rest, the query is searched as
-typed. A bare name is an ordinary search.
+(the caller chose the provider). Every other row is admitted and scored by the rest exactly as an
+ordinary search for it would be, so the page after the provider's rows is the rest's own page. The
+lead lives in the scores, so a led page shows no score and says `led_by`. Where none of the
+provider's rows matches a word of the rest, the query is searched as typed; this one decision
+(`provider_focus`, cached per catalog) is also the judged answer's. A bare name is an ordinary
+search.
 
 `catalog_store.search` demanded EVERY query token match (AND). Right for the 2–3 word refinement
 ("tiktok comments" must not return every tiktok endpoint), and fatal for how agents actually query:

@@ -486,6 +486,14 @@ async def clients():
         await app.state.http.aclose()
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _provider_labels():
+    """The provider display names search matches ("people data labs"), wired as `create_app` wires
+    them, for the tests that search without building an app."""
+    from treg import bootstrap
+    bootstrap.configure_provider_labels()
+
+
 @pytest.fixture(autouse=True)
 def _reset_call_path_caches():
     """The call path keeps in-process copies of ratestore state (the capacity view: 'provider X is

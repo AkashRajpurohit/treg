@@ -884,6 +884,7 @@ async def _catalog_search_impl(
         page = replace(page, rows=rows, total=max(len(rows), page.total - withheld), jobs=[
             j for j in page.jobs if j.capability.split(".", 1)[0] not in surface.hidden_platforms])
     ranked, stats, hidden, total, _steering = page.rows, page.stats, page.hidden, page.total, page.steering
+    led = catalog_store.led_by(query, cat)   # a named provider leads: its rows' scores carry the lead
     if page.arm is not None:
         analytics.capture(page.caller_key or "anonymous", "catalog_search_judged", {
             "source": surface.event_source, "mode": page.log["mode"], "arm": page.arm,
@@ -922,7 +923,7 @@ async def _catalog_search_impl(
                         for i in ep.get("routed_children") or [])
                 or bool(get_settings().platform_key_for(ep.get("provider")))),
             "added": ep.get("added") or None,
-            "score": None if page.judged else score,
+            "score": None if page.judged or led else score,
             # The measured half of the answer, at the step where the agent is choosing. Without it
             # the "your agent picks on evidence" story only came true at catalog_get — one endpoint
             # at a time, after the shortlist had already been cut blind.
