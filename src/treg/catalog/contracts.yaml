@@ -1267,6 +1267,20 @@ contracts:
     miss: "pages == []"
     idempotent: true
 
+  # ---- Enrichlayer reverse phone: one provider, hit/miss evidence only.
+  people.profile.from_phone:
+    summary: "The social profiles behind a phone number - Enrichlayer reverse lookup; hit/miss evidence only, never routed"
+    routed: false
+    identity:
+      - {phone: str}
+    filters: {}
+    output:
+      linkedin_url: {type: str}
+      twitter_url: {type: str}
+      facebook_url: {type: str}
+    miss: "coalesce(linkedin_url, twitter_url, facebook_url, null) == null"
+    idempotent: true
+
   # ---- influencers.club creator enrichment: admission only. `routed: false` because raw / profile
   # / full are ONE provider at three prices, not three providers to choose between.
   creators.profile:

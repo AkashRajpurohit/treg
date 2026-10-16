@@ -3273,6 +3273,13 @@ adapters:
     cost_units: "at_most(limit, 10)"
     out: {companies: results, count: total_result_count}
     miss: "results == []"
+  enrichlayer.contacts.reverse-phone:
+    # Evidence only; an answer with all three URLs null is free at Enrichlayer.
+    route: false
+    accepts: [[phone]]
+    in: {phone: queryParams.phone_number}
+    out: {linkedin_url: linkedin_profile_url, twitter_url: twitter_profile_url, facebook_url: facebook_profile_url}
+    miss: "coalesce(linkedin_profile_url, twitter_profile_url, facebook_profile_url, null) == null"
 
   # ---- judge-only: scrape, search and Google organic tools outside the routed jobs -------------
   # `route: false`: these never join `treg.web.extract` / `treg.web.search` / `treg.google.serp.organic`;
