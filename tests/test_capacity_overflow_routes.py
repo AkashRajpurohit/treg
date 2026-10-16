@@ -89,7 +89,7 @@ def test_match_catalogs_by_exact_host_method_path_with_prefix_folding():
     assert got[("hunter.people.email.find", "monid")]["agg_unit"] == "result"
     assert got[("pdl.people.enrich", "monid")]["agg_slug"] == "peopledatalabs"
     assert ("pdl.people.enrich", "orthogonal") not in got
-    assert R._usd("dynamic") is None and R._usd({"amount": {"value": 1, "currency": "EUR"}}) is None
+    assert R.listed_usd("dynamic") is None and R.listed_usd({"amount": {"value": 1, "currency": "EUR"}}) is None
 
 
 # ---- sync from the seed ------------------------------------------------------------------------
