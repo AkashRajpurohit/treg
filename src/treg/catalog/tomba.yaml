@@ -554,16 +554,16 @@ endpoints:
     test_request:
       queryParams: {domain: "stripe.com"}
     cost:
-      type: per_call
+      type: per_success
       value: 1
       currency: credit
       per: 1
       unit: call
       source: observed
       source_url: https://tomba.io/pricing
-      checked: '2026-08-20'
+      checked: '2026-10-16'
       confidence: verified
-      note: "rate card: 1 credit per similar-domain lookup; /v1/logs reported cost=1"
+      note: "rate card: 1 credit per similar-domain lookup; /v1/logs reported cost=1 for an answered seed, and an empty `data` list never appeared in the logs"
     verified: '2026-08-20'
     added: '2026-08-20'
     example_response: examples/tomba.companies.similar.json

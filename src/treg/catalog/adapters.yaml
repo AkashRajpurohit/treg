@@ -726,7 +726,8 @@ adapters:
     accepts: [[domain]]
     in: {domain: queryParams.domain}
     out: {companies: data, count: "len(data)"}
-    miss: "data == []"
+    # a seed Tomba knows nothing like answers `data: null` with `meta.total: 0`
+    miss: "coalesce(data, []) == []"
   companyenrich.companies.similar:
     accepts: [[domain]]
     in: {domain: body.domains}
