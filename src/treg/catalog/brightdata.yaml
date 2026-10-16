@@ -145,7 +145,7 @@ endpoints:
         snapshot_id: {type: string, required: true, note: "the snapshot_id returned by brightdata.web.scrape.job.start", example: "s_00000000000000000"}
       queryParams:
         format: {type: string, required: false, note: "json (array) | ndjson | jsonl (one record per line) | csv", example: "json"}
-        compress: {type: boolean, required: false, note: "gzip the download"}
+        compress: {type: boolean, required: false, enum: [false], note: "gzip the download. Off on treg's key (the settle counts records in the plain download); connect your own key to turn it on"}
         batch_size: {type: integer, required: false, note: "split the snapshot into batches; minimum 1000 records"}
         part: {type: integer, required: false, note: "which batch to fetch when batch_size is set"}
       note: "call only once brightdata.web.scrape.job.status reports ready — downloading early returns the job's running state rather than rows. Snapshots are retained for 16 days after collection"
