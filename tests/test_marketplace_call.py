@@ -1270,6 +1270,94 @@ def test_hunter_email_finder_miss_is_free():
     assert call_settle._observed_cost_micro(f, b"not json") is None
 
 
+def _hunter_company(**drop) -> dict:
+    record = {"name": "Example Co", "domain": "co.example", "description": "Makes examples.",
+              "category": {"industry": None, "sicCode": None}, "tags": ["examples"],
+              "location": "Springfield, United States", "geo": {"countryCode": "US"},
+              "metrics": {"employees": "11-50", "employeesCount": None}}
+    for path, value in drop.items():
+        *parents, leaf = path.split("__")
+        target = record
+        for key in parents:
+            target = target[key]
+        target[leaf] = value
+    return record
+
+
+def _hunter_person(**fields) -> dict:
+    record = {"email": "pat@co.example", "name": {"fullName": "Pat Example"},
+              "employment": {"title": "Head of Examples", "role": "operations"}}
+    for path, value in fields.items():
+        parent, leaf = path.split("__")
+        record[parent][leaf] = value
+    return record
+
+
+@pytest.mark.parametrize(("endpoint", "record", "billed"), [
+    ("hunter.companies.enrich", _hunter_company(), True),
+    ("hunter.companies.enrich", _hunter_company(description=None, tags=[]), False),
+    ("hunter.companies.enrich", _hunter_company(description=None, tags=None,
+                                                category={"industry": "Software"}), True),
+    ("hunter.companies.enrich", _hunter_company(metrics__employees=None), False),
+    ("hunter.companies.enrich", _hunter_company(metrics__employees=None, metrics__employeesCount=12), True),
+    ("hunter.companies.enrich", _hunter_company(location=None, geo={"countryCode": None}), False),
+    ("hunter.companies.enrich", _hunter_company(location=None), True),
+    ("hunter.people.enrich", _hunter_person(), True),
+    ("hunter.people.enrich", _hunter_person(employment__title=None), False),
+    ("hunter.people.enrich", _hunter_person(employment__title="  "), False),
+    ("hunter.people.enrich", {**_hunter_person(), "email": None}, False),
+    ("hunter.x.combined-find", {"person": _hunter_person(), "company": _hunter_company(metrics__employees=None)}, True),
+    ("hunter.x.combined-find", {"person": _hunter_person(employment__title=None), "company": _hunter_company()}, True),
+    ("hunter.x.combined-find", {"person": _hunter_person(employment__title=None),
+                                "company": _hunter_company(metrics__employees=None)}, False),
+    ("hunter.x.combined-find", {"person": _hunter_person(employment__title=None), "company": None}, False),
+])
+def test_hunter_enrichment_bills_only_a_complete_record(endpoint, record, billed):
+    """Hunter takes its 0.2 enrichment credit only when every core field comes back; a named but
+    partial record routes as a hit (the adapter checks the name) yet costs nothing. A complete
+    record keeps the estimate (None); `clearbit_format=true` answers the same record unwrapped."""
+    mk = _mk("hunter", endpoint_id=endpoint, cost_type="per_success")
+    assert call_settle._observed_cost_micro(mk, json.dumps({"data": record}).encode()) == (None if billed else 0)
+    if not billed:
+        assert call_settle._observed_cost_micro(mk, json.dumps(record).encode()) == 0
+
+
+def test_hunter_enrichment_rule_stays_on_its_endpoints():
+    mk = _mk("hunter", endpoint_id="hunter.companies.enrich", cost_type="per_success")
+    assert call_settle._observed_cost_micro(mk, b"not json") is None
+    assert call_settle._observed_cost_micro(mk, b"[]") is None
+    partial = json.dumps({"data": _hunter_company(metrics__employees=None)}).encode()
+    for other in ("hunter.companies.emails", "hunter.people.email.verify"):
+        assert call_settle._observed_cost_micro(
+            _mk("hunter", endpoint_id=other, cost_type="per_call"), partial) != 0, other
+    assert call_settle._observed_cost_micro(
+        _mk("tomba", endpoint_id="hunter.companies.enrich", cost_type="per_success"), partial) is None
+
+
+async def test_hunter_company_enrich_partial_record_is_free_through_the_call_path(clients, monkeypatch):
+    monkeypatch.setenv("TREG_PLATFORM_KEY_HUNTER", "PLATFORM-HUNTER")
+    monkeypatch.setenv("TREG_PLATFORM_PROVIDERS", "hunter")
+    get_settings.cache_clear()
+    try:
+        partial = json.dumps({"data": _hunter_company(metrics__employees=None)}).encode()
+        monkeypatch.setattr(call_service, "relay", _fake_relay(200, partial))
+        before = await _balance(clients)
+        response = await clients.get("/call/hunter.companies.enrich", params={"domain": "partial.example"})
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["name"] == "Example Co", "the answer is relayed unchanged"
+        assert response.headers["x-treg-cost-micro"] == "0"
+        assert await _balance(clients) == before
+
+        complete = json.dumps({"data": _hunter_company()}).encode()
+        monkeypatch.setattr(call_service, "relay", _fake_relay(200, complete))
+        response = await clients.get("/call/hunter.companies.enrich", params={"domain": "complete.example"})
+        assert response.status_code == 200, response.text
+        assert response.headers["x-treg-cost-micro"] == "4900", "0.2 credit at $0.0245/credit"
+        assert before - await _balance(clients) == 4_900
+    finally:
+        get_settings.cache_clear()
+
+
 def test_tikhub_envelope_no_charge_settles_at_zero():
     """TikHub reports billing in prose, not a number: a 2xx whose payload is an embedded error
     still says the request will incur a charge — and TikHub really does charge us for it

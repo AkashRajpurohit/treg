@@ -419,7 +419,7 @@ endpoints:
     source_url: https://hunter.io/pricing
     checked: '2026-07-28'
     confidence: documented
-    note: 0.2 credits, billed conditionally (only when the combined record comes back complete); a 404 or partial record is free — same rate as the /people/find and /companies/find enrichment routes
+    note: 0.2 credits, billed conditionally (only when the person half or the company half comes back complete, each by the /people/find or /companies/find field set); a 404 or a response with neither half complete is free — same rate as the /people/find and /companies/find enrichment routes
   miss:
     status: 404
     means: "no record for that email — an expected outcome (and free, per the cost note), not an API failure; do not retry"

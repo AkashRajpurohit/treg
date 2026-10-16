@@ -406,6 +406,39 @@ def _prospeo_cost_micro(mk: MarketplaceCall, doc: dict) -> int | None:
     return None
 
 
+# Hunter's three enrichment routes; combined bills when either half is complete.
+_HUNTER_ENRICH = ("hunter.companies.enrich", "hunter.people.enrich", "hunter.x.combined-find")
+
+
+def _hunter_present(value) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict)):
+        return any(_hunter_present(v) for v in (value.values() if isinstance(value, dict) else value))
+    return value is not None and not isinstance(value, bool)
+
+
+def _hunter_record_complete(record, kind: str) -> bool:
+    """Hunter's core data points, the ones its enrichment charge depends on. A person: email, full
+    name and position (`employment.title`; a `role` alone was not billed). A company: name;
+    category, description or tags; location or country code; and size (`metrics.employees`)."""
+    if not isinstance(record, dict):
+        return False
+
+    def sub(key: str) -> dict:
+        value = record.get(key)
+        return value if isinstance(value, dict) else {}
+
+    if kind == "person":
+        return (_hunter_present(record.get("email")) and _hunter_present(sub("name").get("fullName"))
+                and _hunter_present(sub("employment").get("title")))
+    metrics = sub("metrics")
+    return (_hunter_present(record.get("name"))
+            and any(_hunter_present(record.get(k)) for k in ("category", "description", "tags"))
+            and (_hunter_present(record.get("location")) or _hunter_present(sub("geo").get("countryCode")))
+            and (_hunter_present(metrics.get("employees")) or _hunter_present(metrics.get("employeesCount"))))
+
+
 # Providers whose exact charge rides a response header, in provider credits (fx.yaml rate).
 # The multiplier makes the provider's sign convention explicit: most report a positive charge,
 # while AI Ark reports debits as negative `X-Credit` values.
@@ -468,6 +501,8 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
       - hunter (email finder): DERIVED, the flat case — one whole SEARCH credit when an email is
         found, nothing on a miss ("a miss is free", per Hunter's own pricing), yet a miss still
         answers HTTP 200, so the estimate billed the full credit for a name Hunter had nothing on.
+      - hunter (enrichment): DERIVED, billed only for a complete record. A record with a name but
+        without the rest of Hunter's core fields routes as a hit and settles at 0.
       - tikhub: REPORTED in prose rather than a number. Every envelope says whether the call is
         billed; only the explicit no-charge phrasing settles at zero, because TikHub really does
         charge for a 2xx whose payload is an embedded error (verified live 2026-07-30 — see
@@ -797,6 +832,23 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
         if isinstance(data, dict) and "email" in data and rate:
             return int(rate * 1_000_000 + 0.5) if data["email"] else 0
         return None
+    if provider == "hunter" and mk.endpoint_id in _HUNTER_ENRICH:
+        # DERIVED: enrichment is billed only when the record comes back complete (Hunter's help
+        # center lists the core fields; `_hunter_record_complete`). A record with a name but no
+        # size, location or position is free, and the meter agrees: controlled calls on fresh
+        # public inputs moved GET /account's credits by 0.2 for each complete record and by 0 for
+        # each partial one. Routing still hits on the name alone (adapters.yaml); billing is
+        # stricter. This rule only zeroes: a complete record falls through to the generic miss
+        # rule unchanged, and a body without a record is undecided.
+        data = doc.get("data", doc) if isinstance(doc, dict) else None  # clearbit_format: bare record
+        if isinstance(data, dict) and "errors" not in data:
+            if mk.endpoint_id == "hunter.x.combined-find":
+                parts = [(data.get("person"), "person"), (data.get("company"), "company")]
+            else:
+                parts = [(data, "person" if mk.endpoint_id == "hunter.people.enrich" else "company")]
+            if (any(isinstance(record, dict) for record, _ in parts)
+                    and not any(_hunter_record_complete(record, kind) for record, kind in parts)):
+                return 0
     if provider == "tikhub":
         # REPORTED in prose rather than a number: every TikHub envelope states whether the call is
         # billed. A 2xx whose payload is an embedded error still says "This request will incur a
