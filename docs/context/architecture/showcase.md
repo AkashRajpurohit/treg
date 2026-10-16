@@ -108,7 +108,7 @@ see visits from treg. All showcase routes, like the page, 404 on a self-hosted r
 ## Pictures
 
 One pipeline serves every kind (`domain.images.KINDS`): user and team avatars (256 px square WebP),
-showcase icons (512 px square PNG, so a logo stays sharp) and screenshots (WebP, longest side 1280
+showcase icons (512 px square PNG from at least 96 px, so a logo stays sharp when given large) and screenshots (WebP, longest side 1280
 and a 640 copy, shape kept: a phone screenshot stays tall; nothing is cropped or stretched, and only
 a square is scaled up to fill its side). An upload is size-capped while it streams, its leading
 bytes must be PNG, JPEG or WebP, it is decoded under a pixel cap and re-drawn from its pixels in a

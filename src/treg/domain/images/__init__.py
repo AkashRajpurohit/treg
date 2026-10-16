@@ -56,7 +56,7 @@ KINDS: dict[str, Kind] = {k.name: k for k in (
     # Avatars are mostly photos: WebP is a fraction of PNG's size. Icons are logos: PNG stays sharp.
     Kind("user_avatar", (Output("", 256, "webp", square=True),), 64, 64, 2_000_000, reviewed=False),
     Kind("team_avatar", (Output("", 256, "webp", square=True),), 64, 64, 2_000_000, reviewed=False),
-    Kind("showcase_icon", (Output("", 512, "png", square=True),), 128, 128, 2_000_000, reviewed=True),
+    Kind("showcase_icon", (Output("", 512, "png", square=True),), 96, 96, 2_000_000, reviewed=True),
     # Screenshots keep their shape, desktop or phone: a 1080x2400 phone screen becomes 576x1280.
     Kind("showcase_shot", (Output("", 1280, "webp", square=False), Output("-640", 640, "webp", square=False)),
          600, 200, 5_000_000, reviewed=True),
