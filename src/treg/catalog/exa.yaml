@@ -13,6 +13,8 @@ pricing_url: https://exa.ai/pricing
 # so the catalog holds the BASE price and riders (results beyond 10 at $1/1k, each extra contents
 # type at $1/1k page, deep-mode uplifts) are billed exactly as Exa reports them. All nine routes
 # were live verified on 2026-08-27 against that meter; the rate-card figures matched to the cent.
+# `extra_results` puts the one rider a request fixes in advance (results beyond 10 at $0.001 each)
+# into the reserve too, so a 100-result sweep is held, 402-gated and max-cost-checked at $0.097.
 # Observed that day and worth knowing: `type: fast` / `instant` and every `category` bill the same
 # $0.007 base as `auto`; highlights requested INSIDE a /search call were NOT billed on top.
 #
@@ -58,6 +60,8 @@ endpoints:
       currency: USD
       per: 1000
       unit: call
+      extra_results: {included: 10, usd: 0.001}
+      display: {unit: call, variable: true}
       source: observed
       source_url: https://exa.ai/pricing
       checked: '2026-08-27'
@@ -98,6 +102,8 @@ endpoints:
       currency: USD
       per: 1000
       unit: call
+      extra_results: {included: 10, usd: 0.001}
+      display: {unit: call, variable: true}
       source: observed
       source_url: https://exa.ai/pricing
       checked: '2026-08-27'
@@ -134,6 +140,8 @@ endpoints:
       currency: USD
       per: 1000
       unit: call
+      extra_results: {included: 10, usd: 0.001}
+      display: {unit: call, variable: true}
       source: observed
       source_url: https://exa.ai/pricing
       checked: '2026-08-27'
@@ -173,6 +181,8 @@ endpoints:
       currency: USD
       per: 1000
       unit: call
+      extra_results: {included: 10, usd: 0.001}
+      display: {unit: call, variable: true}
       source: observed
       source_url: https://exa.ai/pricing
       checked: '2026-08-27'
@@ -211,6 +221,8 @@ endpoints:
       currency: USD
       per: 1000
       unit: call
+      extra_results: {included: 10, usd: 0.001}
+      display: {unit: call, variable: true}
       source: observed
       source_url: https://exa.ai/pricing
       checked: '2026-08-27'
@@ -248,6 +260,8 @@ endpoints:
       currency: USD
       per: 1000
       unit: call
+      extra_results: {included: 10, usd: 0.001}
+      display: {unit: call, variable: true}
       source: observed
       source_url: https://exa.ai/pricing
       checked: '2026-08-27'
@@ -325,6 +339,8 @@ endpoints:
       currency: USD
       per: 1000
       unit: call
+      extra_results: {included: 10, usd: 0.001}
+      display: {unit: call, variable: true}
       source: observed
       source_url: https://exa.ai/pricing
       checked: '2026-08-27'
@@ -360,6 +376,8 @@ endpoints:
       currency: USD
       per: 1000
       unit: call
+      extra_results: {included: 10, usd: 0.001}
+      display: {unit: call, variable: true}
       source: observed
       source_url: https://exa.ai/pricing
       checked: '2026-08-27'
