@@ -645,6 +645,18 @@ async def pool_gauge(*, sample_s: float = _POOL_GAUGE_SAMPLE_S,
         await asyncio.sleep(sample_s)
 
 
+def configure_provider_labels() -> None:
+    """Composition seam: search reads a provider's display name through the catalog domain's hook,
+    so the domain never imports the provider registry."""
+    from . import oauth_providers
+    from .domain.catalog import store as catalog_store
+
+    def label(service: str) -> str:
+        p = oauth_providers.get(service)
+        return p.display_name if p else service
+    catalog_store.configure_provider_labels(label)
+
+
 def configure_archive_object_store(store) -> None:
     """Composition seam shared by startup and in-memory tests. Find's card vectors share the store."""
     from . import archive_bodies
@@ -778,6 +790,7 @@ def create_app(role: AppRole = "all", *, archive_object_store=None) -> FastAPI:
     from .application.call import keyslots
 
     keyslots.check_accounts()  # an unusable TREG_PLATFORM_ACCOUNTS entry refuses to start
+    configure_provider_labels()
 
     expose_docs = role != "dataplane"
     app = FastAPI(

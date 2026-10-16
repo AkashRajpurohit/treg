@@ -129,9 +129,12 @@ query's vector), then lays the answer out for a page (`agent_page`):
   spend on the judge. It guards every dealt caller in `v2` mode before any judge, keyed by who
   the caller is (team and email); a caller the search could not resolve shares one bucket, since
   the tool reads the catalog without validating a per-team token and a made-up token would
-  otherwise be a fresh cap each search. Past it the hour's searches are the lexical page,
-  recorded `keyword:rate_limited`. The hub read and the cap each open and close their own
-  session before the judge is called.
+  otherwise be a fresh cap each search. The open HTTP route (`/catalog/search?engine=agent`, the
+  CLI's search) knows the caller's address, so there an unresolved caller is capped by address
+  instead (`ip:<address>`): one script cannot spend every signed-out caller's judge. Past it the
+  hour's searches are the lexical page, recorded `keyword:rate_limited`. The hub read, the caller
+  lookup and the cap each open and close their own session before the judge is called; the
+  route's own session is never used, and a failed caller lookup searches as unresolved.
 
 The HTTP route and the CLI still answer from the shipped ranker; they follow once the route's hub
 read holds no session through a judge call and the CLI sends its token.

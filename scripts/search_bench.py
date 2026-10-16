@@ -159,6 +159,8 @@ def summarize(name, per_case, zero, style=None):
 
 
 def main() -> None:
+    from treg import bootstrap
+    bootstrap.configure_provider_labels()   # provider display names, as the server wires them
     cat = cs.load()
     bad = [q for _, q, t in CASES if not expand(t, cat)]
     if bad:
