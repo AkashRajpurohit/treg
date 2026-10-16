@@ -388,25 +388,28 @@
   .plats .row span { display: inline-flex; align-items: center; gap: 7px; background: #fff; border-radius: 999px; padding: 7px 13px 7px 9px; font-size: 13px; font-weight: 500; box-shadow: 0 1px 2px rgba(20,18,12,.05), inset 0 0 0 1px var(--line); }
   .plats .row img { width: 16px; height: 16px; }
 
-  /* ---------- live benchmark ---------- */
-  .lb { max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
-  .lcol { background: var(--paper); border-radius: 18px; padding: 16px 14px 10px; box-shadow: 0 1px 2px rgba(20,18,12,.05), 0 14px 34px -22px rgba(20,18,12,.25); }
-  .lcol .lh { display: flex; align-items: center; gap: 9px; padding: 0 4px 12px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
-  .lcol .lh img { width: 20px; height: 20px; }
-  .lcol .lh b { font-family: var(--display); font-weight: 500; font-size: 17px; letter-spacing: -.01em; }
-  .lcol .lh s { margin-left: auto; text-decoration: none; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-  .lr { position: relative; padding: 10px 10px 12px; border-radius: 12px; margin-bottom: 4px; }
-  .lr .top { display: flex; align-items: center; gap: 9px; }
-  .lr .top img { width: 22px; height: 22px; border-radius: 6px; flex: none; }
-  .lr .top b { font-weight: 600; font-size: 13.5px; display: block; line-height: 1.2; }
-  .lr .top s { display: block; text-decoration: none; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-  .lr .top em { margin-left: auto; font-style: normal; font-family: var(--mono); font-size: 17px; letter-spacing: -.03em; }
-  .lr .bar { height: 6px; border-radius: 3px; background: #EEEDEA; margin-top: 9px; overflow: hidden; }
-  .lr .bar i { display: block; height: 100%; border-radius: 3px; background: #BDBBB6; width: 0; transition: width .9s cubic-bezier(.3,.7,.3,1); }
-  .lr.win { background: #EEF8F3; box-shadow: inset 0 0 0 1.5px var(--green); }
-  .lr.win .bar i { background: var(--green); }
-  .lr.win em { color: var(--green); }
-  .lb-cap { text-align: center; color: var(--muted); font-size: 12.5px; margin: 18px auto 0; font-family: var(--mono); }
+  /* ---------- routed by real-time benchmarks ---------- */
+  .rb { max-width: 1080px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr 1.25fr; gap: 14px; }
+  .rb > * { min-width: 0; }
+  .stat { background: var(--gold-soft); border-radius: 18px; padding: 20px 22px; box-shadow: inset 0 0 0 1.5px #F0E3A8; display: flex; flex-direction: column; gap: 6px; }
+  .stat .sh { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 500; }
+  .stat .sh img { width: 24px; height: 24px; border-radius: 6px; }
+  .stat .sh em { margin-left: auto; font-style: normal; font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .stat .big { font-family: var(--pixel); font-size: 64px; line-height: 1; letter-spacing: -.02em; margin-top: auto; padding-top: 18px; }
+  .stat .big small { font-size: .42em; color: var(--muted); margin-left: 4px; }
+  .stat .bar { height: 7px; border-radius: 4px; background: #F1E6B8; overflow: hidden; margin: 6px 0 4px; }
+  .stat .bar i { display: block; height: 100%; width: 0; background: var(--ink); border-radius: 4px; transition: width 1s cubic-bezier(.3,.7,.3,1); }
+  .stat .meta { font-family: var(--mono); font-size: 12px; color: #6A6864; }
+  .order { background: var(--paper); border-radius: 18px; padding: 20px 22px; box-shadow: 0 1px 2px rgba(20,18,12,.05), 0 14px 34px -22px rgba(20,18,12,.25); }
+  .order h3 { font-family: var(--display); font-weight: 500; font-size: 17px; letter-spacing: -.01em; margin: 0 0 12px; }
+  .order ol { list-style: none; margin: 0; padding: 0; counter-reset: o; }
+  .order li { counter-increment: o; display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .order li:first-child { border-top: 0; padding-top: 0; }
+  .order li::before { content: counter(o); width: 22px; height: 22px; border-radius: 50%; background: var(--card); display: grid; place-items: center; font-family: var(--mono); font-size: 11.5px; color: #5E5C58; }
+  .order li b { font-weight: 600; }
+  .order li span { color: var(--muted); display: block; font-size: 12.5px; }
+  .order li.key::before { background: var(--green); color: #fff; }
+  .lb-cap { text-align: center; color: var(--muted); font-size: 12.5px; margin: 18px auto 0; font-family: var(--mono); max-width: 760px; }
   .lb-cap .live { display: inline-flex; align-items: center; gap: 6px; color: var(--green); }
   .lb-cap .live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
@@ -421,7 +424,7 @@
     .tries::before { display: none; }
     .twin { grid-template-columns: 1fr; }
     .jpane { grid-template-columns: 1fr; }
-    .lb { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .rb { grid-template-columns: 1fr 1fr; } .order { grid-column: 1 / -1; }
     .posts, .shops { grid-template-columns: repeat(3, minmax(160px, 1fr)); overflow-x: auto; }
   }
   @media (max-width: 640px) {
@@ -429,7 +432,7 @@
     .vs { top: 50%; font-size: 40px; }
     .dr { grid-template-columns: 44px 1fr 16px 58px; font-size: 12px; }
     .board { padding: 18px 14px 12px; }
-    .lb { grid-template-columns: 1fr; }
+    .rb { grid-template-columns: 1fr; }
     .jl { padding: 16px; }
     .posts, .shops { grid-template-columns: repeat(3, 72%); }
   }
@@ -703,10 +706,23 @@ IC+ pricing · Volume discounts
 
 <section class="section" id="bench" style="padding-top:60px">
   <h2>Routed by<br><span class="hl2">real-time benchmarks.</span></h2>
-  <p class="lede">Hit rate, median time and price for the vendors behind each job, from live treg calls over the last 30 days. The same numbers decide who your agent's call tries first.</p>
-  <div class="lb" id="lb"></div>
-  <div class="lb-cap" id="lbCap">hit rate = the call returned results · the busiest vendors per job</div>
-  <div class="lb-cta"><a class="pill" href="/web-arena">Open the Web Arena →</a></div>
+  <p class="lede">treg measures every vendor on live traffic and uses those numbers to pick the order your agent's call tries them in. Free comes first, and it holds up.</p>
+  <div class="rb">
+    <div class="stat" id="stSearch"><div class="sh"><img src="logos/tinyfish.svg" alt="">Free web search<em>TinyFish · $0</em></div>
+      <div class="big"><span data-v>…</span><small>hit rate</small></div><div class="bar"><i></i></div><div class="meta" data-m>&nbsp;</div></div>
+    <div class="stat" id="stFetch"><div class="sh"><img src="logos/tinyfish.svg" alt="">Free page fetch<em>TinyFish · $0</em></div>
+      <div class="big"><span data-v>…</span><small>hit rate</small></div><div class="bar"><i></i></div><div class="meta" data-m>&nbsp;</div></div>
+    <div class="order"><h3>How the order is picked</h3>
+      <ol>
+        <li class="key"><div><b>Your own key</b><span>always first, never metered</span></div></li>
+        <li><div><b>The vendor you prefer</b><span><code style="font-family:var(--mono);font-size:11.5px">X-Treg-Route-Prefer</code>, like free TinyFish</span></div></li>
+        <li><div><b>Lowest cost per answer</b><span>price ÷ measured hit rate, so a cheap vendor that often misses ranks lower</span></div></li>
+        <li><div><b>Then speed</b><span>median response time on live calls</span></div></li>
+      </ol>
+    </div>
+  </div>
+  <div class="lb-cap" id="lbCap">hit rate = the call returned results, on live treg traffic</div>
+  <div class="lb-cta"><a class="pill" href="/web-arena">See every vendor in the Web Arena →</a></div>
 </section>
 
 <section class="cta-final">
@@ -987,31 +1003,23 @@ IC+ pricing · Volume discounts
   if (reduced) { stage.classList.add('paused'); show(0); }
   else onSeen(stage, function () { show(0); auto = setInterval(next, DUR); }, 0.3);
 
-  /* ---------- live benchmark ---------- */
-  var JOBS = [['search', 'Web search', 'p-google.svg'], ['fetch', 'Page fetch', 'p-web.svg'], ['news', 'News', 'p-web.svg'], ['maps', 'Maps', 'p-apple-maps.svg']];
+  /* ---------- routed by real-time benchmarks: the free tier's live numbers ---------- */
   function secs(ms) { return ms < 1000 ? (ms / 1000).toFixed(2) + ' s' : (ms / 1000).toFixed(1) + ' s'; }
+  function short(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
   lbData.then(function (d) {
-    var html = '';
-    JOBS.forEach(function (j) {
-      var rows = (d.task_results[j[0]] || []).filter(function (r) { return r.success_rate != null && NAMES[r.provider]; });
-      rows = rows.sort(function (a, b) { return (b.runs || 0) - (a.runs || 0); }).slice(0, 4)
-                 .sort(function (a, b) { return b.success_rate - a.success_rate || a.median_provider_ms - b.median_provider_ms; });
-      if (!rows.length) return;
-      html += '<div class="lcol"><div class="lh"><img src="media/web-access/' + j[2] + '" alt=""><b>' + j[1] + '</b><s>' + (d.task_results[j[0]] || []).length + ' vendors</s></div>';
-      rows.forEach(function (r, i) {
-        html += '<div class="lr' + (i === 0 ? ' win' : '') + '"><div class="top"><img src="logos/' + esc(r.provider) + '.svg" alt=""><span><b>' + esc(NAMES[r.provider]) +
-          '</b><s>' + secs(r.median_provider_ms) + ' · ' + per(r.current_catalog_price_usd || 0) + '</s></span><em>' + r.success_rate.toFixed(1) + '%</em></div>' +
-          '<div class="bar"><i data-w="' + r.success_rate + '"></i></div></div>';
-      });
-      html += '</div>';
+    var days = d.window_days || 30;
+    [['search', 'stSearch'], ['fetch', 'stFetch']].forEach(function (t) {
+      var r = (d.task_results[t[0]] || []).filter(function (x) { return x.provider === 'tinyfish'; })[0], el = document.getElementById(t[1]);
+      if (!r || r.success_rate == null) { el.hidden = true; return; }
+      el.querySelector('[data-v]').textContent = r.success_rate.toFixed(1) + '%';
+      el.querySelector('[data-m]').textContent = secs(r.median_provider_ms) + ' median · ' + short(r.runs) + ' calls in ' + days + ' days';
+      var bar = el.querySelector('.bar i'), grow = function () { bar.style.width = r.success_rate + '%'; };
+      if (reduced) grow(); else onSeen(el, grow, 0.3);
     });
-    var lb = document.getElementById('lb'); lb.innerHTML = html;
     var live = d !== SNAP && d.status === 'live';
     var when = d.updated_at ? new Date(d.updated_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
     document.getElementById('lbCap').innerHTML = (live ? '<span class="live">live</span> · updated ' + esc(when) + ' · ' : 'snapshot · ') +
-      'hit rate = the call returned results · the busiest vendors per job · last ' + (d.window_days || 30) + ' days';
-    function grow() { lb.querySelectorAll('.bar i').forEach(function (b) { b.style.width = b.getAttribute('data-w') + '%'; }); }
-    if (reduced) grow(); else onSeen(lb, grow, 0.3);
+      'hit rate = the call returned results, on live treg traffic · each vendor sees different requests, so it is not a head-to-head test';
   });
 })();
 </script>
