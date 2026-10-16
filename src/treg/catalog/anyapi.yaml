@@ -178,22 +178,11 @@ endpoints:
   name: Instagram Reels Search
   summary: Search Instagram Reels by keyword and get matching reels (caption, likes, comments, creator,
     and duration). Instagram does not return view or play counts in reels search results. Results are
-    relevance-ranked, not chronological. Paging tops out around 110 reels per query (11 pages of 10).
+    relevance-ranked, not chronological. Recency filtering is not supported on instagram.reels_search
+    (AnyAPI offers it on instagram.web_reels_search). Paging tops out around 110 reels per query
+    (11 pages of 10).
   input:
     body:
-      datePosted:
-        type: string
-        required: false
-        note: Recency hint, not a hard filter. Reel discovery runs on top of Google search, so this window
-          narrows Google's index by when it discovered or last crawled the reel, which is not the same
-          as when the reel was published to Instagram. Returned reels can have a createdUtc outside the
-          requested...
-        enum:
-        - last-hour
-        - last-day
-        - last-week
-        - last-month
-        - last-year
       cursor:
         type: string
         required: false

@@ -459,7 +459,11 @@ Bare **`treg connections`** now lists (the subparser is `required=False` with a 
   one thing worth reading *before* signing up. The CLI never parses the YAML itself (that needs pyyaml,
   a server extra); see [catalog](../architecture/catalog.md).
 - **`catalog search <query…> [--limit]`** (`_catalog_search`) — find an endpoint by what it DOES when you
-  don't know which shelf it sits on (`GET /catalog/search`). A compact ranked table: endpoint id,
+  don't know which shelf it sits on (`GET /catalog/search?engine=agent`: the search an agent's
+  `catalog_search` gets, judged where the judge runs, else the keyword page; the login token, when
+  there is one, says who is searching for the per-caller judge cap; an older server ignores
+  `engine` and answers by keyword). A `none` verdict prints "the catalog has no tool for" and the
+  request line, `closest` and a judge-less `keyword` page say so under the table. A compact ranked table: endpoint id,
   platform, provider, cost, `✓`/`·` verified, tier, clipped summary — footer hint `treg catalog get <id>`.
   Cost prints in **USD** (`_cost_usd`, 3 significant digits) rather than `_cost_label`'s source currency:
   the column is only worth reading if CNY and USD rows compare. The no-match message names

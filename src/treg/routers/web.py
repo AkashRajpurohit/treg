@@ -3455,6 +3455,7 @@ _SITEMAP_PAGES: tuple[tuple[str, str, str], ...] = (
     ("/connectors/claude", "claude-connector.html", "0.6"),
     ("/people-search", "people-search.html", "0.8"),
     ("/leads-signals", "leads-signals.html", "0.8"),
+    ("/web-access", "web-access.html", "0.8"),
     ("/grokbot", "grokbot.html", "0.8"),
     ("/fable", "fable-gtm.html", "0.8"),
     ("/gpt6", "astra.html", "0.8"),
@@ -3715,6 +3716,13 @@ async def lead_signals_skill_md():
     return _serve_md("skills/lead-signals/SKILL.md")
 
 
+@app.get("/skills/web-access/SKILL.md", include_in_schema=False)
+async def web_access_skill_md():
+    """The web-access skill: when to search, read, map or call a platform job, free first, with the
+    routed fallbacks steered by headers. Bundled like lead-signals; `.agents/skills/web-access` links to it."""
+    return _serve_md("skills/web-access/SKILL.md")
+
+
 @app.get("/skills/jev-memory/SKILL.md", include_in_schema=False)
 async def jev_memory_skill_md():
     """The jev-memory skill: install (or build) the Claude Code mod in
@@ -3963,6 +3971,13 @@ async def leads_signals_page(request: Request):
     return _static_page("leads-signals.html", request)
 
 
+@app.get("/web-access", include_in_schema=False)
+async def web_access_page(request: Request):
+    """Landing page for the web-access launch ("Free WebAccess for agents"). Served like /leads-signals;
+    its benchmark and price comparison read /web-arena/api/leaderboard and fall back to a bundled snapshot."""
+    return _static_page("web-access.html", request)
+
+
 @app.get("/gtm-engineering", include_in_schema=False)
 async def gtm_engineering_page(request: Request):
     """The GTM-engineering hub: the seven jobs a GTM engineer runs, each linked to its existing
@@ -4073,6 +4088,8 @@ async def jev_xboost_judge(request: Request, db: AsyncSession = Depends(get_sess
 # chronological (newest first), not alphabetical.
 _BLOG_LAUNCHES: list[tuple[str, str, str, str]] = [
     # (slug, title, date, one-line blurb)
+    ("/web-access", "Free WebAccess for agents", "2026-10-15",
+     "Free web search and page reads for your agent; when free fails, the next vendor answers."),
     ("/showcase", "Built with treg", "2026-10-12",
      "Apps whose agents reach the outside world through treg, the people who made them, and their launch posts."),
     ("/gtm-engineering", "The GTM Engineering Playbook", "2026-09-30",
@@ -4414,10 +4431,12 @@ async def well_known_skills_index():
     fm = _skill_frontmatter()
     ugc = _skill_frontmatter("skills/make-ugc/SKILL.md")
     sig = _skill_frontmatter("skills/lead-signals/SKILL.md")
+    web = _skill_frontmatter("skills/web-access/SKILL.md")
     return JSONResponse({"skills": [
         {"name": fm.get("name", "treg"), "description": fm.get("description", ""), "files": ["SKILL.md"]},
         {"name": ugc.get("name", "make-ugc"), "description": ugc.get("description", ""), "files": ["SKILL.md"]},
         {"name": sig.get("name", "lead-signals"), "description": sig.get("description", ""), "files": ["SKILL.md"]},
+        {"name": web.get("name", "web-access"), "description": web.get("description", ""), "files": ["SKILL.md"]},
     ]})
 
 
@@ -4440,6 +4459,12 @@ async def well_known_make_ugc_md():
 async def well_known_lead_signals_md():
     """The third entry `index.json` promises; the same file as /skills/lead-signals/SKILL.md."""
     return _serve_md("skills/lead-signals/SKILL.md")
+
+
+@app.get("/.well-known/skills/web-access/SKILL.md", include_in_schema=False)
+async def well_known_web_access_md():
+    """The fourth entry `index.json` promises; the same file as /skills/web-access/SKILL.md."""
+    return _serve_md("skills/web-access/SKILL.md")
 
 
 @app.get("/connect-demo", include_in_schema=False)

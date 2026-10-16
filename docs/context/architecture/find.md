@@ -16,6 +16,8 @@ sources:
   - tests/test_find_bench.py
   - tests/test_find_recall.py
   - tests/test_catalog_find.py
+  - tests/test_search_queries.py
+  - tests/fixtures/search_queries.yaml
   - frontend/src/state/find.js
   - frontend/src/components/FindAnswer.vue
   - frontend/src/pages/SearchPage.vue
@@ -35,8 +37,10 @@ It is the discovery experiment's mechanism ([search-experiment](search-experimen
 recall read by one `infra.judge` request, bucketed at `search_judge_keep` / `search_judge_high`)
 served to people. The v2 engine below also answers MCP `catalog_search` in the experiment's `v2`
 mode, laid out for an agent by `application/catalog_search.py`
-([search-experiment](search-experiment.md)); `/catalog/search` answers from the shipped ranker, and
-nothing here touches `store.search`, its scoring or the evidence rerank.
+([search-experiment](search-experiment.md)); `/catalog/search` answers from the shipped ranker (or,
+with `engine=agent`, the CLI's search, the same use case as MCP's). Nothing here touches
+`store.search`'s scoring or the evidence rerank; the two share only `store.provider_focus`, the
+reading of a provider named in the query (below).
 
 ## Two engines, one switch
 
@@ -102,7 +106,8 @@ merely have one member mentioning it.
 **Fusion and seats.** Each channel's top 300 fuse by reciprocal rank (k=60): the lexical channel
 admits only units with a hit, the semantic one its 300 most similar whatever the sign, so a query
 with no word on any card still fills its seats by meaning. Seats: the jobs on a
-platform the query names first (`find_platform_seats`), then the best jobs to `find_jobs`, then the
+provider the query names first, then the jobs on a platform it names (`find_platform_seats` each),
+then the best jobs to `find_jobs`, then the
 representatives of those jobs in fused order (`find_delta`), then uncatalogued endpoints
 (`find_raw`). `?platform=` keeps one shelf's units.
 
@@ -128,6 +133,19 @@ more of those names share and names elsewhere rarely use ("gemini", "seedance", 
 minus the keys of `aliases.yaml` ("tts" is a way of saying a job, not a product), and
 adjacent pairs of them ("nano banana"), matched with spaces and hyphens folded away.
 On a shelf only a provider there counts.
+
+**A provider named with a task** (`Focus`, from `store.provider_focus`): "exa search", "people data
+labs company enrichment". A provider is named by its id or its whole display name as a token
+sequence, longest first, matched before function words are dropped: a domain is part of the name
+("you.com", "apollo.io"), while "you" or "context" alone is a word. A name that is a platform's
+("tiktok") names the platform, and one of only short or function words ("x") names nothing. The rest of the query is what recall, the semantic
+channel and the judge read, so the name's own words ("people") cannot pull the answer to another
+job; the provider's jobs take the first seats, its uncatalogued endpoints come first, and on the
+page its rows lead each job (never folded away), its jobs lead the page and no routed row leads
+(the caller chose the provider). The focus holds only where one of the provider's rows matches a
+word of the rest (`store.provider_focus`, the keyword page's own decision, so the two pages cannot
+disagree): "does perplexity mention my brand" is a question about the AI engine, and reads as typed.
+A bare name is the name table's.
 
 ## v2: the semantic channel
 

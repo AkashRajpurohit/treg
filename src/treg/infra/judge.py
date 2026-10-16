@@ -32,6 +32,21 @@ _CACHE_MAX = 5000
 _CACHE_TTL_S = 3600.0
 _cache: "OrderedDict[str, tuple[float, tuple[list[float], dict]]]" = OrderedDict()
 
+# A refusal that every later request will meet too (no credit, a bad or revoked key) is an
+# outage, not a slow answer: search keeps serving the keyword page, so nothing else says so.
+# Logged at ERROR, which reaches error tracking, at most once per status per window.
+_OUTAGE_STATUSES = frozenset({401, 402, 403})
+_OUTAGE_LOG_EVERY_S = 600.0
+_outage_logged: dict[int, float] = {}
+
+
+def _note_outage(status: int) -> None:
+    now = time.monotonic()
+    if status in _OUTAGE_STATUSES and now - _outage_logged.get(status, -_OUTAGE_LOG_EVERY_S) >= _OUTAGE_LOG_EVERY_S:
+        _outage_logged[status] = now
+        log.error("relevance judge refused with HTTP %s: search is serving the keyword page until "
+                  "the judge account is fixed", status)
+
 
 @dataclass(frozen=True)
 class Judgement:
@@ -118,6 +133,7 @@ def _cache_put(key: str, answer: tuple[list[float], dict]) -> None:
 
 def clear_cache() -> None:
     _cache.clear()
+    _outage_logged.clear()
 
 
 async def judge(query: str, candidates: list[dict], *, api_key: str, model: str, url: str,
@@ -154,6 +170,7 @@ async def judge(query: str, candidates: list[dict], *, api_key: str, model: str,
             r = await client.post(url, json=body, headers={"Authorization": f"Bearer {api_key}"})
         ms = int((time.perf_counter() - t0) * 1000)
         if r.status_code != 200:
+            _note_outage(r.status_code)
             return Judgement(probs=None, ms=ms, error=f"http_{r.status_code}")
         data = r.json()
         answers = data.get("answers") or {}

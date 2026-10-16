@@ -230,15 +230,15 @@ class V2:
     async def _recall(self, case: Case):
         r = await catalog_find.recall_with_meaning(case.q, self.cat, _provider_display)
         reach = [c["id"] for c in catalog_find._candidate_endpoints(r.cands, self.cat)]
-        return r.cands, Answer(candidates=[c.unit.id for c in r.cands], recall_ms=r.recall_ms, reach=reach,
-                               embed_error=r.embed.error)
+        return r, Answer(candidates=[c.unit.id for c in r.cands], recall_ms=r.recall_ms, reach=reach,
+                         embed_error=r.embed.error)
 
     async def recall(self, case: Case) -> Answer:
         return (await self._recall(case))[1]
 
     async def answer(self, case: Case) -> Answer:
-        cands, a = await self._recall(case)
-        found = await catalog_find.answer_v2(case.q, cands, self.cat, _provider_display)
+        r, a = await self._recall(case)
+        found = await catalog_find.answer_v2(case.q, r.cands, self.cat, _provider_display, focus=r.focus)
         j = found.judgement
         a.verdict = found.verdict
         a.kept = [(c.unit.id, round(p, 3)) for c, p in found.kept]
@@ -575,6 +575,8 @@ def bench(cases: list[Case], *, engine: str, tier: str, cache: Path | None = Non
 
 
 def main(argv: list[str] | None = None) -> None:
+    from treg import bootstrap
+    bootstrap.configure_provider_labels()   # provider display names, as the server wires them
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cases", type=Path, required=True, help="YAML (labels inline) or JSONL (labels.yaml beside it)")
     ap.add_argument("--labels", type=Path, help="labels for a JSONL case file (default: labels.yaml beside it)")

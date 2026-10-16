@@ -169,6 +169,7 @@ _CONTROL_ROUTE_KEYS: frozenset[RouteKey] = frozenset({
     ('/skill.md', ('GET',), 'skill_md'),
     ('/skills/ugc/SKILL.md', ('GET',), 'make_ugc_skill_md'),
     ('/skills/lead-signals/SKILL.md', ('GET',), 'lead_signals_skill_md'),
+    ('/skills/web-access/SKILL.md', ('GET',), 'web_access_skill_md'),
     ('/skills/jev-memory/SKILL.md', ('GET',), 'jev_memory_skill_md'),
     ('/feedback.md', ('GET',), 'feedback_md'),
     ('/favicon.ico', ('GET',), 'favicon'),
@@ -195,6 +196,7 @@ _CONTROL_ROUTE_KEYS: frozenset[RouteKey] = frozenset({
     ('/people-search', ('GET',), 'people_search_page'),
     ('/start', ('GET',), 'start_page'),
     ('/leads-signals', ('GET',), 'leads_signals_page'),
+    ('/web-access', ('GET',), 'web_access_page'),
     ('/gtm-engineering', ('GET',), 'gtm_engineering_page'),
     ('/gtm-engineering.md', ('GET',), 'gtm_engineering_md'),
     ('/jev', ('GET',), 'jev_page'),
@@ -213,6 +215,7 @@ _CONTROL_ROUTE_KEYS: frozenset[RouteKey] = frozenset({
     ('/.well-known/skills/treg/SKILL.md', ('GET',), 'well_known_skill_md'),
     ('/.well-known/skills/make-ugc/SKILL.md', ('GET',), 'well_known_make_ugc_md'),
     ('/.well-known/skills/lead-signals/SKILL.md', ('GET',), 'well_known_lead_signals_md'),
+    ('/.well-known/skills/web-access/SKILL.md', ('GET',), 'well_known_web_access_md'),
     ('/connect-demo', ('GET',), 'connect_demo_page'),
     ('/connect-demo/callback', ('GET',), 'connect_demo_callback'),
     ('/help', ('GET',), 'support_page'),
@@ -645,6 +648,18 @@ async def pool_gauge(*, sample_s: float = _POOL_GAUGE_SAMPLE_S,
         await asyncio.sleep(sample_s)
 
 
+def configure_provider_labels() -> None:
+    """Composition seam: search reads a provider's display name through the catalog domain's hook,
+    so the domain never imports the provider registry."""
+    from . import oauth_providers
+    from .domain.catalog import store as catalog_store
+
+    def label(service: str) -> str:
+        p = oauth_providers.get(service)
+        return p.display_name if p else service
+    catalog_store.configure_provider_labels(label)
+
+
 def configure_archive_object_store(store) -> None:
     """Composition seam shared by startup and in-memory tests. Find's card vectors share the store."""
     from . import archive_bodies
@@ -778,6 +793,7 @@ def create_app(role: AppRole = "all", *, archive_object_store=None) -> FastAPI:
     from .application.call import keyslots
 
     keyslots.check_accounts()  # an unusable TREG_PLATFORM_ACCOUNTS entry refuses to start
+    configure_provider_labels()
 
     expose_docs = role != "dataplane"
     app = FastAPI(

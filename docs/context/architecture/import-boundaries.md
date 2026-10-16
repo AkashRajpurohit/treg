@@ -159,6 +159,11 @@ aggregator envelopes live under `treg.infra.upstream.aggregators` and inherit th
 (no HTTP adapters, no routers); the capacity domain's `verify` module may import them because they are
 pure envelope code, not a web framework.
 
+The catalog domain's contract also forbids `treg.oauth_providers`, which imports
+`domain.connections`: the indirect-import allowance would otherwise let the catalog reach a sibling
+domain through it unseen. Search needs only a provider's display name, and `bootstrap` hands it in
+(`configure_provider_labels`).
+
 The feedback domain (`treg.domain.feedback`) owns durable report inserts and queries. Its contract
 forbids direct imports of API, bootstrap, routers, application orchestration, sibling domains,
 best-effort audit, FastAPI, and Starlette. Shared models and SQLAlchemy remain available; transaction

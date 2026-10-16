@@ -98,7 +98,7 @@ async def answer(case: Case, cat: store.Catalog, limit: int) -> Answer:
     r = await catalog_find.recall_with_meaning(case.q, cat, _provider_display)
     found = await catalog_find.answer_v2(case.q, r.cands, cat, _provider_display,
                                          timeout_s=float(get_settings().typesafe_timeout_s),
-                                         not_task=catalog_find.KEYWORD, keyword_rows=False)
+                                         not_task=catalog_find.KEYWORD, keyword_rows=False, focus=r.focus)
     served = catalog_search.serve(found, cat, limit, hub=[], steer=True)
     if served is None:
         rows, jobs = list(case.baseline_ids[:limit]), []
@@ -212,6 +212,8 @@ def bench(cases: list[Case], *, limit: int = 8, cache: Path | None = None, concu
 
 
 def main(argv: list[str] | None = None) -> None:
+    from treg import bootstrap
+    bootstrap.configure_provider_labels()   # provider display names, as the server wires them
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cases", type=Path, required=True, help="JSONL of agent searches with what they called")
     ap.add_argument("--limit", type=int, default=8, help="the page size scored (MCP's default is 8)")

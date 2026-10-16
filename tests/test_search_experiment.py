@@ -191,6 +191,30 @@ async def test_judge_abstains_on_timeout_http_error_and_bad_body():
     assert v.probs is None and v.error == "KeyError"
 
 
+async def test_a_judge_refusal_is_logged_as_an_error_once_per_window(caplog, monkeypatch):
+    """No credit (402) or a bad key (401/403) fails every search after it; the keyword page hides
+    that, so it reaches error tracking: once, not once per search. A throttle (429) does not."""
+    judge_infra.clear_cache()
+    caplog.set_level("ERROR", logger="treg.judge")
+
+    def broke(request):
+        return httpx.Response(402, json={"detail": "insufficient credit"})
+    for q in ("one", "two"):
+        assert (await _judge(broke, query=q)).error == "http_402"
+    assert [r.levelname for r in caplog.records] == ["ERROR"]
+    assert "402" in caplog.records[0].getMessage()
+
+    def busy(request):
+        return httpx.Response(429)
+    await _judge(busy, query="three")
+    assert len(caplog.records) == 1
+
+    clock = judge_infra.time.monotonic() + judge_infra._OUTAGE_LOG_EVERY_S + 1
+    monkeypatch.setattr(judge_infra.time, "monotonic", lambda: clock)
+    await _judge(broke, query="four")
+    assert len(caplog.records) == 2
+
+
 # ---- application: every arm gets a page -----------------------------------------------------------
 def _on(monkeypatch, mode="interleave", **over):
     s = get_settings()

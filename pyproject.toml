@@ -1,6 +1,6 @@
 [project]
 name = "tools-registry"
-version = "0.25.0"
+version = "0.26.0"
 description = "A remote registry that turns team skills into shareable, callable tools via a credential-injecting proxy."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -199,6 +199,7 @@ name = "Catalog domain is a leaf: no outer layers, no sibling domains"
 type = "forbidden"
 source_modules = ["treg.domain.catalog"]
 forbidden_modules = [
+    "treg.oauth_providers",  # imports domain.connections; display names arrive through a bootstrap seam
     "treg.api",
     "treg.bootstrap",
     "treg.routers",

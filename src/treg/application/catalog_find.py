@@ -360,6 +360,7 @@ class Found:
     name: find_recall.NameHit | None = None
     rows: list[dict] = field(default_factory=list)   # {"ep", "p", "fit_from", "children_hidden"}
     groups: list[Group] = field(default_factory=list)   # the same rows by job (strong, closest, name)
+    providers: frozenset[str] = frozenset()             # the providers the query named (`Focus`)
 
     @property
     def platform(self) -> dict | None:
@@ -373,13 +374,32 @@ class Found:
         return float(v) if isinstance(v, (int, float)) else None
 
 
+@dataclass(frozen=True)
+class Focus:
+    """The providers a query names and what it asks of them: "people data labs company enrichment"
+    is People Data Labs and "company enrichment". Recall and the judge read `query`, so the name's
+    own words ("people") cannot pull the answer to another job; the page leads with the providers'
+    rows. A query naming no provider, or one whose provider has nothing the rest reaches, has no
+    providers and reads as typed."""
+    providers: frozenset[str]
+    query: str
+
+
+def focus_of(query: str, cat: catalog_store.Catalog, platform: str | None = None) -> Focus:
+    """The query's `Focus`: `store.provider_focus`, the one decision the keyword page shares, so
+    the two pages cannot disagree on whether a provider was named."""
+    named = catalog_store.provider_focus(query, cat)
+    return Focus(frozenset(named[0]), named[1]) if named else Focus(frozenset(), query)
+
+
 def recall_v2(query: str, cat: catalog_store.Catalog, provider_display,
-              platform: str | None = None, semantic: list[float] | None = None) -> list[find_recall.Candidate]:
+              platform: str | None = None, semantic: list[float] | None = None,
+              focus: Focus | None = None) -> list[find_recall.Candidate]:
     s = get_settings()
     return find_recall.recall(
-        query, find_recall.index(cat), cat.aliases, semantic=semantic, platform=platform,
-        n_jobs=int(s.find_jobs), n_delta=int(s.find_delta), n_raw=int(s.find_raw),
-        n_plat=int(s.find_platform_seats))
+        focus.query if focus else query, find_recall.index(cat), cat.aliases, semantic=semantic,
+        platform=platform, n_jobs=int(s.find_jobs), n_delta=int(s.find_delta), n_raw=int(s.find_raw),
+        n_plat=int(s.find_platform_seats), providers=focus.providers if focus else frozenset())
 
 
 @dataclass
@@ -387,16 +407,19 @@ class Recalled:
     cands: list[find_recall.Candidate]
     embed: find_index.Semantic
     recall_ms: float
+    focus: Focus | None = None
 
 
 async def recall_with_meaning(query: str, cat: catalog_store.Catalog, provider_display,
                               platform: str | None = None) -> Recalled:
     """The query's vector (when the card vectors are ready), then both channels. The embedding
-    request is the only I/O; without it the recall is the lexical channel alone."""
-    sem = await find_index.semantic(query, cat, find_recall.index(cat))
+    request is the only I/O; without it the recall is the lexical channel alone. A query naming a
+    provider is recalled, and embedded, as its `Focus`."""
+    focus = focus_of(query, cat, platform)
+    sem = await find_index.semantic(focus.query, cat, find_recall.index(cat))
     t0 = time.perf_counter()
-    cands = recall_v2(query, cat, provider_display, platform, sem.scores)
-    return Recalled(cands, sem, (time.perf_counter() - t0) * 1000)
+    cands = recall_v2(query, cat, provider_display, platform, sem.scores, focus)
+    return Recalled(cands, sem, (time.perf_counter() - t0) * 1000, focus)
 
 
 async def judge_v2(query: str, cands: list[find_recall.Candidate], cat: catalog_store.Catalog,
@@ -510,6 +533,8 @@ def expand_groups(found: Found, cat: catalog_store.Catalog, stats: dict, platfor
                     rows.append({"ep": ep, "p": own[ep["id"]], "fit_from": FIT_FROM_ENDPOINT})
             else:
                 rows.append({"ep": ep, "p": p, "fit_from": FIT_FROM_JOB})
+        if found.providers:   # a named provider is never folded away
+            rows.sort(key=lambda r: r["ep"]["provider"] not in found.providers)
         hidden = 0
         if p < high:
             # Folded by provider: the first row of each of the first `FOLDED` providers. The count
@@ -523,6 +548,11 @@ def expand_groups(found: Found, cat: catalog_store.Catalog, stats: dict, platfor
             hidden = len({ep["provider"] for ep in members} - on_page)
         placed.update(r["ep"]["id"] for r in rows)
         groups.append(Group(c.unit.id, p, rows, len(c.unit.providers), hidden))
+    if found.providers:
+        # the query named these providers: their jobs first, and their rows first in each
+        for g in groups:
+            g.rows.sort(key=lambda r: r["ep"]["provider"] not in found.providers)
+        groups.sort(key=lambda g: not any(r["ep"]["provider"] in found.providers for r in g.rows))
     return groups
 
 
@@ -577,10 +607,13 @@ def name_page(hit: find_recall.NameHit, cat: catalog_store.Catalog, platform: st
 
 async def judge_and_decide(query: str, cands: list[find_recall.Candidate], cat: catalog_store.Catalog,
                            provider_display, platform: str | None = None, timeout_s: float | None = None,
-                           not_task: str = NONE) -> Found:
-    """The verdict, with no rows yet: one judge request, then `decide`. Never raises."""
-    j = await judge_v2(query, cands, cat, provider_display, platform, timeout_s)
-    return decide(query, cands, j, find_recall.index(cat), platform, provider_display, not_task)
+                           not_task: str = NONE, focus: Focus | None = None) -> Found:
+    """The verdict, with no rows yet: one judge request, then `decide`. Never raises. With a
+    `focus` the judge reads what the query asks of the providers it names."""
+    j = await judge_v2(focus.query if focus else query, cands, cat, provider_display, platform, timeout_s)
+    found = decide(query, cands, j, find_recall.index(cat), platform, provider_display, not_task)
+    found.providers = focus.providers if focus else frozenset()
+    return found
 
 
 async def lay_out(found: Found, query: str, cat: catalog_store.Catalog, platform: str | None = None,
@@ -606,9 +639,9 @@ async def lay_out(found: Found, query: str, cat: catalog_store.Catalog, platform
 async def answer_v2(query: str, cands: list[find_recall.Candidate], cat: catalog_store.Catalog,
                     provider_display, platform: str | None = None,
                     evidence: Evidence | None = None, timeout_s: float | None = None,
-                    not_task: str = NONE, keyword_rows: bool = True) -> Found:
+                    not_task: str = NONE, keyword_rows: bool = True, focus: Focus | None = None) -> Found:
     """Judge the units, decide, and lay out the rows. Never raises."""
-    found = await judge_and_decide(query, cands, cat, provider_display, platform, timeout_s, not_task)
+    found = await judge_and_decide(query, cands, cat, provider_display, platform, timeout_s, not_task, focus)
     return await lay_out(found, query, cat, platform, evidence, keyword_rows)
 
 
@@ -642,20 +675,21 @@ async def _stream_v2(query: str, provider_display, platform: str | None,
     # The lexical recall is instant, so it is the first event; the query's vector and the fused
     # recall follow, as a second `candidates` event when the meaning changed what is read.
     t0 = time.perf_counter()
-    lexical = recall_v2(query, cat, provider_display, platform)
+    focus = focus_of(query, cat, platform)
+    lexical = recall_v2(query, cat, provider_display, platform, focus=focus)
     lexical_ms = (time.perf_counter() - t0) * 1000
     reached = _candidate_endpoints(lexical, cat)
     yield event(lexical, reached)
-    sem = await find_index.semantic(query, cat, find_recall.index(cat))
-    r = Recalled(lexical, sem, lexical_ms)
+    sem = await find_index.semantic(focus.query, cat, find_recall.index(cat))
+    r = Recalled(lexical, sem, lexical_ms, focus)
     if sem.scores is not None:
         t0 = time.perf_counter()
-        r = Recalled(recall_v2(query, cat, provider_display, platform, sem.scores), sem,
-                     (time.perf_counter() - t0) * 1000)
+        r = Recalled(recall_v2(query, cat, provider_display, platform, sem.scores, focus), sem,
+                     (time.perf_counter() - t0) * 1000, focus)
         if [c.unit.id for c in r.cands] != [c.unit.id for c in lexical]:
             reached = _candidate_endpoints(r.cands, cat)
             yield event(r.cands, reached)
-    found = await answer_v2(query, r.cands, cat, provider_display, platform, evidence)
+    found = await answer_v2(query, r.cands, cat, provider_display, platform, evidence, focus=focus)
     yield {"event": "judged", "verdict": found.verdict, "named": found.name.kind if found.name else "",
            "read": len(r.cands), "high": float(get_settings().search_judge_high),
            "rows": [_v2_row(row, cat, provider_display) for row in found.rows],

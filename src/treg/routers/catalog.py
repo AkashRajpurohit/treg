@@ -298,7 +298,7 @@ async def _verdicts_or_empty() -> dict[str, dict]:
 
 @app.get("/catalog/search")
 async def catalog_search(request: Request, q: str = "", limit: int = 25,
-                         added_within_days: int | None = None, sort: str = "",
+                         added_within_days: int | None = None, sort: str = "", engine: str = "",
                          observations: endpoint_stats.EndpointObservationReader = Depends(
                              _endpoint_observation_reader),
                          db: AsyncSession = Depends(get_session)) -> dict:
@@ -311,7 +311,11 @@ async def catalog_search(request: Request, q: str = "", limit: int = 25,
     command, since finding the endpoint is never the goal — inspecting or calling it is.
 
     `added_within_days` and `sort=newest` (catalog.md "`added`") list recently added tools, with or
-    without words; absent, this route answers exactly as it did before them."""
+    without words; absent, this route answers exactly as it did before them.
+
+    `engine=agent` answers with the search an agent's `catalog_search` gets (the same use case, the
+    judged answer where it runs, the same records), in this route's row shape: the CLI's search.
+    Absent, the route is the plain keyword search it always was."""
     cat = catalog_store.load()
     limit = max(1, min(limit, 100))
     try:
@@ -320,6 +324,8 @@ async def catalog_search(request: Request, q: str = "", limit: int = 25,
         raise HTTPException(status_code=400, detail=str(e)) from None
     if opts.active:
         return await _added_search(request, q, limit, opts, cat, observations, db)
+    if engine == "agent" and q.strip():
+        return await _agent_search(request, q, limit, cat, observations)
     # Rank a WIDER band than the page: collapsing a routed group (below) frees rows, and the next
     # jobs down the ranking should fill them rather than the page coming up short.
     ranked, total, tie_truncated = catalog_store.rank_band(q, cat, min(100, limit * 4))
@@ -335,13 +341,14 @@ async def catalog_search(request: Request, q: str = "", limit: int = 25,
         stats = {**stats, **hub_stats}
         ranked = catalog_store.merge_by_score(ranked, hub_ranked)
         total += len(hub_ranked)
+    led = catalog_store.led_by(q, cat)   # a named provider leads: its rows' scores carry the lead
     results = [
         # The evidence that decided the order, shown rather than merely applied: a caller comparing
         # two rows should be able to see WHY one is above the other.
-        (dict(ep) | {"score": score, "observed": stats.get(ep["id"])}) if ep.get("kind") == "hub" else
+        (dict(ep) | {"score": None if led else score, "observed": stats.get(ep["id"])}) if ep.get("kind") == "hub" else
         (catalog_store.endpoint_view(ep, _provider_display(ep["provider"]), cat)
          | catalog_store.endpoint_context(ep, cat)
-         | {"score": score, "observed": stats.get(ep["id"])})
+         | {"score": None if led else score, "observed": stats.get(ep["id"])})
         for ep, score in ranked
     ]
     results = catalog_store.group_routed(results, max_children=catalog_store.MAX_ROUTED_CHILDREN)[:limit]
@@ -378,6 +385,8 @@ async def catalog_search(request: Request, q: str = "", limit: int = 25,
             hints.append(f"{q!r} matches too broadly to rank on measured reliability past the first "
                          f"{catalog_store.RERANK_BAND} equally-scoring rows — add a word to narrow it")
     out = {"query": q, "count": len(results), "total": total, "results": results, "hints": hints}
+    if led:
+        out["led_by"] = sorted(led)   # the providers the query named; their rows come first
     if not results and q.strip():
         # the rows that JUST missed the admission gate and which words they missed — an agent (or
         # the CLI display) turns this straight into the corrected query
@@ -387,6 +396,67 @@ async def catalog_search(request: Request, q: str = "", limit: int = 25,
             first = near[0]
             hints.insert(1, f"nearest: {first['endpoint_id']} matches "
                             f"{', '.join(first['matches'])} but not {', '.join(first['missing'])}")
+    return out
+
+
+async def _agent_search(request: Request, q: str, limit: int, cat,
+                        observations: endpoint_stats.EndpointObservationReader) -> dict:
+    """`/catalog/search?engine=agent`: `application.catalog_search.search`, the use case behind an
+    agent's `catalog_search`, shaped as this route's rows plus the answer's verdict and jobs.
+
+    The judge and the embedding are awaited inside the use case, so nothing here may hold a
+    database connection across it: the hub's reader and the caller are each resolved in a session
+    of their own, closed at once, and the route's session is never touched. A caller who is not
+    signed in (or whose token does not resolve) is capped by address, not in one shared bucket."""
+    from ..application import catalog_search as search_app
+    from ..application import search_experiment
+    from ..domain.identity import access
+    from ..infra.db import session_maker
+    from .auth import _client_ip   # auth imports web, which imports this module
+    from .hub_gate import reader
+
+    token = request.headers.get("x-treg-token", "")
+    auth = request.headers.get("authorization", "")
+    if not token and auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+
+    async def identify() -> tuple[str | None, int | None, str | None]:
+        key = search_experiment.caller_key(token)
+        if not token:
+            return key, None, None
+        try:
+            async with session_maker() as s:
+                member = await access.require_member(request, x_treg_token=token, treg_session="", db=s,
+                                                     x_treg_org=request.headers.get("x-treg-org", ""))
+        except Exception:  # noqa: BLE001 - who is asking is attribution, never a reason to fail a search
+            return key, None, None
+        return key, (member.org.id if member.org is not None else None), member.email
+
+    async with session_maker() as s:
+        slug, email = await reader(request, s)
+    page = await search_app.search(
+        q, limit, cat=cat, source="cli", caller=search_app.Caller(hub_slug=slug, hub_email=email),
+        observed=lambda ids: _observed_or_empty(observations, ids), identify=identify,
+        provider_display=_provider_display, client_ip=_client_ip(request))
+    led = catalog_store.led_by(q, cat)
+    results = [
+        (dict(ep) | {"score": None, "observed": page.stats.get(ep["id"])}) if ep.get("kind") == "hub" else
+        (catalog_store.endpoint_view(ep, _provider_display(ep["provider"]), cat)
+         | catalog_store.endpoint_context(ep, cat)
+         | {"score": None if page.judged or led else score, "observed": page.stats.get(ep["id"])})
+        for ep, score in page.rows
+    ]
+    results = catalog_store.group_routed(results, max_children=catalog_store.MAX_ROUTED_CHILDREN)[:limit]
+    out = {"query": q, "count": len(results), "total": page.total, "results": results, "engine": "agent"}
+    if page.verdict is not None:
+        out["verdict"] = page.verdict
+        if page.reason:
+            out["reason"] = page.reason
+        out["jobs"] = [{"capability": j.capability, "providers": j.providers, "shown": j.shown} for j in page.jobs]
+    if not results:
+        near = catalog_store.near_misses(q, cat)
+        if near and page.verdict != find.NONE:
+            out["near"] = near
     return out
 
 
