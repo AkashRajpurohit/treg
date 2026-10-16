@@ -153,8 +153,8 @@ async def test_configured_alias_is_a_valid_mcp_origin_and_resource(monkeypatch):
 
     monkeypatch.setattr(get_settings(), "public_host_aliases",
                         (*get_settings().public_host_aliases, "alias.example"))
-    assert "alias.example:443" in mcp._allowed_hosts()
-    assert "https://alias.example" in mcp._allowed_origins()
+    assert mcp._allowed_hosts().count("alias.example:443") == 1
+    assert mcp._allowed_origins().count("https://alias.example") == 1
     for version, path in (("v1", "mcp/"), ("v2", "mcp/v2/")):
         resource = f"https://alias.example/{path}"
         assert resource in mcp_oauth.mcp_resource_audiences(version)
