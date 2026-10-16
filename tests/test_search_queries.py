@@ -107,6 +107,30 @@ def test_any_other_short_word_still_starts_a_longer_word():
     assert any(" website" in t and " web " not in t for t in texts)
 
 
+def test_only_the_named_providers_rows_are_admitted_loosely():
+    """The rest of the query admits every other row exactly as an ordinary search for it would."""
+    cat = catalog_store.load()
+    led, _ = catalog_store.search("hunter email", cat, 1000)
+    plain, _ = catalog_store.search("email", cat, 1000)
+    others = {ep["id"] for ep, _ in led if ep["provider"] != "hunter"}
+    assert others == {ep["id"] for ep, _ in plain if ep["provider"] != "hunter" and ep.get("kind") != "routed"}
+
+
+def test_word_search_and_the_judged_answer_read_a_provider_the_same_way():
+    cat = catalog_store.load()
+    for case in CASES:
+        assert find.focus_of(case["q"], cat).providers == catalog_store.led_by(case["q"], cat), case["q"]
+
+
+async def test_a_page_led_by_a_named_provider_shows_no_score(clients):
+    clients.headers.pop("X-Treg-Token", None)
+    out = (await clients.get("/catalog/search", params={"q": "exa search", "limit": 5})).json()
+    assert out["led_by"] == ["exa"] and out["results"][0]["provider"] == "exa"
+    assert all(r["score"] is None for r in out["results"])
+    plain = (await clients.get("/catalog/search", params={"q": "web search", "limit": 5})).json()
+    assert "led_by" not in plain and all(r["score"] is not None for r in plain["results"])
+
+
 def test_a_provider_with_nothing_for_the_rest_reads_as_typed():
     """"perplexity" in a brand-visibility question is the AI engine, not a request for Perplexity's
     API: when the named provider has nothing the rest of the query reaches, nothing changes."""

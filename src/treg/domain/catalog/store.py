@@ -128,6 +128,7 @@ class Catalog:
     # lazy per-instance find index (see find_recall.index) — same pattern as _search_fields
     _find_index: object | None = field(default=None, init=False, repr=False, compare=False)
     _provider_phrases: list | None = field(default=None, init=False, repr=False, compare=False)  # see provider_phrases()
+    _provider_focus: dict | None = field(default=None, init=False, repr=False, compare=False)  # see _reaches()
     by_id: dict[str, dict] = field(default_factory=dict)
     provider_meta: dict[str, dict] = field(default_factory=dict)  # service -> {limits, pricing_url, docs}
     contracts: dict = field(default_factory=dict)   # capability -> routing.Contract
@@ -1307,19 +1308,21 @@ def _search_order(row: tuple[dict, float]):
 def _scored(query: str, cat: Catalog, platform: str | None, keep: Callable[[dict], bool] | None,
             loose: set[str] = frozenset()) -> list[tuple[dict, float]]:
     """Every row the admission gate lets in for `query`, with its score, unsorted. A row of a
-    provider in `loose` needs only one of the words: the query named it, so its few rows are
-    already the shortlist; the words then match by stem too."""
-    m = _match(query, cat, stems=bool(loose))
+    provider in `loose` needs only one of the words, matched by stem too: the query named it, so
+    its few rows are already the shortlist. Every other row is admitted and scored as always."""
+    m = _match(query, cat)
     if m is None:
         return []
-    tokens, rows, best, idf, required, need = m
+    stemmed = _match(query, cat, stems=True) if loose else None
     scored: list[tuple[dict, float]] = []
-    for (ep, _), per_tok in zip(rows, best):
+    for n, (ep, _) in enumerate(m[1]):
         if platform and ep["platform"] != platform:
             continue
-        if sum(1 for i in required if per_tok[i]) < (min(need, 1) if ep["provider"] in loose else need):
-            continue
         if keep is not None and not keep(ep):
+            continue
+        _, _, best, idf, required, need = stemmed if stemmed and ep["provider"] in loose else m
+        per_tok = best[n]
+        if sum(1 for i in required if per_tok[i]) < (1 if stemmed and ep["provider"] in loose else need):
             continue
         scored.append((ep, round(sum(w * idf[i] for i, w in enumerate(per_tok)), 4)))
     return scored
@@ -1382,7 +1385,35 @@ def provider_focus(query: str, cat: Catalog) -> tuple[set[str], str] | None:
     rest = [t for j, t in enumerate(tokens) if j not in covered and t not in _STOPWORDS and len(t) > 1]
     if not named or not rest:
         return None
-    return named, " ".join(rest)
+    return _reaches(cat, frozenset(named), " ".join(rest))
+
+
+def _reaches(cat: Catalog, named: frozenset[str], rest: str) -> tuple[set[str], str] | None:
+    """The focus, where one of the named providers' rows matches a word of the rest (by stem too);
+    else None, and the query reads as typed: "does perplexity mention my brand" is about the AI
+    engine, and no Perplexity row says "brand". The one decision word search and the judged
+    answer share, cached per Catalog."""
+    cache = cat._provider_focus
+    if cache is None:
+        cache = {}
+        object.__setattr__(cat, "_provider_focus", cache)   # frozen dataclass, deliberate
+    key = (named, rest)
+    if key not in cache:
+        m = _match(rest, cat, stems=True)
+        hit = m is not None and any(ep["provider"] in named and any(per_tok)
+                                    for (ep, _), per_tok in zip(m[1], m[2]))
+        if len(cache) > 512:
+            cache.clear()
+        cache[key] = (set(named), rest) if hit else None
+    return cache[key]
+
+
+def led_by(query: str, cat: Catalog) -> frozenset[str]:
+    """The providers whose rows lead `query`'s word-search page (empty: an ordinary page). Their
+    scores carry the lead, so a page led by a provider shows no score: the number would rank them,
+    not measure them."""
+    focus = provider_focus(query, cat)
+    return frozenset(focus[0]) if focus else frozenset()
 
 
 def _short_provider_names(cat: Catalog) -> frozenset[str]:

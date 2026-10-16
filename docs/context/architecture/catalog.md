@@ -1930,8 +1930,12 @@ platform, and a name of only short or function words names nothing.
 The rest of the query is searched without the name, so its words ("people") cannot pull the page to
 another job; the provider's rows need only one of the rest's words, match it by stem too
 ("enrichment" meets "enrich"), and lead the page in their own relevance order, with no routed row
-(the caller chose the provider). Where none of its rows matches the rest, the query is searched as
-typed. A bare name is an ordinary search.
+(the caller chose the provider). Every other row is admitted and scored by the rest exactly as an
+ordinary search for it would be, so the page after the provider's rows is the rest's own page. The
+lead lives in the scores, so a led page shows no score and says `led_by`. Where none of the
+provider's rows matches a word of the rest, the query is searched as typed; this one decision
+(`provider_focus`, cached per catalog) is also the judged answer's. A bare name is an ordinary
+search.
 
 `catalog_store.search` demanded EVERY query token match (AND). Right for the 2–3 word refinement
 ("tiktok comments" must not return every tiktok endpoint), and fatal for how agents actually query:

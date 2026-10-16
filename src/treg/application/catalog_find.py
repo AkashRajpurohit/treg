@@ -386,14 +386,10 @@ class Focus:
 
 
 def focus_of(query: str, cat: catalog_store.Catalog, platform: str | None = None) -> Focus:
+    """The query's `Focus`: `store.provider_focus`, the one decision the keyword page shares, so
+    the two pages cannot disagree on whether a provider was named."""
     named = catalog_store.provider_focus(query, cat)
-    if named is not None:
-        providers, rest = frozenset(named[0]), named[1]
-        # reached by the rest alone, before the providers' jobs are given seats: otherwise any
-        # provider would always be "reached" by the seats it is given
-        if any(providers & set(c.unit.providers) for c in recall_v2(rest, cat, None, platform)):
-            return Focus(providers, rest)
-    return Focus(frozenset(), query)
+    return Focus(frozenset(named[0]), named[1]) if named else Focus(frozenset(), query)
 
 
 def recall_v2(query: str, cat: catalog_store.Catalog, provider_display,
