@@ -15,7 +15,7 @@ source:
 #     records come back (up to limit=1000). Raising `limit` is free; paging is not (each page is a
 #     new request = 1 credit).
 #   - /discover/* endpoints and /companies/{id}/similar_companies — 1 credit per RETURNED COMPANY.
-#     `limit` IS the price dial on these. /technologies is 3 credits per returned record.
+#     `limit` caps the price on these. /technologies is 3 credits per returned record.
 # GET /api_subscription is free and reports monthly_credits_quota / monthly_credits_used; verified
 # free live on 2026-08-20 (three consecutive calls left monthly_credits_used unchanged at 36).
 #
@@ -84,8 +84,8 @@ endpoints:
         revenue_range_low: {type: integer, required: false, note: "minimum annual revenue in USD", example: 1000000}
         revenue_range_high: {type: integer, required: false, note: "maximum annual revenue in USD", example: 100000000}
         page: {type: integer, required: false, note: "1-based; omitting it drops meta.count for performance"}
-        limit: {type: integer, required: false, note: "default 30, max 1000 — THIS IS THE PRICE DIAL: 1 credit per company returned", example: 1}
-      note: "returns an ESTIMATED count, not an exact one. Always set an explicit small `limit` first — the default of 30 bills 30 credits"
+        limit: {type: integer, required: false, note: "default 30, max 1000. THIS CAPS THE PRICE: 1 credit per company returned", example: 1}
+      note: "returns an ESTIMATED count, not an exact one. Always set an explicit small `limit` first: the default of 30 can bill 30 credits"
     test_request:
       queryParams: {limit: 1}
     cost: {type: per_result, value: 1, currency: credit, per: 1, unit: record, source: docs, source_url: "https://predictleads.com/pricing", checked: '2026-08-20', confidence: documented, note: "docs label this endpoint '1 Credit / Record'; the pricing FAQ confirms discovery endpoints bill per returned company, not per request"}

@@ -18,8 +18,8 @@ pricing_url: https://companyenrich.com/pricing
 # was confirmed by calling the endpoint and watching `used` move by exactly the documented amount:
 #   enrich 1 · get-by-id 1 · workforce 5 · company search 1/company · similar 5/company
 #   people search 2/person · people get 2 · people lookup 5 · people email 10
-# The SEARCH routes are the ones to watch: `pageSize` IS the price (1 credit per company, 2 per
-# person, 5 per similar company), and an empty result set still bills the one-unit minimum. Always
+# The SEARCH routes are the ones to watch: `pageSize` caps the price (1 credit per company RETURNED,
+# 2 per person, 5 per similar company), and an empty result set still bills the one-row minimum. Always
 # probe a new filter set with the free /count route before paying for rows.
 #
 # FREE ROUTES ARE THE POINT OF THE INTEGRATION. Counts, all four autocompletes, the industry
@@ -281,7 +281,7 @@ endpoints:
     input:
       body:
         page: {type: integer, required: false, note: "1-based page number; page * pageSize may not exceed 10,000 — past that use the scroll route", example: 1}
-        pageSize: {type: integer, required: false, note: "1-100, default 10. THIS IS THE PRICE — 1 credit per company returned", example: 1}
+        pageSize: {type: integer, required: false, note: "1-100, default 10. THIS CAPS THE PRICE: 1 credit per company returned", example: 1}
         query: {type: string, required: false, note: "free-text match on company name and domain, max 250 chars"}
         semanticQuery: {type: string, required: false, note: "natural-language description of the companies you want; costs 2 credits per company instead of 1", example: "companies that sell payment infrastructure to developers"}
         semanticWeight: {type: number, required: false, note: "0-1, default 0.7 — higher favours semantic similarity over the structured filters"}
@@ -324,7 +324,7 @@ endpoints:
       source_url: https://companyenrich.com/pricing
       checked: '2026-08-20'
       confidence: verified
-      note: "1 credit PER COMPANY RETURNED — `pageSize` is the price. 1-credit minimum when nothing matches. A `semanticQuery` search is 2 credits per company instead. VERIFIED 2026-08-20: pageSize 1 moved the meter by exactly 1."
+      note: "1 credit PER COMPANY RETURNED; `pageSize` caps the price. 1-credit minimum when nothing matches. A `semanticQuery` search is 2 credits per company instead. VERIFIED 2026-08-20: pageSize 1 moved the meter by exactly 1."
     docs_url: https://docs.companyenrich.com/reference/post_companies-search
     verified: '2026-08-20'
     added: '2026-08-20'
@@ -341,7 +341,7 @@ endpoints:
     summary: "Searches companies with cursor-based pagination — allows paginating into more than 10.000 results"
     input:
       body:
-        pageSize: {type: integer, required: false, note: "1-100. THIS IS THE PRICE — 1 credit per company returned", example: 1}
+        pageSize: {type: integer, required: false, note: "1-100. THIS CAPS THE PRICE: 1 credit per company returned", example: 1}
         cursor: {type: string, required: false, note: "omit for the first page; then pass the `next_cursor` from the previous response"}
       note: "identical filter set to companyenrich.companies.search (every field listed there applies here) — only the pagination differs: a cursor instead of a page number, and no 10,000-row ceiling. Prefer this for any full-audience export you intend to walk; prefer the async export job for anything over a few thousand rows."
     test_request:
@@ -424,7 +424,7 @@ endpoints:
         domains: {type: "array[string]", required: false, note: "1-10 seed domains; the result is similar to the SET, so several seeds sharpen the profile", example: ["stripe.com"]}
         domain: {type: string, required: false, note: "DEPRECATED single-seed form — use `domains`"}
         page: {type: integer, required: false, note: "1-based page number", example: 1}
-        pageSize: {type: integer, required: false, note: "1-100. THIS IS THE PRICE — 5 credits per company returned", example: 1}
+        pageSize: {type: integer, required: false, note: "1-100. THIS CAPS THE PRICE: 5 credits per company returned", example: 1}
         similarityWeight: {type: number, required: false, note: "-1 to 1, default 0; higher weights raw similarity over the structured filters"}
         minScore: {type: number, required: false, note: "0-1 floor on the similarity score"}
         countries: {type: "array[string]", required: false, note: "narrow the lookalikes by geography — every companyenrich.companies.search filter is accepted here too"}
@@ -460,7 +460,7 @@ endpoints:
     input:
       body:
         domains: {type: "array[string]", required: false, note: "1-10 seed domains", example: ["stripe.com"]}
-        pageSize: {type: integer, required: false, note: "1-100. THIS IS THE PRICE — 5 credits per company returned", example: 1}
+        pageSize: {type: integer, required: false, note: "1-100. THIS CAPS THE PRICE: 5 credits per company returned", example: 1}
         cursor: {type: string, required: false, note: "omit for the first page, then pass `next_cursor` from the previous response"}
       note: "same filters and same 5-credit-per-row price as companyenrich.companies.similar; only the pagination differs. At 5 credits a row, walking a lookalike list this way gets expensive fast — the async export job reserves credits up front and is the safer shape for large pulls."
     test_request:
@@ -685,7 +685,7 @@ endpoints:
     input:
       body:
         page: {type: integer, required: false, note: "1-based; page * pageSize may not exceed 10,000 — past that use the scroll route", example: 1}
-        pageSize: {type: integer, required: false, note: "1-100, default 10. THIS IS THE PRICE — 2 credits per PERSON returned, so a default page costs 20 credits", example: 1}
+        pageSize: {type: integer, required: false, note: "1-100, default 10. THIS CAPS THE PRICE: 2 credits per PERSON returned, so a full default page costs 20 credits", example: 1}
         domains: {type: "array[string]", required: false, note: "employer domains, up to 2,500 — the usual way to enumerate a company's staff", example: ["stripe.com"]}
         positionQuery: {type: "array[string]", required: false, note: "free-text matches on the person's CURRENT job title; resolve real titles first with the free /positions/autocomplete", example: ["Chief Executive Officer"]}
         seniority: {type: "array[string]", required: false, note: "one or more of owner, founder, c-suite, partner, vp, head, director, manager, senior, entry, intern. NOTE the hyphen in `c-suite` — an underscore is rejected with a bodyless HTTP 400", example: ["c-suite"]}
@@ -714,7 +714,7 @@ endpoints:
       source_url: https://companyenrich.com/pricing
       checked: '2026-08-20'
       confidence: verified
-      note: "2 credits PER PERSON RETURNED — pageSize is the price — with a 2-credit minimum on an empty result. VERIFIED 2026-08-20: pageSize 1 moved the credit meter by exactly 2."
+      note: "2 credits PER PERSON RETURNED (pageSize caps the price), with a 2-credit minimum on an empty result. VERIFIED 2026-08-20: pageSize 1 moved the credit meter by exactly 2."
     docs_url: https://docs.companyenrich.com/reference/post_people-search
     verified: '2026-08-20'
     added: '2026-08-20'
@@ -731,7 +731,7 @@ endpoints:
     summary: "Searches people based on given criteria using cursor-based pagination"
     input:
       body:
-        pageSize: {type: integer, required: false, note: "1-100. THIS IS THE PRICE — 2 credits per person returned", example: 1}
+        pageSize: {type: integer, required: false, note: "1-100. THIS CAPS THE PRICE: 2 credits per person returned", example: 1}
         cursor: {type: string, required: false, note: "omit for the first page, then pass `next_cursor` from the previous response"}
         domains: {type: "array[string]", required: false, note: "employer domains, up to 2,500", example: ["stripe.com"]}
         positionQuery: {type: "array[string]", required: false, note: "matches on current job title", example: ["Chief Executive Officer"]}
