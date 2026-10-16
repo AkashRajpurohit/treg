@@ -135,9 +135,10 @@ adjacent pairs of them ("nano banana"), matched with spaces and hyphens folded a
 On a shelf only a provider there counts.
 
 **A provider named with a task** (`Focus`, from `store.provider_focus`): "exa search", "people data
-labs company enrichment". A provider is named by its id or its display name as a token sequence,
-longest first; a name that is a platform's ("tiktok") names the platform, and one of only short or
-function words ("x", "you") names nothing. The rest of the query is what recall, the semantic
+labs company enrichment". A provider is named by its id or its whole display name as a token
+sequence, longest first, matched before function words are dropped: a domain is part of the name
+("you.com", "apollo.io"), while "you" or "context" alone is a word. A name that is a platform's
+("tiktok") names the platform, and one of only short or function words ("x") names nothing. The rest of the query is what recall, the semantic
 channel and the judge read, so the name's own words ("people") cannot pull the answer to another
 job; the provider's jobs take the first seats, its uncatalogued endpoints come first, and on the
 page its rows lead each job (never folded away), its jobs lead the page and no routed row leads

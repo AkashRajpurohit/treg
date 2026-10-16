@@ -1346,9 +1346,10 @@ _PROVIDER_LABELS: dict[str, str] | None = None
 
 def provider_phrases(cat: Catalog) -> list[tuple[tuple[str, ...], str]]:
     """Every way a query names a provider, as search tokens, longest first: its id ("pdl",
-    "brightdata") and its display name ("people data labs", "bright data"). A phrase that is a
-    platform's name ("tiktok", "google ads") names the platform instead; one made only of short or
-    function words ("x", "you") names nothing."""
+    "brightdata") and its display name whole ("people data labs", "you com" for You.com, "context
+    dev" for Context.dev: the domain is part of the name, and "you" or "context" alone is a word). A
+    phrase that is a platform's name ("tiktok", "google ads") names the platform instead; one made
+    only of short or function words ("x", "you") names nothing."""
     cached = cat._provider_phrases
     if cached is not None:
         return cached
@@ -1358,7 +1359,7 @@ def provider_phrases(cat: Catalog) -> list[tuple[tuple[str, ...], str]]:
     by_phrase: dict[tuple[str, ...], str] = {}
     for prov in sorted({ep["provider"] for ep in cat.endpoints} - {"treg"}):
         for name in (prov, labels.get(prov, "")):
-            phrase = tuple(t for t in _tokens(name) if t not in ("io", "com", "dev", "ai", "api"))
+            phrase = tuple(_tokens(name))
             if (phrase and phrase not in platform_words
                     and any(t not in _STOPWORDS and len(t) >= 3 for t in phrase)):
                 by_phrase.setdefault(phrase, prov)
@@ -1371,8 +1372,9 @@ def provider_focus(query: str, cat: Catalog) -> tuple[set[str], str] | None:
     """`(providers, the rest of the query)` when the query names a provider AND says what it
     wants from it ("exa search", "people data labs company enrichment"); None for a bare name or
     no name. The rest is the query without the name, so the name's own words ("people" in People
-    Data Labs) cannot pull the search toward another job."""
-    tokens = [t for t in _tokens(query) if t not in _STOPWORDS and len(t) > 1]
+    Data Labs) cannot pull the search toward another job. Names are matched before function words
+    are dropped, so "you.com" is still a name."""
+    tokens = _tokens(query)
     named: set[str] = set()
     covered: set[int] = set()
     i = 0
@@ -1385,7 +1387,7 @@ def provider_focus(query: str, cat: Catalog) -> tuple[set[str], str] | None:
                 break
         else:
             i += 1
-    rest = [t for j, t in enumerate(tokens) if j not in covered]
+    rest = [t for j, t in enumerate(tokens) if j not in covered and t not in _STOPWORDS and len(t) > 1]
     if not named or not rest:
         return None
     return named, " ".join(rest)

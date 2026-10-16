@@ -84,6 +84,9 @@ def test_a_provider_named_with_a_task_is_a_focus_and_a_bare_name_is_not():
     assert catalog_store.provider_focus("exa", cat) is None                       # a name page's query
     assert catalog_store.provider_focus("tiktok comments", cat) is None           # a platform, not a provider
     assert catalog_store.provider_focus("find the work email of a person", cat) is None
+    # a domain is part of a name: "you.com" is You.com, while "you" and "context" alone are words
+    assert catalog_store.provider_focus("you.com web search", cat) == ({"you"}, "web search")
+    assert catalog_store.provider_focus("context of a web page", cat) is None
 
 
 def test_a_short_word_matches_whole_not_as_the_start_of_a_longer_one():

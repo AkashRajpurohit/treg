@@ -23,10 +23,15 @@ cases:
   - {q: "apollo company enrichment", word_first: '^apollo\.companies\.enrich$', provider: apollo,
      job: companies.enrich, recall: '^companies\.enrich$'}
   - {q: "apollo person enrichment", word_top5: '^apollo\.people\.enrich$', provider: apollo, job: people.enrich}
+  - {q: "you.com web search", word_first: '^you\.', provider: you, job: web.search, recall: '^web\.search$'}
   # ---- a described job -----------------------------------------------------------------------------
   - {q: "search the web for recent news about Nvidia earnings", recall: '^web\.search\.news$'}
   - {q: "find companies using Shopify in Germany", recall: '^companies\.tech_stack\.users$'}
   - {q: "search for people by job title at a company", recall: '^people\.search$'}
+  - {q: "instagram posts for an account", recall: '^instagram\.user\.posts$'}
+  # The judge keeps companies.employees.count and headcount_trend here, not companies.enrich: that
+  # job's description does not say it returns headcount. Only its seat in recall is checked.
+  - {q: "can you find a company's employee count", recall: '^companies\.enrich$'}
   - {q: "extract the main text from a web page", word_top5: 'web\.extract'}
   - {q: "find the work email of a person at a company", word_top5: 'people\.email\.find', recall: '^people\.email\.find$'}
   - {q: "verify an email address", word_top5: 'people\.email\.verify', recall: '^people\.email\.verify$'}

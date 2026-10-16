@@ -1924,7 +1924,8 @@ spaces between words.
 
 **A provider named with a task** (`store.provider_focus`): "exa search", "people data labs company
 enrichment". A provider is named by its id or its display name as a token sequence, longest first;
-a platform's name names the platform, and a name of only short or function words names nothing.
+a domain is part of the name ("you.com"; "you" alone is a word); a platform's name names the
+platform, and a name of only short or function words names nothing.
 The rest of the query is searched without the name, so its words ("people") cannot pull the page to
 another job; the provider's rows need only one of the rest's words, match it by stem too
 ("enrichment" meets "enrich"), and lead the page in their own relevance order, with no routed row
