@@ -17,6 +17,36 @@ from treg.domain.capacity import collectors, policy, sweep
 from treg.timeutil import utcnow_naive
 
 
+async def test_blitzapi_key_info_supplies_exact_monthly_balance():
+    def probe(request):
+        assert request.method == "GET"
+        assert str(request.url) == "https://api.blitz-api.ai/v2/account/key-info"
+        assert request.headers["x-api-key"] == "test-key"
+        return httpx.Response(200, json={"valid": True, "records_remaining": 199982,
+                                         "next_reset_at": "2026-11-16T13:40:18Z",
+                                         "max_requests_per_seconds": 10})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(probe)) as client:
+        row = await collectors._blitzapi(client, "test-key")
+    assert row["value"] == 199982 and row["unit"] == "records"
+    assert "10 requests/s" in row["note"]
+    assert policy.default_policy("blitzapi", has_key=True).capacity_type == "monthly_quota"
+
+
+@pytest.mark.parametrize("body", [
+    {"valid": False, "records_remaining": 1},
+    {"valid": True, "records_remaining": None},
+    {"valid": True, "records_remaining": True},
+    {"valid": True, "records_remaining": "1"},
+    {"valid": True, "records_remaining": -1},
+])
+async def test_blitzapi_key_info_rejects_invalid_balance(body):
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json=body))) as client:
+        with pytest.raises(ValueError, match="no valid remaining-record balance"):
+            await collectors._blitzapi(client, "test-key")
+
+
 async def test_sixtyfour_balance_uses_the_free_credit_route():
     def probe(request):
         assert request.method == "GET"

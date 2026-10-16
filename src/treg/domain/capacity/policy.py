@@ -26,6 +26,7 @@ _KNOWN: dict[str, tuple[str, str, str]] = {
     "harvestapi": ("cash", "auto_recharge", "api"),  # Owner will enable vendor auto top-up for production.
     "fetchinio": ("credits", "manual", "api"),
     "sixtyfour": ("credits", "subscription", "api"),
+    "blitzapi": ("monthly_quota", "quota_reset", "api"),
     "dataforseo": ("cash", "auto_recharge", "api"),
     "tikhub": ("cash", "auto_recharge", "api"),
     "tinyfish": ("cash", "manual", "api"),
@@ -104,6 +105,7 @@ _KNOWN: dict[str, tuple[str, str, str]] = {
 
 # Verified quota/rate facts (plan §0.1, §4.1). A provider can carry both.
 _QUOTAS: dict[str, dict] = {
+    "blitzapi": {"limit": None, "period": "billing", "resets_at_rule": "account.next_reset_at"},
     "lusha": {"limit": None, "period": "day", "resets_at_rule": "local_midnight"},
     "hunter": {"limit": None, "period": "billing", "resets_at_rule": "account.reset_date"},
     "quickenrich": {"limit": None, "period": "billing", "resets_at_rule": "subscription renewal; no reset timestamp in API"},
@@ -121,6 +123,8 @@ _RATE_LIMITS: dict[str, dict] = {
     # No published provider-wide limit. The shared-key smoother uses the documented
     # balance-check allowance as a conservative policy ceiling for all routes.
     "sixtyfour": {"limit": 60, "window_s": 60, "source": "policy"},
+    # The allowance is independent per endpoint; this is the fallback for uncatalogued calls.
+    "blitzapi": {"limit": 10, "window_s": 1, "source": "policy"},
     "adyntel": {"limit": 5, "window_s": 1, "source": "docs"},
     # HLR Lookup caps each customer at 210 concurrent requests and throttles per telephone
     # network, answering 429 (unbilled) above about 200 requests/s. It publishes no per-second
@@ -208,6 +212,14 @@ _RATE_LIMITS: dict[str, dict] = {
 # An endpoint whose upstream allowance differs from its provider's has its own bucket here. It
 # replaces the provider entry for that endpoint and does not draw from the provider's bucket.
 _ENDPOINT_RATE_LIMITS: dict[str, dict] = {
+    **{f"blitzapi.{name}": {"limit": 10, "window_s": 1, "source": "api"} for name in (
+        "people.search", "people.employee-finder", "people.waterfall-icp",
+        "companies.search", "companies.tam-by-jobs", "companies.tam-by-people",
+        "jobs.search", "jobs.company", "people.enrich", "people.email.find",
+        "people.phone.find", "people.email.reverse", "people.phone.reverse",
+        "companies.enrich", "companies.domain-to-linkedin", "companies.linkedin-to-domain",
+        "companies.employees.by-country", "companies.employees.by-department",
+    )},
     # Email Verifier publishes no limit; its 429s carry x-ratelimit-limit 20 per minute, far below
     # the documented 1,000/min for other APIs. A provider-wide 20/min would slow every other route.
     "contactout.people.email.verify": {"limit": 20, "window_s": 60, "source": "headers"},

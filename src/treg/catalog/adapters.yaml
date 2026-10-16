@@ -3468,3 +3468,56 @@ adapters:
     in: {video_id: body.video}
     out: {comments: rows}
     miss: "coalesce(rows, []) == []"
+
+  # BlitzAPI shares these lookup and search contracts. Its other routes need a company LinkedIn
+  # URL, a provider-specific cascade, or a result shape that no current contract accepts.
+  blitzapi.people.email.find:
+    accepts: [[linkedin_url]]
+    in: {linkedin_url: body.person_linkedin_url}
+    out: {email: email, verified: "found == true"}
+    miss: "found == false"
+  blitzapi.people.phone.find:
+    accepts: [[linkedin_url]]
+    in: {linkedin_url: body.person_linkedin_url}
+    out: {phone: phone}
+    miss: "found == false"
+  blitzapi.people.enrich:
+    accepts: [[linkedin_url]]
+    in: {linkedin_url: body.person_linkedin_url}
+    out: {full_name: person.full_name, first_name: person.first_name, last_name: person.last_name,
+          title: "person.experiences[0].job_title", company: "person.experiences[0].company_name",
+          company_domain: "person.experiences[0].company_domain", linkedin_url: person.linkedin_url,
+          location: "join(person.location.city, person.location.country_code)"}
+    miss: "found == false"
+  blitzapi.people.email.reverse:
+    accepts: [[email]]
+    in: {email: body.email}
+    out: {full_name: person.full_name, first_name: person.first_name, last_name: person.last_name,
+          title: "person.experiences[0].job_title", company: "person.experiences[0].company_name",
+          company_domain: "person.experiences[0].company_domain", linkedin_url: person.linkedin_url,
+          location: "join(person.location.city, person.location.country_code)"}
+    miss: "found == false"
+  blitzapi.companies.enrich:
+    accepts: [[linkedin_url]]
+    in: {linkedin_url: body.company_linkedin_url}
+    out: {name: company.name, domain: company.domain, website: company.website,
+          description: company.about, industry: company.industry, employees: company.size,
+          founded: company.founded_year, location: "join(company.hq.city, company.hq.country_code)",
+          linkedin_url: company.linkedin_url}
+    miss: "found == false"
+  blitzapi.people.search:
+    accepts: [[title]]
+    in: {title: body.people.job_title.include}
+    in_expr: {body.people.job_title.include: "list(title)",
+              body.people.location.country_code: "list(country)",
+              body.max_results: "at_most(limit, 50)"}
+    out: {people: results, count: total_results, next_cursor: cursor}
+    miss: "results == []"
+  blitzapi.companies.search:
+    accepts: [[name]]
+    in: {name: body.company.name.include}
+    in_expr: {body.company.name.include: "list(name)",
+              body.company.hq.country_code: "list(country)",
+              body.max_results: "at_most(limit, 50)"}
+    out: {companies: results, count: total_results, next_cursor: cursor}
+    miss: "results == []"

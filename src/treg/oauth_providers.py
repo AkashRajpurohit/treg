@@ -1464,6 +1464,22 @@ SIXTYFOUR = OAuthProvider(
     probe_path="/check-balance",
 )
 
+BLITZAPI = OAuthProvider(
+    service="blitzapi", display_name="BlitzAPI", auth_kind="key",
+    token_label="API key", token_placeholder="your BlitzAPI API key",
+    token_header="x-api-key", token_format="{secret}",
+    setup_url="https://app.blitz-api.ai",
+    setup_action_label="Get your BlitzAPI API key",
+    setup_steps=("Sign in to BlitzAPI and open API Keys.",
+                 "Create or copy a key and paste it here."),
+    setup_note="Search and enrichment use your monthly record allowance. Connection verification is free.",
+    auth_uri="", token_uri="", scopes={}, client_id_setting="", client_secret_setting="",
+    category="Enrichment",
+    summary="Search people, companies and jobs; enrich profiles and find verified work emails or US phones.",
+    base_url="https://api.blitz-api.ai", docs_url="https://docs.blitz-api.ai/",
+    probe_path="/v2/account/key-info",
+)
+
 DROPLEADS = OAuthProvider(
     service="dropleads", display_name="Dropleads", auth_kind="key",
     token_label="API key", token_placeholder="your Dropleads API key",
@@ -3966,7 +3982,7 @@ REGISTRY: dict[str, OAuthProvider] = {
         GOOGLE_ADS, YOUTUBE,
         LINKEDIN, SLACK, X, TIKTOK, FACEBOOK, INSTAGRAM, META_ADS,
         # API-key providers
-        ANYAPI, APOLLO, PDL, AKTA, HUNTER, SUMBLE, MOLTSETS, OPENMART, HARVESTAPI, FETCHINIO, SIXTYFOUR, DROPLEADS,
+        ANYAPI, APOLLO, PDL, AKTA, HUNTER, SUMBLE, MOLTSETS, OPENMART, HARVESTAPI, FETCHINIO, SIXTYFOUR, BLITZAPI, DROPLEADS,
         QUICKENRICH, PROSPEO, AIARK, WIZA, LIMADATA, GETLEADSIO, SCRUBBY, ZEROBOUNCE, DATAGMA,
         TRYKITT, CONTACTOUT, MILLIONVERIFIER, BOUNCEBAN, CRUNCHBASE, MINIMAX, FISHAUDIO,
         OPENROUTER,
