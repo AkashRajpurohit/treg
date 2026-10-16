@@ -146,7 +146,7 @@ endpoints:
         id: {type: string, required: true, note: "required by Serpstat's JSON-RPC envelope; any string, echoed back in the response", example: "1"}
         "params.domain": {type: string, required: true, note: "bare domain, no scheme", example: "serpstat.com"}
         "params.se": {type: string, required: true, note: "search database", example: "g_us"}
-        "params.size": {type: integer, required: false, note: "COST DIAL — competitors to return, 10 to 500 (Serpstat rejects other values), default 20", example: 10}
+        "params.size": {type: integer, required: false, note: "COST DIAL - competitors to return, 10 to 500 (Serpstat rejects other values), default 20", example: 10}
         "params.filters": {type: object, required: false, note: "visible (minimum visibility score), traff (minimum estimated traffic), minus_domains (array of domains to exclude)"}
       note: "the competitor set is derived from keyword overlap in the chosen `se` database, so results differ per country. `SerpstatDomainProcedure.getCompetitors` is the deprecated predecessor of this method and should not be used in new work."
     cost:
@@ -159,7 +159,7 @@ endpoints:
       source_url: https://serpstat.com/pay/
       checked: '2026-07-28'
       confidence: documented
-      note: 1 API credit per returned competitor — `size` (10 to 500, default 20) is the cost dial, and an empty result still costs 1 credit.
+      note: 1 API credit per returned competitor - `size` (10 to 500, default 20) is the cost dial, and an empty result still costs 1 credit.
     docs_url: https://api-docs.serpstat.com/docs/serpstat-public-api/6vpejje0stt4k-get-competitors
 
   # --- Keyword analytics ------------------------------------------------------------------------
@@ -328,7 +328,7 @@ endpoints:
         "params.query": {type: string, required: true, note: "the target — a domain or URL, matching searchType", example: "serpstat.com"}
         "params.searchType": {type: string, required: false, note: "url | domain (default) | part_url | domain_with_subdomains", example: "domain"}
         "params.page": {type: integer, required: false, note: "1-based; default 1"}
-        "params.size": {type: integer, required: false, note: "COST DIAL — rows per page, default 100, max 499 (Serpstat rejects 500 and above)", example: 10}
+        "params.size": {type: integer, required: false, note: "COST DIAL - rows per page, default 100, max 499 (Serpstat rejects 500 and above)", example: 10}
         "params.sort": {type: string, required: false, note: "field to sort by; default `check` (last-checked date)"}
         "params.order": {type: string, required: false, note: "asc | desc"}
         "params.linkPerDomain": {type: integer, required: false, note: "set to 1 to return only the single best link from each referring domain"}
@@ -347,7 +347,7 @@ endpoints:
       source_url: https://serpstat.com/pay/
       checked: '2026-07-28'
       confidence: documented
-      note: 1 API credit per returned backlink — `size` (default 100, max 499) is the cost dial, and an empty result still bills the 1-credit minimum.
+      note: 1 API credit per returned backlink - `size` (default 100, max 499) is the cost dial, and an empty result still bills the 1-credit minimum.
     docs_url: https://api-docs.serpstat.com/docs/serpstat-public-api/xu9jnzib39dsn-backlinks-api
 
   - id: serpstat.web.linking_domains.list
@@ -442,7 +442,7 @@ endpoints:
         "params.query": {type: string, required: true, note: "the target domain", example: "serpstat.com"}
         "params.searchType": {type: string, required: false, note: "domain (default) | domain_with_subdomains", example: "domain"}
         "params.page": {type: integer, required: false, note: "1-based; default 1"}
-        "params.size": {type: integer, required: false, note: "COST DIAL — rows per page, default 100, max 499 (Serpstat rejects 500 and above)", example: 10}
+        "params.size": {type: integer, required: false, note: "COST DIAL - rows per page, default 100, max 499 (Serpstat rejects 500 and above)", example: 10}
         "params.sort": {type: string, required: false}
         "params.order": {type: string, required: false, note: "asc | desc"}
         "params.complexFilter": {type: array, required: false}
@@ -457,7 +457,7 @@ endpoints:
       source_url: https://serpstat.com/pay/
       checked: '2026-07-28'
       confidence: documented
-      note: 1 API credit per returned page — `size` (default 100, max 499) is the cost dial, and an empty result still bills the 1-credit minimum.
+      note: 1 API credit per returned page - `size` (default 100, max 499) is the cost dial, and an empty result still bills the 1-credit minimum.
     docs_url: https://api-docs.serpstat.com/docs/serpstat-public-api/xu9jnzib39dsn-backlinks-api
 
   # --- Account (free) ---------------------------------------------------------------------------
