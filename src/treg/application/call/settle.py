@@ -186,12 +186,17 @@ def _tavily_result_count(endpoint_id: str, doc: object) -> int | None:
 
 
 def _companyenrich_record_count(endpoint_id: str, doc: object) -> int | None:
-    """People returned by CompanyEnrich's search, floored at one: a person is 2 credits, and an
-    empty page still costs the 2-credit minimum (catalog note, verified live). The reserve is the
-    requested `pageSize`, so without counting an empty `{"items": []}` settled a whole page."""
+    """Rows returned by a CompanyEnrich search page, floored at one: CompanyEnrich bills per row
+    RETURNED (2 credits a person, 1 a company, 5 a lookalike company) with one row's price as the
+    minimum on an empty page (catalog notes, verified live against the credit meter). The reserve is
+    the requested `pageSize`, so without counting an empty `{"items": []}` settled a whole page."""
     if endpoint_id not in (
         "companyenrich.people.search",
         "companyenrich.people.search.scroll",
+        "companyenrich.companies.search",
+        "companyenrich.companies.search.scroll",
+        "companyenrich.companies.similar",
+        "companyenrich.companies.similar.scroll",
     ):
         return None
     if not isinstance(doc, dict):
@@ -199,8 +204,24 @@ def _companyenrich_record_count(endpoint_id: str, doc: object) -> int | None:
     items = doc.get("items")
     if not isinstance(items, list):
         return None
-    # 2 credits per person, minimum 1 unit charged (the 2-credit minimum on empty)
     return max(len(items), 1)
+
+
+def _companyenrich_credits_per_row(mk: MarketplaceCall) -> Decimal | None:
+    """A company search row's credits when the request changes them, else None (the row's
+    `cost.value`): a `semanticQuery` search is 2 credits a company, and `expand: ["workforce"]` adds
+    5 a company. Counting at the plain 1 credit would under-bill both."""
+    if mk.endpoint_id not in ("companyenrich.companies.search", "companyenrich.companies.search.scroll"):
+        return None
+    body = mk.request_data.get("body") if isinstance(mk.request_data, dict) else None
+    if not isinstance(body, dict):
+        return None
+    semantic = isinstance(body.get("semanticQuery"), str) and bool(body["semanticQuery"].strip())
+    expand = body.get("expand")
+    workforce = expand == "workforce" or (isinstance(expand, list) and "workforce" in expand)
+    if not semantic and not workforce:
+        return None
+    return Decimal(2 if semantic else 1) + (5 if workforce else 0)
 
 
 def _aviato_bulk_hits(rows: list) -> int:
@@ -261,6 +282,34 @@ def _spyfu_result_count(doc: object) -> int | None:
     SpyFu bills per row returned, so an empty list is free. Any other shape settles at the estimate."""
     results = doc.get("results") if isinstance(doc, dict) else None
     return len(results) if isinstance(results, list) else None
+
+
+# List endpoints whose provider bills per row RETURNED while the hold is the requested page (or the
+# one entity asked about): the list under this key is the bill, counted without nulls and capped at
+# the hold. An empty list is free; a body without the list settles at the estimate. PredictLeads
+# answers JSON:API `data`, Moz `results` (the row's `cost.value` is its rows per result).
+_RETURNED_ROWS = {
+    "findymail.search.domain": "contacts",
+    **{f"predictleads.{name}": "data" for name in (
+        "companies.discover", "companies.similar", "jobs.discover", "technologies.users",
+        "technologies.list", "news.discover", "financing.discover", "portfolio_companies",
+        "products.discover", "startup_platform_posts",
+    )},
+    **{f"moz.web.{name}": "results" for name in (
+        "backlinks.list", "linking_domains.list", "anchors.list", "site.top_pages",
+        "backlinks.intersect",
+    )},
+    "seranking.web.backlinks.list": "backlinks",
+    "seranking.web.linking_domains.list": "refdomains",
+    "seranking.web.anchors.list": "anchors",
+    "seranking.google.keywords.ideas": "keywords",
+}
+
+
+def _returned_rows(endpoint_id: str, doc: object) -> int | None:
+    """Non-null rows in an `_RETURNED_ROWS` endpoint's list, or None when the body has no list."""
+    rows = doc.get(_RETURNED_ROWS[endpoint_id]) if isinstance(doc, dict) else None
+    return sum(item is not None for item in rows) if isinstance(rows, list) else None
 
 
 def _rows_billed_micro(mk: MarketplaceCall, ep: dict | None, rows: int | None,
@@ -485,9 +534,10 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
         `chargeInfo`, which is what keeps a 400/404 on a `per_call` profile fetch unbilled.
       - apify: DERIVED by counting the dataset rows a run-sync call returns, plus the row's flat
         `call_fee` for the actor start or compute the run bills regardless of rows.
-      - companyenrich / icypeas bulk and search / serpstat / thecompaniesapi search / findymail employees:
-        DERIVED by counting the rows the vendor bills for, priced at the row's credits and capped
-        at the hold (`_rows_billed_micro`): an empty answer never costs the requested page.
+      - companyenrich / icypeas bulk and search / serpstat / thecompaniesapi search / findymail
+        employees and the `_RETURNED_ROWS` lists (findymail domain search, predictleads, moz,
+        se ranking): DERIVED by counting the rows the vendor bills for, priced at the row's credits
+        and capped at the hold (`_rows_billed_micro`): an empty answer never costs the requested page.
     Everyone else settles at the estimate. This is the same signal the catalog's `observed_cost`
     harvests, which is what lets phase 5's drift detector compare the two numbers directly."""
     provider = mk.provider
@@ -574,7 +624,8 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
             return _aviato_bulk_hits(doc) * mk.unit_micro
         return None
     if provider == "companyenrich" and mk.cost_type == "per_result" and mk.unit_micro > 0:
-        return _rows_billed_micro(mk, ep, _companyenrich_record_count(mk.endpoint_id, doc))
+        return _rows_billed_micro(mk, ep, _companyenrich_record_count(mk.endpoint_id, doc),
+                                  _companyenrich_credits_per_row(mk))
     if provider == "icypeas" and mk.cost_type == "per_result" and mk.unit_micro > 0:
         body = mk.request_data.get("body") if isinstance(mk.request_data, dict) else None
         # The scrape row carries the dearer profile rate; a company batch is 0.5 credit a hit.
@@ -606,8 +657,15 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
         if isinstance(doc, list) and mk.cost_type == "per_result" and mk.unit_micro > 0:
             return _rows_billed_micro(mk, ep, sum(item is not None for item in doc))
         return None
+    if mk.endpoint_id in _RETURNED_ROWS and mk.cost_type in ("per_result", "quota_rows") \
+            and mk.unit_micro > 0:
+        return _rows_billed_micro(mk, ep, _returned_rows(mk.endpoint_id, doc))
     if not isinstance(doc, dict):
         return 0 if provider == "contactout" else None
+    if mk.endpoint_id == "findymail.technologies" and doc.get("technologies") == []:
+        # One finder credit when technologies come back; an unknown domain answers `[]` and Findymail
+        # does not bill it (verified against the credit meter).
+        return 0
     if mk.endpoint_id == "litescrape.google.serp.ai_overview" and doc.get("ai_overview") is None:
         metadata = doc.get("search_metadata")
         if isinstance(metadata, dict) and metadata.get("ai_overview_state") == "not_served":

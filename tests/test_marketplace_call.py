@@ -3187,6 +3187,101 @@ def test_row_counts_never_bill_above_the_hold():
         mk, json.dumps({"id": "1", "result": {"data": [{}] * 1000}}).encode()) == estimate
 
 
+def _list_answer(key: str | None, rows: int) -> bytes:
+    items = [{"id": f"row-{i}", "domain": f"r{i}.example"} for i in range(rows)]
+    return json.dumps(items if key is None else {key: items}).encode()
+
+
+@pytest.mark.parametrize(("provider", "method", "url", "req", "key", "rows", "credits"), [
+    ("companyenrich", "POST", "/call/companyenrich.companies.search", {"pageSize": 10}, "items", 0, 1),
+    ("companyenrich", "POST", "/call/companyenrich.companies.search", {"pageSize": 10}, "items", 4, 4),
+    ("companyenrich", "POST", "/call/companyenrich.companies.search",
+     {"pageSize": 10, "semanticQuery": "payment infrastructure"}, "items", 3, 6),
+    ("companyenrich", "POST", "/call/companyenrich.companies.similar.scroll",
+     {"domains": ["seed.example"], "pageSize": 4}, "items", 0, 5),
+    ("predictleads", "GET", "/call/predictleads.technologies.users?technology_id_or_fuzzy_name=x&limit=10",
+     None, "data", 0, 0),
+    ("predictleads", "GET", "/call/predictleads.technologies.users?technology_id_or_fuzzy_name=x&limit=10",
+     None, "data", 3, 3),
+    ("findymail", "POST", "/call/findymail.search.domain", {"domain": "a.example", "roles": ["ceo"]},
+     "contacts", 0, 0),
+    ("moz", "POST", "/call/moz.web.linking_domains.list", {"target": "a.example", "limit": 25},
+     "results", 6, 6),
+    ("seranking", "GET", "/call/seranking.web.backlinks.list?target=a.example&limit=50",
+     None, "backlinks", 0, 0),
+    ("seranking", "GET", "/call/seranking.google.keywords.ideas?source=us&keyword=seo&limit=100",
+     None, "keywords", 0, 0),
+])
+async def test_list_endpoints_settle_on_rows_returned_through_the_call_path(
+    clients: AsyncClient, monkeypatch, provider, method, url, req, key, rows, credits,
+):
+    """The hold is the requested page; the provider bills the rows it returned, so a partial page
+    settles lower and an empty one at the provider's own minimum (often zero)."""
+    monkeypatch.setenv(f"TREG_PLATFORM_KEY_{provider.upper()}", f"SYNTHETIC-{provider.upper()}-KEY")
+    monkeypatch.setenv("TREG_PLATFORM_PROVIDERS", provider)
+    get_settings.cache_clear()
+    answer = _list_answer(key, rows)
+    monkeypatch.setattr(call_service, "relay", _fake_relay(200, answer))
+    endpoint_id = url.removeprefix("/call/").split("?")[0]
+    ep = catalog_store.load().by_id[endpoint_id]
+    query = dict(p.split("=") for p in url.partition("?")[2].split("&") if p)
+    mk, estimate, _ = _priced(endpoint_id, query, req)
+    credit = mk.unit_micro if ep["cost"]["currency"] == "credit" else mk.unit_micro / ep["cost"]["value"]
+    expected = min(int(credits * credit), estimate)
+    assert expected < estimate  # the old settle billed the whole hold
+
+    before = await _balance(clients)
+    response = await clients.request(method, url, json=req)
+    assert response.status_code == 200
+    assert response.content == answer
+    telemetry = await _telemetry(clients)
+    assert telemetry["cost_estimated_micro"] == estimate
+    assert telemetry["cost_observed_micro"] == expected
+    assert telemetry["cost_charged_micro"] == expected
+    assert await _balance(clients) == before - expected
+
+
+@pytest.mark.parametrize(("endpoint_id", "doc", "expected"), [
+    ("findymail.search.domain", {"contacts": [None, {"email": "a@a.example"}]}, "rows:1"),
+    ("findymail.search.domain", {"error": "unexpected"}, None),
+    ("predictleads.companies.discover", {"data": "malformed"}, None),
+    ("moz.web.backlinks.intersect", {"results": [{}, {}]}, "rows:2"),
+    ("moz.web.url.metrics", {"results": []}, None),  # per target, not a returned-row list
+    ("seranking.web.anchors.list", {"anchors": []}, 0),
+    ("seranking.web.backlinks.summary", {"summary": []}, None),
+])
+def test_returned_row_lists_count_only_their_own_list(endpoint_id, doc, expected):
+    mk, estimate, _ = _priced(endpoint_id, None, {"target": "a.example", "limit": 10})
+    observed = call_settle._observed_cost_micro(mk, json.dumps(doc).encode())
+    if isinstance(expected, str):
+        cost = catalog_store.load().by_id[endpoint_id]["cost"]
+        per_row = int(cost["value"] * mk.unit_micro) if cost["currency"] == "credit" else mk.unit_micro
+        expected = min(int(expected.split(":")[1]) * per_row, estimate)
+    assert observed == expected
+
+
+@pytest.mark.parametrize(("doc", "expected"), [
+    ({"domain": "a.example", "technologies": []}, 0),
+    ({"domain": "a.example", "technologies": [{"name": "Python"}]}, None),
+    ({"error": "unexpected"}, None),
+])
+def test_findymail_technologies_empty_answer_is_free(doc, expected):
+    mk, _, _ = _priced("findymail.technologies", None, {"domain": "a.example"})
+    assert call_settle._observed_cost_micro(mk, json.dumps(doc).encode()) == expected
+
+
+@pytest.mark.parametrize(("req", "credits"), [
+    ({"pageSize": 20}, 3),
+    ({"pageSize": 20, "semanticQuery": "developer tools"}, 6),
+    ({"pageSize": 20, "expand": ["workforce"]}, 18),
+    ({"pageSize": 20, "semanticQuery": "  "}, 3),
+])
+def test_companyenrich_company_search_rows_carry_the_request_rate(req, credits):
+    mk, estimate, _ = _priced("companyenrich.companies.search", None, req, request_data={"body": req})
+    observed = call_settle._observed_cost_micro(mk, b'{"items":[{},{},{}]}')
+    assert observed == min(credits * mk.unit_micro, estimate)
+
+
 def test_thecompaniesapi_simplified_is_free_only_where_declared():
     mk, _, _ = _priced("thecompaniesapi.companies.search", {"size": "10", "simplified": "true"}, None,
                        request_data={"queryParams": {"size": "10", "simplified": "true"}})
