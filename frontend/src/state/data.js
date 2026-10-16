@@ -116,6 +116,7 @@ export default function data(){
       shareGate:null,  // logged-out arrival at a shared detail link: {kind,name} → focused sign-in page (no sandbox/tour)
       share:{on:false, email:'', role:'viewer', full:true, busy:false, err:'', sent:null, member:null},  // detail-page "Share…" (invite + land on this page)
       me:'', icHash:'', myOrgs:[], isAdmin:false,
+      meAvatar:null, uploadsOn:false, avatarDialog:false,  // /auth/me: your picture, whether this registry takes uploads; the Your picture dialog
       onboarded:true,  // first-run onboarding done (server flag; gates the welcome modal)
       onboardingV2:false, onboardingV2Exp:false, onboardingV2On:false, onboardingPreviewOn:false,  // the server's first-run flow (/onboarding) replaces the welcome modal
       welcome:{on:false, step:0, name:'', agent:'claude-code', moreOpen:false, busy:false, err:''},  // first-run: name your team → pick your agent → setup line

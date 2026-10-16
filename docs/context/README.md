@@ -39,6 +39,7 @@ covers (frontmatter `sources:`). Regenerate this index with
 | [Policy extensions — decision points a private abuse policy can plug into](architecture/policy-extensions.md) | shipped | policy.py, bootstrap.py, signup.py, promotions.py, … |
 | [The proxy — faithful credential-injecting relay + tool resolution](architecture/proxy-model.md) | shipped | relay.py, jsontext.py, ssrf.py, api.py, … |
 | [Discovery experiment — a relevance judge behind catalog search, measured on what the caller does next; the job-first answer served to agents](architecture/search-experiment.md) | building | catalog_search.py, search_experiment.py, interleave.py, judge.py, … |
+| [Showcase leaderboard and pictures - applications, review, votes, avatars](architecture/showcase.md) | shipped | __init__.py, showcase.py, showcase.py, __init__.py, … |
 | [Super-admin — cross-tenant read + control](architecture/super-admin.md) | shipped | api.py, admin.py, evidence_retention.py, access.py, … |
 | [The table layer — one call, answered as rows and columns (`/table/`)](architecture/table.md) | built, behind `table_enabled` (TREG_TABLE_ENABLED), off by default | __init__.py, table.py, table.py, call.py, … |
 
@@ -49,7 +50,7 @@ covers (frontmatter `sources:`). Regenerate this index with
 | [The API — the only brain (FastAPI)](interface/api.md) | shipped | key_spend.py, media.py, sitetrack.js, api.py, … |
 | [Catalog browse taxonomy — open placement and naming decisions](interface/catalog-review-proposal.md) | backlog | — |
 | [The CLI (treg) + skill scaffolding](interface/cli.md) | shipped | cli.py, test_released_cli_compat.py, test_cli_key_compatibility.py, auth_helpers.py, … |
-| [The web dashboard (served from FastAPI)](interface/dashboard.md) | shipped | App.vue, views.ts, controller.js, agents.js, … |
+| [The web dashboard (served from FastAPI)](interface/dashboard.md) | shipped | App.vue, TeamShowcase.vue, TeamAvatar.vue, UserAvatarDialog.vue, … |
 | [Enrich Arena — paid comparisons, one-click feedback, and visible waterfalls](interface/enrich-arena.md) | shipped | arena.py, arena.py, arena.py, models.py, … |
 | [Import — scan a .env AND/OR a skills dir, auto-register as tools + bundles](interface/env-import.md) | in-progress | providers.py, skills.py |
 | [Landing sandbox backend - front-end entry removed](interface/landing-sandbox.md) | shipped | sandbox.py, sandbox_identity.py, pubfeed.py, sandbox.py, … |

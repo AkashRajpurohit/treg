@@ -220,6 +220,88 @@
 
   @media (max-width: 860px) { .grid { row-gap: 36px; } .app, .grid.filtered .app { grid-column: 1 / -1; } .stage { padding: 10px 10px 0; height: auto; aspect-ratio: 16 / 10; } }
 
+
+  /* ---------- the leaderboard: database entries, votes, badges (filled from /showcase/leaderboard) ---------- */
+  .board { padding-top: 110px; scroll-margin-top: 40px; }
+  .board[hidden] { display: none; }
+  .board .shead { align-items: center; }
+  .board-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .ranks { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .rank {
+    display: grid; grid-template-columns: 44px 44px minmax(0, 1fr) auto auto; align-items: center; gap: 14px;
+    padding: 14px 6px; border-bottom: 1px solid var(--line); opacity: 0; transform: translateY(8px);
+    animation: rankin .45s var(--ease) forwards; animation-delay: calc(var(--i) * 45ms);
+  }
+  @keyframes rankin { to { opacity: 1; transform: none; } }
+  .rank .no { font: 500 15px var(--mono); color: var(--muted); text-align: center; }
+  .rank:nth-child(1) .no { color: var(--ink); font-weight: 600; }
+  .rank .ico, .rank .letter { width: 44px; height: 44px; border-radius: 12px; }
+  .rank .letter { display: grid; place-items: center; font: 600 18px var(--display); color: #fff; background: var(--ink); }
+  .rank .who { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+  .rank .who a { color: var(--ink); text-decoration: none; font-weight: 600; font-size: 16px; }
+  .rank .who a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  .rank .who .tag { color: #55534F; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rank .who .badges { margin: 6px 0 0; }
+  .rank .metric { font: 500 14px var(--text); color: #43413E; white-space: nowrap; text-align: right; }
+  .rank .metric small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .ranks .empty { padding: 30px 6px; color: var(--muted); font-size: 15px; }
+  .board .more { display: flex; margin: 18px auto 0; }
+  .board .more[hidden] { display: none; }
+  .board-note { margin: 14px 2px 0; color: var(--muted); font-size: 13px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .badges:empty { display: none; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; font: 500 12px var(--text); color: #43413E; background: var(--card); border: 1px solid var(--line); padding: 3px 9px; border-radius: 999px; }
+  .badge i { font-style: normal; }
+  .vote {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    width: 58px; height: 58px; border: 1px solid var(--line2, #D9D6D0); border-radius: 12px; background: #fff;
+    color: var(--ink); cursor: pointer; font: inherit; transition: border-color .15s, background .15s, color .15s, transform .2s var(--ease);
+  }
+  .vote:hover { border-color: var(--green); color: var(--green); }
+  .vote:active { transform: scale(.94); }
+  .vote svg { width: 15px; height: 15px; }
+  .vote .score { font: 600 15px var(--text); font-variant-numeric: tabular-nums; line-height: 1; }
+  .vote[aria-pressed="true"] { background: var(--green); border-color: var(--green); color: #fff; }
+  .vote[aria-pressed="true"]:hover { background: #0E6E45; border-color: #0E6E45; color: #fff; }
+  .vote .score.bump { animation: bump .35s var(--ease); }
+  @keyframes bump { 40% { transform: translateY(-3px) scale(1.15); } }
+  @media (max-width: 640px) {
+    .rank { grid-template-columns: 26px 38px minmax(0, 1fr) auto; gap: 10px; }
+    .rank .ico, .rank .letter { width: 38px; height: 38px; }
+    .ranks.loved .rank .metric { display: none; }
+  }
+  .toast { position: fixed; left: 50%; bottom: 26px; z-index: 260; transform: translate(-50%, 20px); opacity: 0; background: var(--ink); color: #fff; font-size: 14px; padding: 10px 16px; border-radius: 12px; transition: opacity .25s, transform .35s var(--ease); pointer-events: none; }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---------- apply to the leaderboard ---------- */
+  .amodal { width: min(620px, 96vw); max-height: 92vh; overflow-y: auto; background: #fff; border-radius: 20px; padding: 28px 28px 22px; position: relative; text-align: left; box-shadow: 0 30px 90px -38px rgba(20,18,12,.4); }
+  .amodal h3 { margin: 0 0 4px; font: 600 22px var(--display); letter-spacing: -.015em; }
+  .amodal .lede { margin: 0 0 18px; color: #55534F; font-size: 14px; }
+  .amodal .cls { position: absolute; top: 12px; right: 15px; background: none; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+  .amodal label.f { display: block; margin: 0 0 12px; font-size: 13px; font-weight: 500; color: #43413E; }
+  .amodal label.f small { color: var(--muted); font-weight: 400; }
+  .amodal input[type=text], .amodal input[type=url], .amodal select, .amodal textarea {
+    display: block; width: 100%; margin-top: 6px; background: var(--card); border: 1px solid var(--line); color: var(--ink);
+    border-radius: 10px; padding: 10px 12px; font: 14px var(--text); outline: none; }
+  .amodal textarea { min-height: 84px; resize: vertical; }
+  .amodal input:focus, .amodal select:focus, .amodal textarea:focus { border-color: var(--ink); }
+  .amodal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .amodal fieldset { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 4px 0 14px; }
+  .amodal legend { font-size: 13px; font-weight: 600; padding: 0 6px; }
+  .amodal .chk { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; margin: 6px 0; }
+  .amodal .chk input { margin-top: 3px; }
+  .amodal .chk span small { color: var(--muted); }
+  .pics { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 8px; }
+  .pics .pic { position: relative; }
+  .pics .pic img { display: block; height: 64px; border-radius: 10px; box-shadow: 0 0 0 1px var(--line); }
+  .pics .pic button { position: absolute; top: -8px; right: -8px; width: 22px; height: 22px; border-radius: 50%; border: 0; background: var(--ink); color: #fff; font-size: 12px; cursor: pointer; }
+  .pics .pill { padding: 8px 14px; font-size: 13px; }
+  .amodal .err { color: #C0362F; font-size: 13px; min-height: 18px; margin: 4px 0 10px; }
+  .amodal .actions { display: flex; gap: 10px; justify-content: flex-end; position: sticky; bottom: -22px; background: #fff; padding: 12px 0 2px; }
+  .amodal .note { font-size: 12.5px; color: var(--muted); margin: 0 0 12px; }
+  .amodal .done { text-align: center; padding: 18px 0 6px; }
+  @media (max-width: 560px) { .amodal .row2 { grid-template-columns: 1fr; } .amodal { padding: 22px 18px 18px; } }
+
   /* ---------- launch posts ---------- */
   .posts { padding-top: 130px; }
   .wall { columns: 3 330px; column-gap: 22px; }
@@ -334,7 +416,7 @@
 <nav class="nav" id="nav">
   <span class="wordmark"><a href="/" style="display:inline-flex;align-items:center;gap:10px;color:inherit;text-decoration:none" aria-label="treg home"><svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="112" fill="#101010"/><rect x="111" y="111" width="140.5" height="140.5" rx="20" fill="#fff"/><rect x="260.5" y="260.5" width="140.5" height="140.5" rx="20" fill="#fff"/></svg> treg</a> <span style="color:var(--muted);font-weight:400">/</span> <span style="font-weight:500">Showcase</span></span>
   <span style="display:flex;gap:8px">
-    <span class="nav-links"><a href="#apps">Apps</a><a href="#posts">Launch posts</a><a href="#talk">On X</a><a href="/catalog">Catalog</a><a href="https://github.com/superdesigndev/treg" target="_blank" rel="noopener"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> Open source</a><a href="https://x.com/treg_ai" target="_blank" rel="noopener" aria-label="treg on X"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.451-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117l11.966 15.644Z"/></svg></a></span>
+    <span class="nav-links"><a href="#apps">Apps</a><a href="#leaderboard">Leaderboard</a><a href="#posts">Launch posts</a><a href="#talk">On X</a><a href="/catalog">Catalog</a><a href="https://github.com/superdesigndev/treg" target="_blank" rel="noopener"><svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg> Open source</a><a href="https://x.com/treg_ai" target="_blank" rel="noopener" aria-label="treg on X"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.451-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117l11.966 15.644Z"/></svg></a></span>
     <a class="pill dark" href="/app" id="ctaNav">Start building</a>
   </span>
 </nav>
@@ -427,6 +509,19 @@
   </div>
 </section>
 
+<section class="board wrap" id="leaderboard">
+  <div class="shead">
+    <h2>Leaderboard</h2>
+    <div class="board-actions">
+      <div class="tabs" role="tablist" aria-label="Leaderboard" id="boardTabs" hidden><span class="mark" id="boardMark" aria-hidden="true"></span></div>
+      <button type="button" class="pill dark" id="applyOpen"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.6"/><path d="M8 5v6M5 8h6" stroke-linecap="round"/></svg>Submit yours</button>
+    </div>
+  </div>
+  <ol class="ranks" id="ranks"><li class="empty">Loading the leaderboard…</li></ol>
+  <button type="button" class="pill more" id="moreRanks" hidden>Show 10 more</button>
+  <p class="board-note">Built something with treg? Submit it, and it shows here once we approve it. Upvotes count live; activity updates weekly and shows only what each maker agreed to share.</p>
+</section>
+
 <section class="posts wrap" id="posts">
   <div class="shead">
     <div>
@@ -516,6 +611,17 @@
   </div>
   <div class="bf-tag">© 2026 treg — OpenRouter for agent tools</div>
 </footer>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- apply to the leaderboard -->
+<div class="scrim" id="apply-scrim">
+  <div class="amodal" role="dialog" aria-modal="true" aria-labelledby="applyTitle">
+    <button class="cls" id="applyClose" aria-label="Close">✕</button>
+    <h3 id="applyTitle">Submit your app</h3>
+    <p class="lede">Tell us about an app you built with treg. Nothing is public until we approve it.</p>
+    <div id="applyBody"></div>
+  </div>
+</div>
 
 <!-- sign-in modal: shown when "Start building" is clicked while signed out -->
 <div class="scrim" id="signin-scrim">
@@ -701,7 +807,10 @@ function host(u) { return u.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
    the page. Clicks are counted (showcase_cta_click) so we can see whether the page brings signups. */
 (function () {
   var scrim = document.getElementById('signin-scrim');
+  var afterSignin = '/app';
   function openSignin() { scrim.classList.add('open'); document.getElementById('em-input').focus(); }
+  /* a vote or an application opens the same box, then comes back to this page instead of the dashboard */
+  window.tregSigninHere = function (hash) { afterSignin = location.pathname + (hash || '#leaderboard'); openSignin(); };
   function closeSignin() { scrim.classList.remove('open'); }
   document.getElementById('signinClose').addEventListener('click', closeSignin);
   scrim.addEventListener('click', function (e) { if (e.target === scrim) closeSignin(); });
@@ -746,9 +855,247 @@ function host(u) { return u.replace(/^https?:\/\//, '').replace(/\/$/, ''); }
     if (!code.value.trim()) return;
     btn2.textContent = 'Verifying…'; err.textContent = '';
     fetch('/auth/email/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: input.value.trim(), code: code.value.trim() }) })
-      .then(function (r) { if (!r.ok) return r.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.detail || "that code didn't work"); }); location.href = '/app'; })
+      .then(function (r) { if (!r.ok) return r.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.detail || "that code didn't work"); }); if (afterSignin === '/app') location.href = '/app'; else { location.href = afterSignin; location.reload(); } })
       .catch(function (e2) { err.textContent = e2.message; btn2.textContent = 'Sign in'; });
   }
+})();
+
+/* ---- the leaderboard: approved entries from /showcase/leaderboard (checked each view, bucketed,
+   consented values only), the visitor's upvotes from /showcase/votes/me. An upvote updates in place and
+   settles on the server's count; a second click takes it back. Text from makers is always escaped. ---- */
+var BOARD = (function () {
+  var list = document.getElementById('ranks'), tabs = document.getElementById('boardTabs'), mark = document.getElementById('boardMark');
+  var more = document.getElementById('moreRanks'), toast = document.getElementById('toast'), toastTimer;
+  var UP = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 3.5 14 11H2z"/></svg>';
+  var BOARDS = [['most_loved', 'Most loved'], ['most_active', 'Most active'], ['rising', 'Rising'], ['longest_streak', 'Longest streak']];
+  var ICONS = { streak: '🔥', rising: '🚀', providers: '🧩', calls: '📈' };
+  var PAGE = 10, shown = PAGE, board = 'most_loved', data = null, byId = {}, mine = {};
+  var me = { signed_in: false, can_vote: false };
+
+  function say(text) { toast.textContent = text; toast.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(function () { toast.classList.remove('on'); }, 2600); }
+  function safeUrl(u) { return /^https:\/\//.test(u || '') ? u : '#'; }
+  function badgeHtml(bs) { return (bs || []).map(function (b) { return '<span class="badge"><i aria-hidden="true">' + (ICONS[b.key] || '') + '</i>' + esc(b.label) + '</span>'; }).join(''); }
+  function iconHtml(a) {
+    return a.icon_url ? '<img class="ico" src="' + esc(a.icon_url) + '" alt="" width="44" height="44" loading="lazy">'
+                      : '<span class="letter" aria-hidden="true">' + esc((a.name || '?').charAt(0).toUpperCase()) + '</span>';
+  }
+  function voteHtml(a) {
+    var on = !!mine[a.id];
+    return '<button type="button" class="vote" data-id="' + a.id + '" aria-pressed="' + on + '" aria-label="Upvote ' + esc(a.name) + '"' +
+      ' title="' + (on ? 'You upvoted this. Click to take your upvote back.' : 'Upvote') + '">' + UP +
+      '<b class="score" aria-live="polite">' + a.upvotes + '</b></button>';
+  }
+  function metric(a) {
+    if (board === 'most_loved') return '';
+    if (board === 'most_active') return esc(a.calls_tier || '') + ' <small>calls a month</small>';
+    if (board === 'rising') return '+' + (a.growth_pct || 0) + '% <small>this week</small>';
+    return a.streak_days + (a.streak_days === 1 ? ' day' : ' days') + ' <small>in a row</small>';
+  }
+  function slugs() { return (data.boards[board] || []).filter(function (id) { return byId[id]; }); }
+  function row(id, rank, delay) {
+    var a = byId[id];
+    return '<li class="rank" style="--i:' + delay + '"><span class="no">' + rank + '</span>' + iconHtml(a) +
+      '<span class="who"><a href="' + esc(safeUrl(a.url)) + '" target="_blank" rel="noopener ugc">' + esc(a.name) + '</a>' +
+      '<span class="tag">' + esc(a.tagline) + '</span><span class="badges">' + badgeHtml(a.badges) + '</span></span>' +
+      '<span class="metric">' + metric(a) + '</span>' + (board === 'most_loved' ? voteHtml(a) : '') + '</li>';
+  }
+  function paintMore(total) { more.hidden = shown >= total; more.textContent = 'Show ' + Math.min(PAGE, total - shown) + ' more'; }
+  function paint() {
+    var ids = slugs();
+    list.classList.toggle('loved', board === 'most_loved');
+    list.innerHTML = ids.length ? ids.slice(0, shown).map(function (id, i) { return row(id, i + 1, i); }).join('')
+      : '<li class="empty">' + (data.apps.length ? 'No app qualifies for this board yet.' : 'No apps yet. Built something with treg? Be the first to submit it.') + '</li>';
+    paintMore(ids.length);
+  }
+  more.addEventListener('click', function () {
+    var ids = slugs(), from = shown;
+    shown += PAGE;
+    list.insertAdjacentHTML('beforeend', ids.slice(from, shown).map(function (id, j) { return row(id, from + j + 1, j); }).join(''));
+    track('showcase_board_more', { board: board }); paintMore(ids.length);
+  });
+  function place() {
+    var on = tabs.querySelector('[aria-selected="true"]');
+    if (on) { mark.style.width = on.offsetWidth + 'px'; mark.style.transform = 'translateX(' + on.offsetLeft + 'px)'; }
+  }
+  function cast(id) {
+    if (!me.signed_in) { track('showcase_vote_signin', { app: id }); window.tregSigninHere('#leaderboard'); return; }
+    if (!me.can_vote) { say('Verify your email to upvote.'); return; }
+    var a = byId[id], before = !!mine[id], up = !before, was = a.upvotes;
+    a.upvotes += up ? 1 : -1; mine[id] = up; paint();
+    track('showcase_vote', { app: id, up: up });
+    fetch('/showcase/vote', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: id, up: up }) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) throw new Error(d.detail || 'upvote failed'); return d; }); })
+      .then(function (d) { a.upvotes = d.upvotes; paint(); if (!up) say('Your upvote is removed.'); })
+      .catch(function (e) { a.upvotes = was; mine[id] = before; paint(); say(e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.'); });
+  }
+  list.addEventListener('click', function (e) {
+    var b = e.target.closest('.vote');
+    if (b) cast(+b.dataset.id);
+  });
+  var ready = Promise.all([
+    fetch('/showcase/leaderboard').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }),
+    fetch('/showcase/votes/me', { credentials: 'same-origin' }).then(function (r) { return r.ok ? r.json() : me; }).catch(function () { return me; })
+  ]).then(function (res) {
+    data = res[0]; me = res[1]; mine = {}; (me.upvoted || []).forEach(function (id) { mine[id] = true; });
+    data.apps.forEach(function (a) { byId[a.id] = a; });
+    if (data.apps.length) {
+      tabs.hidden = false;
+      BOARDS.forEach(function (bd, i) {
+        var t = el('button', { role: 'tab', 'aria-selected': i ? 'false' : 'true', 'data-board': bd[0] }, esc(bd[1]));
+        t.addEventListener('click', function () {
+          board = bd[0]; shown = PAGE; track('showcase_board', { board: board });
+          tabs.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-selected', x === t ? 'true' : 'false'); });
+          place(); paint();
+        });
+        tabs.appendChild(t);
+      });
+      place(); window.addEventListener('resize', place);
+      if (document.fonts) document.fonts.ready.then(place);
+    }
+    paint();
+  }).catch(function () { document.getElementById('leaderboard').hidden = true; });
+  return { me: function () { return me; }, ready: ready.then(function () { return me; }, function () { return me; }), say: say };
+})();
+
+/* ---- apply to the leaderboard: sign in, pick one of your teams (owner or admin), fill the fields,
+   add an icon and screenshots (re-drawn and kept private until approval), choose what to show.
+   Changes later and the review status live in the dashboard's Team page, Showcase tab. ---- */
+(function () {
+  var scrim = document.getElementById('apply-scrim'), body = document.getElementById('applyBody');
+  var CATEGORIES = [['social-listening', 'Social listening'], ['ads', 'Ads'], ['sales', 'Sales and leads'], ['seo', 'SEO'],
+    ['content', 'Content and media'], ['business-ops', 'Business ops'], ['company-data', 'Company data'],
+    ['developer-tools', 'Developer tools'], ['other', 'Other']];
+  var SHOW = [['show_calls', 'Call tier', 'monthly calls, Most active and Rising boards'], ['show_streak', 'Streak', 'days in a row with calls'],
+    ['show_providers', 'Providers', 'how many providers the app uses'], ['show_categories', 'Categories', 'its top capability categories']];
+  var state = { icon: null, shots: [], uploads: true };
+  function close() { scrim.classList.remove('open'); }
+  document.getElementById('applyClose').addEventListener('click', close);
+  scrim.addEventListener('click', function (e) { if (e.target === scrim) close(); });
+  addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+  function json(url, opts) {
+    return fetch(url, Object.assign({ credentials: 'same-origin' }, opts || {})).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok) { var e = new Error(d.detail || ('error ' + r.status)); e.status = r.status; throw e; } return d; });
+    });
+  }
+  function message(html) { body.innerHTML = '<div class="done">' + html + '</div>'; }
+  function open() {
+    track('showcase_apply_open', {});
+    BOARD.ready.then(function (me) { if (me.signed_in) start(); else window.tregSigninHere('#apply'); });
+  }
+  function start() {
+    scrim.classList.add('open');
+    message('Loading your teams…');
+    Promise.all([json('/showcase/my-teams'), json('/auth/me').catch(function () { return {}; })]).then(function (res) {
+      var teams = res[0];
+      state = { icon: null, shots: [], uploads: res[1].uploads !== false };
+      if (!teams.length) {
+        message('<p>You need to be an owner or admin of a treg team to submit an app.</p><p><a class="pill dark" href="/app">Open the dashboard</a></p>');
+        return;
+      }
+      form(teams);
+    }).catch(function (e) { message('<p>' + esc(e.message) + '</p>'); });
+  }
+  function form(teams) {
+    var full = teams.every(function (t) { return t.apps >= t.limit; });
+    body.innerHTML =
+      '<label class="f">Team<select id="ap-team">' + teams.map(function (t) {
+        return '<option value="' + t.id + '"' + (t.apps >= t.limit ? ' disabled' : '') + '>' + esc(t.name) + ' (' + t.apps + ' of ' + t.limit + ' used)</option>'; }).join('') + '</select></label>' +
+      '<div class="row2"><label class="f">App name<input type="text" id="ap-name" maxlength="60" required></label>' +
+      '<label class="f">Link<input type="url" id="ap-url" placeholder="https://" required></label></div>' +
+      '<label class="f">One line about it <small>(up to 80 characters)</small><input type="text" id="ap-tagline" maxlength="80" required></label>' +
+      '<label class="f">Description <small>(optional, up to 500)</small><textarea id="ap-description" maxlength="500"></textarea></label>' +
+      '<div class="row2"><label class="f">Category<select id="ap-category">' + CATEGORIES.map(function (c) { return '<option value="' + c[0] + '">' + c[1] + '</option>'; }).join('') + '</select></label>' +
+      '<label class="f">Maker name <small>(optional)</small><input type="text" id="ap-maker" maxlength="60"></label></div>' +
+      '<div class="row2"><label class="f">X handle <small>(optional)</small><input type="text" id="ap-x" placeholder="@you"></label>' +
+      '<label class="f">Launch post <small>(optional)</small><input type="url" id="ap-post" placeholder="https://x.com/…"></label></div>' +
+      (state.uploads ?
+        '<fieldset><legend>Pictures</legend><p class="note">Icon: square, at least 96 px (512 px looks sharpest). Screenshots: up to 4, desktop or phone, at least 600 px on the longest side; the first is the cover. PNG, JPEG or WebP.</p>' +
+        '<div class="pics" id="ap-icon"></div><div class="pics" id="ap-shots"></div>' +
+        '<input type="file" id="ap-icon-file" accept="image/png,image/jpeg,image/webp" hidden><input type="file" id="ap-shot-file" accept="image/png,image/jpeg,image/webp" hidden></fieldset>'
+        : '<p class="note">Picture uploads are not enabled yet; your entry shows its first letter until they are.</p>') +
+      '<fieldset><legend>Where does its activity come from?</legend>' +
+      '<label class="chk"><input type="radio" name="ap-source" value="team" checked><span>The whole team <small>- every call your team makes</small></span></label>' +
+      '<label class="chk"><input type="radio" name="ap-source" value="keys"><span>Only some API keys <small>- for a team with more than one app</small></span></label>' +
+      '<div id="ap-keys" hidden></div></fieldset>' +
+      '<fieldset><legend>What may we show on the leaderboard?</legend><p class="note">Upvotes always show. Activity shows as tiers and badges only: never exact numbers, never money.</p>' +
+      SHOW.map(function (s) { return '<label class="chk"><input type="checkbox" id="ap-' + s[0] + '"><span>' + s[1] + ' <small>- ' + s[2] + '</small></span></label>'; }).join('') +
+      '</fieldset><div class="err" id="ap-err"></div>' +
+      '<div class="actions"><button type="button" class="pill" id="ap-cancel">Cancel</button><button type="button" class="pill dark" id="ap-submit"' + (full ? ' disabled' : '') + '>Submit for review</button></div>';
+    document.getElementById('ap-cancel').addEventListener('click', close);
+    document.getElementById('ap-submit').addEventListener('click', submit);
+    if (state.uploads) { paintPics(); wireFile('ap-icon-file', 'showcase_icon'); wireFile('ap-shot-file', 'showcase_shot'); }
+    if (full) document.getElementById('ap-err').textContent = 'Each of your teams already lists 5 apps.';
+    body.querySelectorAll('input[name=ap-source]').forEach(function (r) { r.addEventListener('change', paintKeys); });
+    document.getElementById('ap-team').addEventListener('change', function () { state.keys = null; paintKeys(); });
+  }
+  function source() { var r = body.querySelector('input[name=ap-source]:checked'); return r ? r.value : 'team'; }
+  function paintKeys() {
+    var box = document.getElementById('ap-keys');
+    box.hidden = source() !== 'keys';
+    if (box.hidden) return;
+    if (!state.keys) {
+      box.innerHTML = '<p class="note">Loading your API keys…</p>';
+      json('/showcase/teams/' + val('ap-team') + '/keys').then(function (keys) { state.keys = keys; paintKeys(); })
+        .catch(function (e) { box.innerHTML = '<p class="note">' + esc(e.message) + '</p>'; });
+      return;
+    }
+    box.innerHTML = state.keys.length ? state.keys.map(function (k) {
+      var taken = k.app_id != null;
+      return '<label class="chk"><input type="checkbox" class="ap-key" value="' + k.id + '"' + (taken ? ' disabled' : '') + '><span>' +
+        esc(k.name) + (k.prefix ? ' <small>' + esc(k.prefix) + '…</small>' : '') + (taken ? ' <small>- counts for another app</small>' : '') + '</span></label>';
+    }).join('') : '<p class="note">This team has no API keys yet.</p>';
+  }
+  function pic(src, onRemove, label) {
+    var d = el('div', { class: 'pic' }, '<img alt="' + esc(label) + '" src="' + esc(src) + '"><button type="button" aria-label="Remove ' + esc(label) + '">✕</button>');
+    d.querySelector('button').addEventListener('click', onRemove);
+    return d;
+  }
+  function paintPics() {
+    var ic = document.getElementById('ap-icon'), sh = document.getElementById('ap-shots');
+    ic.innerHTML = ''; sh.innerHTML = '';
+    if (state.icon) ic.appendChild(pic(state.icon.preview_url, function () { state.icon = null; paintPics(); }, 'icon'));
+    else ic.appendChild(el('button', { type: 'button', class: 'pill', 'data-pick': 'ap-icon-file' }, 'Add icon'));
+    state.shots.forEach(function (s, i) { sh.appendChild(pic(s.preview_url, function () { state.shots.splice(i, 1); paintPics(); }, 'screenshot ' + (i + 1))); });
+    if (state.shots.length < 4) sh.appendChild(el('button', { type: 'button', class: 'pill', 'data-pick': 'ap-shot-file' }, state.shots.length ? 'Add another screenshot' : 'Add screenshot'));
+    body.querySelectorAll('[data-pick]').forEach(function (b) { b.addEventListener('click', function () { document.getElementById(b.dataset.pick).click(); }); });
+  }
+  function wireFile(id, kind) {
+    var input = document.getElementById(id), err = document.getElementById('ap-err');
+    input.addEventListener('change', function () {
+      var f = input.files[0]; input.value = '';
+      if (!f) return;
+      err.textContent = 'Uploading…';
+      json('/images/' + kind, { method: 'POST', headers: { 'content-type': f.type || 'application/octet-stream' }, body: f })
+        .then(function (d) { err.textContent = ''; if (kind === 'showcase_icon') state.icon = d; else state.shots.push(d); paintPics(); })
+        .catch(function (e) { err.textContent = e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.'; });
+    });
+  }
+  function val(id) { var n = document.getElementById(id); return n ? n.value.trim() : ''; }
+  function submit() {
+    var err = document.getElementById('ap-err'), btn = document.getElementById('ap-submit');
+    var payload = { name: val('ap-name'), url: val('ap-url'), tagline: val('ap-tagline'), description: val('ap-description'),
+      category: val('ap-category'), maker_name: val('ap-maker'), x_handle: val('ap-x'), launch_post_url: val('ap-post'),
+      icon_key: state.icon ? state.icon.key : null, shot_keys: state.shots.map(function (s) { return s.key; }) };
+    SHOW.forEach(function (s) { payload[s[0]] = document.getElementById('ap-' + s[0]).checked; });
+    var keyIds = Array.prototype.map.call(body.querySelectorAll('.ap-key:checked'), function (c) { return +c.value; });
+    if (source() === 'keys' && !keyIds.length) { err.textContent = 'Pick at least one API key, or count the whole team.'; return; }
+    btn.disabled = true; err.textContent = '';
+    var headers = { 'content-type': 'application/json' };
+    json('/showcase/teams/' + val('ap-team') + '/apps', { method: 'POST', headers: headers, body: JSON.stringify(payload) })
+      .then(function (app) {
+        // Where the activity comes from is not reviewed: it is set right after the application.
+        if (source() !== 'keys') return '';
+        return json('/showcase/apps/' + app.id + '/usage', { method: 'PUT', headers: headers, body: JSON.stringify({ source: 'keys', key_ids: keyIds }) })
+          .then(function () { return ''; }, function (e) { return '<p>Your API keys were not saved (' + esc(e.message) + '). Choose them in the dashboard.</p>'; });
+      })
+      .then(function (note) {
+        track('showcase_apply_submit', {});
+        message('<p><b>Submitted for review.</b></p><p>We will check it soon. You can follow its status, and edit it, in the dashboard: Team, Showcase.</p>' + note + '<p><a class="pill dark" href="/app#orgs/showcase">Open the dashboard</a></p>');
+      })
+      .catch(function (e) { btn.disabled = false; err.textContent = e.message.charAt(0).toUpperCase() + e.message.slice(1) + '.'; });
+  }
+  document.getElementById('applyOpen').addEventListener('click', open);
+  if (location.hash === '#apply') { history.replaceState(null, '', location.pathname + '#leaderboard'); open(); }
 })();
 
 /* ---- the wall: a one-off snapshot of posts about treg (media/showcase/wall.json), never refetched

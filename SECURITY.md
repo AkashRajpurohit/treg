@@ -95,6 +95,26 @@ configuration when archive mode is enabled and any storage switch selects R2. Th
 script accepts only `treg-archive-dev`, refuses CI, and skips absent credentials. It creates no
 cloud resources apart from one small test object. Production configuration belongs in the private ops project.
 
+## Picture storage (avatars and /showcase pictures)
+
+Pictures use their own credentials and buckets (`TREG_MEDIA_*`), never the archive's: a private
+STAGING bucket every upload lands in, and a PUBLIC bucket where treg publishes (an avatar once its
+owner sets it, a /showcase picture once staff approve it). treg writes and deletes only under `img/`
+in the public bucket, which may hold other files (page videos); never give that bucket a lifecycle
+rule that is not limited to its own prefix. Scope one token to these two buckets with object
+read/write access. The endpoint must be https; only `http://localhost`
+(a local MinIO) is accepted over plain HTTP.
+
+Every upload is checked before it is decoded (size cap, leading bytes must be PNG, JPEG or WebP; SVG
+and GIF are refused), decoded under a pixel cap, and re-drawn from its pixels into fixed sizes, so
+metadata and anything appended to the original are discarded. Files are named by the SHA-256 of the
+re-drawn picture: clients never supply a path, bucket, host or URL, and a name never changes
+meaning. Staged pictures are served only to signed-in people (`private, no-store`), the public
+bucket through a media domain or treg's `/media-files/`; bytes from treg's origin carry `nosniff`
+and `sandbox`. Picture storage I/O never holds a database connection. Give the staging bucket a
+lifecycle rule that expires objects after about 30 days; nothing else cleans it. Public pictures no
+row names any more are deleted by `treg-worker media sweep`.
+
 ## Known limitations (by design, documented on purpose)
 
 **Server runs do not yet have filesystem/network isolation.** The resource limits above cap denial of

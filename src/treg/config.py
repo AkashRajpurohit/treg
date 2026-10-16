@@ -603,6 +603,20 @@ class Settings(BaseSettings):
     archive_r2_read_timeout_s: float = Field(default=2.0, gt=0, le=120)
     archive_r2_terminal_attempts: int = Field(default=3, ge=1, le=5)
 
+    # Pictures (team and user avatars, /showcase leaderboard icons and screenshots): two S3-API
+    # buckets, separate from the archive's. Uploads land in the private STAGING bucket; publishing
+    # copies a file to the PUBLIC bucket, which `media_base_url` serves (a custom domain such as
+    # https://media.example.com). Off until endpoint, keys and both buckets are set: then uploads are
+    # refused and pages show initials. With no `media_base_url`, treg serves the public bucket
+    # itself at /media-files/. The endpoint must be https, except a local MinIO on localhost.
+    media_store_endpoint: str = ""
+    media_store_access_key_id: str = Field(default="", repr=False)
+    media_store_secret_access_key: str = Field(default="", repr=False)
+    media_staging_bucket: str = ""
+    media_public_bucket: str = ""
+    media_base_url: str = ""
+    media_store_timeout_s: float = Field(default=10.0, gt=0, le=60)
+
     # Comma-separated: exact endpoint IDs, "capability:<prefix>" families (capability:people.),
     # or "*" for every endpoint the policy allows (the default; an operator narrows it to ids or
     # families to stage a rollout). Empty means no serving, even in serve mode - the rollback

@@ -99,7 +99,7 @@ agents then built against a constitution that was wrong.
 |---|---|---|
 | `routers/` | HTTP and MCP translation in, response shape out | business rules, query orchestration, money |
 | `application/` | use-case sequencing, transaction boundaries, compensation, cross-domain composition | empty wrappers around one-domain CRUD |
-| `domain/` | rules explainable and testable alone: `identity`, `governance`, `connections`, `tools`, `catalog`, `capacity`, `money`, `asynctasks`, `feedback`, `hub` (a maker's tool made of tools: the manifest, the reference language, the graph) | routers, application, concrete SDKs |
+| `domain/` | rules explainable and testable alone: `identity`, `governance`, `connections`, `tools`, `catalog`, `capacity`, `money`, `asynctasks`, `feedback`, `hub` (a maker's tool made of tools: the manifest, the reference language, the graph), `showcase` (leaderboard applications, tiers, badges, consent), `images` (picture kinds, sizes and limits) | routers, application, concrete SDKs |
 | `infra/` | DB engine and sessions, crypto, upstream relay and SSRF, ratestore, the shared key-value store, email, Stripe | decisions |
 
 - Domains do not import each other, with three sanctioned edges: `governance -> identity`,
@@ -125,6 +125,12 @@ agents then built against a constitution that was wrong.
 - **Feedback handling.** This repo owns `FeedbackHandling` and `FeedbackHandlingEvent` models and
   migrations; the private admin service is their only runtime writer. Original reports remain
   owned by the feedback domain. See `docs/context/architecture/feedback.md`.
+- **Showcase leaderboard and pictures.** `application/showcase.py` is the only writer of
+  `ShowcaseApp`, `ShowcaseAppEvent`, `ShowcaseAppKey`, `ShowcaseWeek`, `ShowcaseCursor` and `ShowcaseVote` (team
+  deletion removes them with the team, as it does every team's rows); the private admin acts
+  through its staff API (`/admin/showcase/*`), never the tables. `application/images.py` is the
+  only writer of `user.avatar_key` and `org.avatar_key`. The public leaderboard never returns a
+  team, an exact count or money. See `docs/context/architecture/showcase.md`.
 - **The call runtime is self-contained.** `src/treg/application/call/` depends on no management
   code (routes, login, OAuth consent, Stripe top-up), reads only membership, deny rules,
   credentials, catalog prices and balances, and writes only what `tests/test_call_architecture.py`

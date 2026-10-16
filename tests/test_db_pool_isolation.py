@@ -77,6 +77,10 @@ EXPECTED_MAKERS: dict[str, set[str]] = {
     "application/catalog_stats.py": {API},
     # Runs only inside `treg-worker spend rollup`; same reasoning as `worker.py`.
     "application/key_spend_rollup.py": {API},
+    # Short reads and single writes per request, each closed before any picture storage I/O; the
+    # activity fold runs only inside `treg-worker showcase activity`, same reasoning as `worker.py`.
+    "application/showcase.py": {API},
+    "application/images.py": {API},
     # Runs only inside `treg-worker admin purge-evidence`; same reasoning as `worker.py`.
     "application/evidence_retention.py": {API},
     # Off-request writers.

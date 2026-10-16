@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import client_ip, crypto
 from ..application import auth as auth_use_cases
 from ..application import signup
+from ..application import images
 from ..application.onboard import first_run
 from ..application.auth import (
     CLI_APPROVE_MAX_TRIES,
@@ -670,7 +671,8 @@ async def auth_me(
     except auth_use_cases.IdentityLookupError as exc:
         raise HTTPException(status_code=401, detail="no session") from exc
     out = {"email": identity.email, "is_superadmin": identity.is_superadmin, "onboarded": identity.onboarded,
-           "github": identity.github}
+           "github": identity.github, "avatar_url": images.public_url(identity.avatar_key),
+           "uploads": images.enabled()}
     if first_run.enabled(identity.email):
         out["onboarding_v2"] = True
     elif not identity.onboarded and first_run.in_experiment(identity.email):

@@ -3,6 +3,11 @@ title: The web dashboard (served from FastAPI)
 status: shipped
 sources:
   - frontend/src/App.vue
+  - frontend/src/pages/team/TeamShowcase.vue
+  - frontend/src/pages/team/TeamAvatar.vue
+  - frontend/src/dialogs/UserAvatarDialog.vue
+  - frontend/src/components/ui/Avatar.vue
+  - frontend/src/images.ts
   - frontend/src/views.ts
   - frontend/src/state/controller.js
   - frontend/src/state/agents.js
@@ -216,3 +221,13 @@ land, and the address then names the tab. Opening Activity without a tab still l
   never rounded up. Its sides never shrink below their content, so the nav scrolls rather than overlaps.
 - **Referral** leads to the friend credit and the invite-only affiliate tier. The link is never gated
   behind paying, and opening `GET /referrals` runs the payout sweep ([money](../architecture/money.md)).
+
+## Showcase tab and pictures
+
+The Team page has a Showcase tab (owners and admins, `#orgs/showcase`): the team's /showcase
+leaderboard entries with their review status, "N of 5 used", apply and edit with an icon and up to
+four screenshots, consent checkboxes and withdraw; a 409 keeps the draft and offers a reload. Team
+settings uploads the team's picture; the account menu's "Your picture" dialog sets the person's
+own. Uploads are raw bodies to `POST /images/{kind}`; with uploads off (`/auth/me` `uploads:
+false`) the picture controls are hidden. `Avatar.vue` shows a picture or initials wherever a team
+or person is named. See [showcase](../architecture/showcase.md).

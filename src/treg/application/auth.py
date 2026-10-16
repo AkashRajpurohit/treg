@@ -195,6 +195,7 @@ class CurrentIdentity:
     org_id: int | None = None
     org: str | None = None
     role: str | None = None
+    avatar_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -741,6 +742,7 @@ async def current_identity(x_treg_token: str, session_cookie: str) -> CurrentIde
             role = membership.role
         return CurrentIdentity(
             email=user.email,
+            avatar_key=user.avatar_key,
             is_superadmin=user.is_superadmin,
             onboarded=user.onboarded,
             github=bool(get_settings().github_client_id),
