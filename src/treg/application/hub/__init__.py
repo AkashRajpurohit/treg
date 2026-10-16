@@ -795,7 +795,7 @@ async def own_hosts(db: AsyncSession, row: HubTool) -> list[str]:
 
 
 def treg_hosts() -> set[str]:
-    """treg's own hosts: this deployment's public URL and the hosted service's names. A team's own tool
+    """treg's own hosts: this deployment's public URL and explicitly configured aliases. A team's own tool
     pointed at one of them turns a hub tool into a relay to another hub tool, which the depth-one rule
     and the review exist to stop (hub simulation run 3: `treg-relay` -> https://<treg>/call)."""
     from urllib.parse import urlsplit

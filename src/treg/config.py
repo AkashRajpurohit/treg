@@ -675,7 +675,7 @@ class Settings(BaseSettings):
     # treg's own public base URL — used to build the OAuth callback (must be whitelisted in the
     # provider's OAuth app). Self-hosting? Set TREG_PUBLIC_URL to your deployment's URL.
     public_url: str = "https://treg.to"
-    public_host_aliases: tuple[str, ...] = PUBLIC_HOST_ALIASES
+    public_host_aliases: tuple[str, ...] = ()
 
     @field_validator("public_host_aliases")
     @classmethod

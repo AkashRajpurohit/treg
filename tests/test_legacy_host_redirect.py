@@ -26,6 +26,7 @@ async def raw_client(monkeypatch):
     """No auth, no upstream — routing behavior only. Host is set per-request. The test env's
     public_url is not production's; pin it so the Location assertions mean something."""
     monkeypatch.setenv("TREG_PUBLIC_URL", "https://treg.to")
+    monkeypatch.setenv("TREG_PUBLIC_HOST_ALIASES", '["treg.superdesign.dev","treg.to"]')
     get_settings.cache_clear()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://registry") as c:
         yield c
@@ -102,7 +103,7 @@ async def test_canonical_host_is_untouched(raw_client):
     assert r.status_code == 200
 
 
-async def test_legacy_mcp_host_and_oauth_audience_stay_valid():
+async def test_legacy_mcp_host_and_oauth_audience_stay_valid(raw_client):
     # The transport allow-list and the token-audience set must both keep honouring the legacy name —
     # every pre-move .mcp.json and OAuth grant depends on it.
     from treg import mcp
@@ -194,6 +195,7 @@ async def test_env_revert_is_a_complete_rollback(monkeypatch):
     from treg.routers.auth import _login_callback_base
 
     monkeypatch.setenv("TREG_PUBLIC_URL", "https://treg.superdesign.dev")
+    monkeypatch.setenv("TREG_PUBLIC_HOST_ALIASES", '["treg.superdesign.dev","treg.to"]')
     get_settings.cache_clear()
     try:
         # Recognition stays symmetric: treg.to tokens/hosts/origins remain valid.
@@ -208,5 +210,28 @@ async def test_env_revert_is_a_complete_rollback(monkeypatch):
             for host in ("treg.superdesign.dev", "treg.to"):
                 r = await c.get("/", headers={"host": host})
                 assert r.status_code == 200, host
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_self_hosted_defaults_accept_only_the_configured_public_host(monkeypatch):
+    from treg import mcp
+    from treg.application.hub import treg_hosts
+    from treg.domain.identity import mcp_oauth
+    from treg.infra import turnstile
+
+    monkeypatch.delenv("TREG_PUBLIC_HOST_ALIASES", raising=False)
+    monkeypatch.setenv("TREG_PUBLIC_URL", "https://registry.example")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().public_host_aliases == ()
+        assert mcp._allowed_hosts().count("registry.example") == 1
+        assert mcp._allowed_origins().count("https://registry.example") == 1
+        assert mcp_oauth.mcp_resource_audiences() == {"https://registry.example/mcp/"}
+        assert treg_hosts() == {"registry.example"}
+        assert turnstile.hostnames() == {"registry.example"}
+        for host in ("treg.to", "treg.superdesign.dev"):
+            assert mcp._allowed_hosts().count(host) == 0
+            assert mcp._allowed_origins().count(f"https://{host}") == 0
     finally:
         get_settings.cache_clear()
