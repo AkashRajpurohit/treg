@@ -56,7 +56,7 @@ export default {
           <summary :aria-label="'Account: '+me"><span class="rd-avatar" style="overflow:hidden"><img v-if="meAvatar && !meAvatarBroken" :src="meAvatar" alt="" style="width:100%;height:100%;object-fit:cover" @error="meAvatarBroken=true"><template v-else>{{initials}}</template></span></summary>
           <div class="rd-account-panel">
             <p class="rd-email">{{me}}</p>
-            <button @click="avatarDialog=true; elements.accountMenu.open=false">Your picture</button>
+            <button @click="avatarDialog=true; elements.accountMenu.open=false">Your avatar</button>
             <button @click="toggleTheme">{{theme==='dark'?'Light appearance':'Dark appearance'}}</button>
             <button v-if="billing" @click="orgTab='billing'; go('orgs'); elements.accountMenu.open=false">Billing</button>
             <button v-if="isAdmin" @click="go('admin'); elements.accountMenu.open=false">Admin</button>

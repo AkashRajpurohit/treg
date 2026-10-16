@@ -153,7 +153,7 @@ export default {
         else if (d.shots.length < MAX_SHOTS && !d.shots.some(s => s.key === pic.key)) d.shots = [...d.shots, pic]
       } catch (e) {
         if (e.status === 503) this.scUploadsOff = true
-        else this.scUpErr = e.detail || 'The picture could not be uploaded.'
+        else this.scUpErr = e.detail || 'The image could not be uploaded.'
       } finally { this.scUpBusy = '' }
     },
     scMove(i, by) { this.scForm.draft.shots = moved(this.scForm.draft.shots, i, by) },
@@ -244,8 +244,8 @@ export default {
             </section>
 
             <section class="sc-section" aria-labelledby="sc-pictures">
-              <h3 id="sc-pictures" class="lbl">Pictures</h3>
-              <p v-if="!scCanUpload" class="sub sc-off" role="status">Picture uploads are not enabled on this registry. You can apply without pictures.</p>
+              <h3 id="sc-pictures" class="lbl">Images</h3>
+              <p v-if="!scCanUpload" class="sub sc-off" role="status">Image uploads are not enabled on this registry. You can apply without images.</p>
               <template v-else>
                 <div class="sc-iconrow">
                   <div class="sc-iconbox">
