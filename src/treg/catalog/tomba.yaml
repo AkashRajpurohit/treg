@@ -551,6 +551,7 @@ endpoints:
     input:
       queryParams:
         domain: {type: string, required: true, note: "seed company domain, no protocol or www", example: "stripe.com"}
+      note: "Tomba's own log shows an identical repeat of a seed within the month at cost 0, but treg bills a repeated call at the listed price unless the archive answers it (then at the archive repeat price): keep the first answer rather than asking again."
     test_request:
       queryParams: {domain: "stripe.com"}
     cost:
