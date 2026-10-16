@@ -91,7 +91,7 @@ source never holds the others back; a busy source's first four weeks are counted
 runs. A team that counts the whole team and also has keyed apps has those keys' calls read twice,
 once per source; the batches are small and indexed. Approval counts nothing: a newly approved app
 joins the activity boards after the next run, so the run is scheduled hourly. A team's whole-week
-query is not an option: one busy team's week is hundreds of thousands of rows, each read from the
+query is not an option: a busy team's week can be a very large number of rows, each read from the
 table because the `(org_id, created_at)` index does not hold the provider or tool. Upvotes are live.
 
 ## What leaves the server

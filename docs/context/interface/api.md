@@ -122,8 +122,10 @@ quota, 403 sandbox. Not metered. See [media](../architecture/media.md).
 preview_url}`. `PUT /me/avatar` and `PUT /orgs/{id}/avatar` (owner or admin) set or clear (`null`)
 a picture; `/auth/me`, `/orgs` and the member list answer `avatar_url` (null = initials).
 Refusals: 413 size, 415-like 422 type or dimensions, 429 rate, 503 when picture storage is not
-configured. The /showcase leaderboard (`/showcase/leaderboard`, `/showcase/vote`, makers'
-`/showcase/teams/{id}/apps`, staff `/admin/showcase/*`) is hosted only. See
+configured. Uploads and avatar changes refuse a cross-site Origin. The /showcase leaderboard
+(`/showcase/leaderboard`, `/showcase/vote` with `{id, up}`, makers' `/showcase/teams/{id}/apps`,
+`/showcase/teams/{id}/keys`, `PUT /showcase/apps/{id}/usage`, `POST /showcase/apps/{id}/remove`,
+staff `/admin/showcase/*`) is hosted only. See
 [showcase](../architecture/showcase.md).
 
 ## Provider resources
