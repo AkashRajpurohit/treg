@@ -5014,6 +5014,9 @@ def _cost_label(cost) -> str:
     if cost.get("display_unit") and cost.get("display_usd") is not None:
         return (cost.get("display_prefix", "") + f"${cost['display_usd']:.3g}" + cost.get("display_suffix", "")
                 + "/" + cost["display_unit"])
+    span = _routed_span(cost)
+    if span:
+        return span
     kind = (cost.get("type") or "").replace("_", " ")
     value, currency = cost.get("value"), cost.get("currency") or ""
     if value in (None, "") and isinstance(cost.get("table"), list):
@@ -5023,10 +5026,9 @@ def _cost_label(cost) -> str:
         return "free"
     if value in (None, ""):
         return kind or "-"
-    # `quota_rows` prices a CALL, in rows — so the denominator is "call" and the row count shows up
-    # as the native amount ("1 quota row/call"), not as "1 quota row/quota rows".
-    unit = {"per call": "call", "per result": "result", "per success": "success",
-            "quota rows": "call"}.get(kind, kind or "call")
+    # `quota_rows` counts like `per_result` (per target asked about, or per row returned), so the
+    # denominator is "result" and the row count shows up as the native amount ("1 quota row").
+    unit = _COST_UNITS.get(kind, kind or "call")
     # unified USD display: the server computes `usd` from the billing currency (or, for
     # `currency: credit`, the provider's credit rate) via fx.yaml. The USD number leads so rows
     # stay comparable; the native amount trails in parentheses as the secondary fact.
@@ -5229,6 +5231,23 @@ def _print_catalog_endpoint(e: dict, connected: set = frozenset(), idw: int = 46
     print(f"    {_clip(e['id'], idw):<{idw}} {e['method']:<7} {_cost_usd(e.get('cost')):<16} {mark}  {_clip(e.get('name') or e.get('summary') or '', 60)}")
 
 
+# A cost type's denominator. `quota_rows` reserves and settles like `per_result` (a Moz row per
+# target asked about, or per link returned), so it reads per result, never per call.
+_COST_UNITS = {"per_call": "call", "per_result": "result", "per_success": "success", "quota_rows": "result",
+               "per call": "call", "per result": "result", "per success": "success", "quota rows": "result"}
+
+
+def _routed_span(cost: dict) -> str:
+    """A routed row's price: its children's hit prices as a range. The floor alone read as "free"
+    (or as half a cent where the dearest child bills 75 cents), so a range always shows whole."""
+    span = cost.get("range_usd")
+    if not (isinstance(span, list) and len(span) == 2 and span[0] < span[1]):
+        return ""
+    unit = _COST_UNITS.get(cost.get("type"), "call")
+    return (f"${span[0]:.3g}-${span[1]:.3g}/{unit}"
+            + (", misses billed" if cost.get("misses_billed") else ""))
+
+
 def _cost_usd(cost: dict | None) -> str:
     """Cost in ONE currency so a search table is comparable down the column — the provider's own
     unit (CNY, or a provider-scoped credit) makes unlike rows look like the same number. Narrow
@@ -5238,13 +5257,15 @@ def _cost_usd(cost: dict | None) -> str:
     if cost.get("display_unit") and cost.get("display_usd") is not None:
         return (cost.get("display_prefix", "") + f"${cost['display_usd']:.3g}" + cost.get("display_suffix", "")
                 + "/" + cost["display_unit"])
+    span = _routed_span(cost)
+    if span:
+        return span
     usd = cost.get("usd")
     if usd is None:
         # no rate for this unit (a provider that publishes no per-credit price): the native
         # amount, labelled as such, beats an invented dollar figure
         return _cost_label(cost)
-    unit = {"per_call": "call", "per_result": "result", "per_success": "success",
-            "per call": "call", "per result": "result", "per success": "success"}.get(cost.get("type"), "call")
+    unit = _COST_UNITS.get(cost.get("type"), "call")
     # 3 significant digits: no decision turns on the 5th decimal of a sub-cent price, and the full
     # value (plus the provider's own currency) is one `treg catalog get` away
     if not usd:

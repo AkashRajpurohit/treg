@@ -129,6 +129,30 @@ def test_a_route_false_adapter_is_never_routed():
     assert C.parse_adapters({"adapters": {"c.find": {"route": False}}})["c.find"].route is False
 
 
+def test_a_routed_row_varies_when_its_childrens_hit_prices_span_widely():
+    """Per-success children bill no miss, but a floor of half a cent hid children that bill 75
+    cents a hit: past twice the floor the row quotes its range, not one figure."""
+    from treg.domain.catalog import store as catalog_store
+    from treg.domain.catalog.routing import contracts as C, synthetic
+
+    contract = C.Contract(capability="x.find", summary="", identity=(("q",),), identity_types={"q": "str"},
+                          derive={}, filters={}, output={"rows": {"required": True}}, miss="rows == []")
+    adapters = {eid: C.Adapter(eid, (("q",),), {"q": "body.q"}, {"rows": "rows"}, "rows == []",
+                               route=True, verified=True) for eid in ("a.find", "b.find")}
+
+    def row(high):
+        prices = {"a.find": 0.005, "b.find": high}
+        endpoints = [{"id": eid, "provider": eid.split(".")[0], "cost": {"type": "per_success"}} for eid in adapters]
+        return synthetic.routed_endpoint(contract, endpoints, adapters,
+                                         lambda cost, provider: {"usd": prices[f"{provider}.find"]})
+
+    cat = catalog_store.load()
+    wide, near = row(0.75)["cost"], row(0.009)["cost"]
+    assert wide["varies"] and wide["range_usd"] == [0.005, 0.75] and "misses_billed" not in wide
+    assert cat.advertised_usd(cat.cost_view(wide, "treg")) is None
+    assert "varies" not in near and near["range_usd"] == [0.005, 0.009] and cat.advertised_usd(cat.cost_view(near, "treg")) == 0.005
+
+
 def test_every_shipped_adapter_round_trips_its_fixture():
     cat = catalog_store.load()
     bad = {eid: a.verify_note for eid, a in cat.adapters.items() if not a.verified}

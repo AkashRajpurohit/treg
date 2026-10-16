@@ -1315,8 +1315,9 @@ Do these steps in order; each has a hard success criterion.
    they ride (path/query/body). Copy real constraints ("one of A|B") into `note`.
 5. **Cost.** Record the provider's price model per endpoint from their pricing page — with its
    provenance (`source`, `source_url`, `checked`, `confidence`) and its unit (`per`, `unit`), per
-   "Cost" above. `quota_rows` is for row-quota APIs (Moz). Unknown exact value → `value: null` +
-   `confidence: unknown` + a `note` saying why. If the provider exposes its rate card as an
+   "Cost" above. `quota_rows` is for row-quota APIs (Moz); it reserves, settles and is labelled
+   like `per_result` (a row per target asked about or per row returned, never per call). Unknown
+   exact value → `value: null` + `confidence: unknown` + a `note` saying why. If the provider exposes its rate card as an
    endpoint, prefer it over the pricing page and record it as `source: rate_card_api`: it is
    re-checkable, which is what lets treg serve the route on its own key.
 6. **Test-request.** Give every endpoint a `test_request` that is CHEAP (smallest limit, one item,
@@ -2170,10 +2171,14 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   `treg.<capability>` (`store.load` skips a `routed: false` contract) (`provider: treg`, `kind: routed`, `POST /<capability>`, `input` = the
   contract, `cost` = the children's range, `routed_children`, `miss_billed_by` = the children priced
   per call or per result, whose provider bills an answer treg judges a miss: the caller pays those
-  too, and the cost note says so). When `miss_billed_by` is non-empty the cost carries `varies:
-  true` and `advertised_usd` quotes `usd_per_call: null`: the $0 floor of the range read as "free"
-  to an agent that then paid for hundreds of billed misses. The note leads with "NOT free" and
-  carries the range. Never hand-written; not in any
+  too, and the cost note says so). The cost carries the children's hit prices as `range_usd`
+  and, when `miss_billed_by` is non-empty, `misses_billed: true`; every price label (web, CLI,
+  dashboard, MCP `usd_range`) shows that range instead of the floor. When misses are billed or the
+  dearest child costs more than twice the cheapest, the cost also carries `varies: true` and
+  `advertised_usd` quotes `usd_per_call: null`: the $0 floor of the range read as "free" to an
+  agent that then paid for hundreds of billed misses, and a phone find's half-cent floor hid
+  children that bill far more. The note leads with "NOT free" when misses are billed and carries
+  the range. Never hand-written; not in any
   provider file.
   `catalog_get` on it returns the contract and the ranked **plan** (the quote) —
   nothing is reserved.

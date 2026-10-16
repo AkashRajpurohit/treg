@@ -114,13 +114,17 @@ def _price_label(cost: dict | None) -> str:
     if cost.get("display_unit") and cost.get("display_usd") is not None:
         return (cost.get("display_prefix", "") + _usd_short(cost["display_usd"]) + cost.get("display_suffix", "")
                 + "/" + cost["display_unit"])
+    unit = {"per_call": "call", "per_result": "result", "per_success": "success",
+            "quota_rows": "result"}.get(cost.get("type"), "call")
+    span = cost.get("range_usd")  # a routed row: its children's hit prices, never the floor alone
+    if isinstance(span, list) and len(span) == 2 and span[0] < span[1]:
+        low = "$0" if not span[0] else _usd_short(span[0])
+        return f"{low}-{_usd_short(span[1])}/{unit}" + (", misses billed" if cost.get("misses_billed") else "")
     usd = cost.get("usd")
     if usd is None:
         return "own account"     # no rate published — never invent a dollar figure
     if not usd:
         return "free"
-    unit = {"per_call": "call", "per_result": "result", "per_success": "success"}.get(
-        cost.get("type"), "call")
     low = cost.get("usd_min")  # a price table: cheapest row up to the validated ceiling
     if isinstance(low, (int, float)) and low < usd:
         return f"{_usd_short(low)}-{_usd_short(usd)}/{unit}"
@@ -1115,7 +1119,7 @@ def _uc_agent() -> tuple[str, str]:
     return slug, agent_pages.AGENTS[slug]["name"]
 
 
-_UNIT_WORDS = {"per_success": "found", "per_call": "call", "per_result": "result"}
+_UNIT_WORDS = {"per_success": "found", "per_call": "call", "per_result": "result", "quota_rows": "result"}
 
 
 def _uc_providers(cat, eps: list[dict], obs: dict) -> list[dict]:

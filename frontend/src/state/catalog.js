@@ -182,7 +182,9 @@ platInitial(pl){ return (this.platShort(pl.label)||pl.slug||'?').slice(0,1).toUp
       const s=n.toPrecision(2);
       if(s.indexOf('e')>=0) return n.toFixed(8).replace(/0+$/,'').replace(/\.$/,'');  // < 1e-6
       return s.replace(/0+$/,'').replace(/\.$/,''); },
-priceUnit(type){ return {per_call:'call', per_success:'success', per_result:'result', quota_rows:'row'}[type]
+// `quota_rows` reserves and settles like per_result (a Moz row per target asked about, or per link
+    // returned), so its dollar figure is per result, never per call.
+    priceUnit(type){ return {per_call:'call', per_success:'success', per_result:'result', quota_rows:'result'}[type]
                         || String(type||'').replace(/_/g,' '); },
 // "¥0.10" — the provider's own figure, shown next to the converted one, never instead of it.
     nativeAmount(c){
@@ -322,7 +324,7 @@ capCheapest(eps){
         const free=this.capFree(e), n=free?0:this.costUsd(e.cost);
         if(n==null) continue;
         if(best===null || n<best.n)
-          best={n, label:(free||n===0)?'free':this.costLabel(e.cost), native:(free||n===0||e.cost.display_unit)?'':this.nativeAmount(e.cost)};
+          best={n, label:(free||(n===0&&!this.costSpan(e.cost)))?'free':this.costLabel(e.cost), native:(free||n===0||e.cost.display_unit)?'':this.nativeAmount(e.cost)};
       }
       return best; },
 // "See Zhihu, Toutiao, and 6 more" — two names so the row says what KIND of thing is hiding,
@@ -436,6 +438,8 @@ setEpTab(e, tab){
     costLabel(c){
       if(!c || !c.type) return '—';
       if(c.display_unit && typeof c.display_usd==='number') return (c.display_prefix||'')+'$'+this.usdNum(c.display_usd)+(c.display_suffix||'')+'/'+c.display_unit;
+      const span=this.costSpan(c);
+      if(span) return span;
       if(c.type==='free') return 'free';
       // Known billing unit, unpublished number: say which, and where the number lives. A bare
       // "per success" reads as free, and "—" hides that we do know how it's metered.
@@ -448,7 +452,7 @@ setEpTab(e, tab){
       // A published number the FX table can't convert (an unknown currency) still beats silence —
       // fall back to the native figure rather than dropping the price entirely.
       if(typeof c.usd!=='number') return this.nativeAmount(c)+'/'+this.priceUnit(c.type);
-      const unit=(c.type==='quota_rows'?'call':this.priceUnit(c.type));
+      const unit=this.priceUnit(c.type);
       // A duration-priced table (video models) is quoted per second, the way the model is sold.
       if(c.rate_unit && typeof c.rate_usd==='number'){
         const lo=c.rate_usd_min, hi=c.rate_usd;
@@ -458,4 +462,11 @@ setEpTab(e, tab){
       // is otherwise one word, and a phone-width price cell cannot hold it.
       if(typeof c.usd_min==='number' && c.usd_min<c.usd) return '$'+this.usdNum(c.usd_min)+'-\u200b$'+this.usdNum(c.usd)+'/'+unit;
       return '$'+this.usdNum(c.usd)+'/'+unit; },
+// A routed row's price: its children's hit prices as a range, never the floor alone (a $0 floor
+    // read as "free" on a job whose children bill their misses). '' when the row has no range.
+    costSpan(c){
+      const r=c && c.range_usd;
+      if(!Array.isArray(r) || r.length!==2 || !(r[0]<r[1])) return '';
+      return '$'+this.usdNum(r[0])+'-\u200b$'+this.usdNum(r[1])+'/'+this.priceUnit(c.type)
+        +(c.misses_billed?', misses billed':''); },
 }

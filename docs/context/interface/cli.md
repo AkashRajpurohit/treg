@@ -613,7 +613,9 @@ be dropped at exit; telemetry failures are silent and preserve command output an
 `_cost_label` and `_cost_usd` consume the same computed display USD/unit/suffix fields as the web
 pages. Grouped prices show the full block amount, and variable prices show a plus sign. The source
 is provider-neutral `cost.display` catalog metadata. Missing metadata retains the existing format.
-CLI call billing still uses the shared server call path.
+A routed row prints its children's `range_usd` (", misses billed" when `misses_billed`), never the
+floor alone, and `quota_rows` reads per result. CLI call billing still uses the shared server call
+path.
 
 
 ## Released CLI compatibility

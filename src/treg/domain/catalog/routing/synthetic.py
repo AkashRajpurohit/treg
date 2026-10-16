@@ -9,6 +9,9 @@ ROUTED_KIND = "routed"
 _EXAMPLE_VALUES = {"full_name": "Patrick Collison", "first_name": "Patrick", "last_name": "Collison",
                    "domain": "stripe.com", "linkedin_url": "https://www.linkedin.com/in/patrickcollison"}
 ROUTED_PROVIDER = "treg"
+# Past this ratio of the dearest child's hit price to the cheapest one, the floor is no quote: the
+# cheapest child rarely serves alone, and a phone find shown at half a cent served at 75 cents.
+_WIDE_SPAN = 2
 
 
 def _best_variant(contract: Contract, kids: list[dict], adapters: dict[str, Adapter]) -> tuple[str, ...]:
@@ -35,6 +38,8 @@ def routed_endpoint(contract: Contract, children: list[dict], adapters: dict[str
     # are free on a miss.
     billed_miss = sorted(e["id"] for e in kids
                          if ((e.get("cost") or {}).get("type") not in ("per_success", "free", None)))
+    # Billed misses, or hit prices far apart: either way the floor misleads as a single quote.
+    varies = bool(billed_miss) or (lo is not None and hi > lo * _WIDE_SPAN)
     max_usd = contract.default_max_cost_usd or 1.00
     body = {}
     variants = " | ".join("{" + ", ".join(v) + "}" for v in contract.identity)
@@ -75,9 +80,12 @@ def routed_endpoint(contract: Contract, children: list[dict], adapters: dict[str
         "test_request": {"body": {k: _EXAMPLE_VALUES.get(k, "…") for k in _best_variant(contract, kids, adapters)}} if contract.identity else {},
         "cost": {"type": "per_success", "value": lo, "currency": "USD", "per": 1, "unit": "call",
                  "source": "inferred", "confidence": "documented", "checked": None,
-                 # No single quote is honest when children bill their misses: an agent read the
-                 # $0 floor as "free" and ran hundreds of billed searches. Quote nothing.
-                 **({"varies": True} if billed_miss else {}),
+                 # No single quote is honest when children bill their misses (an agent read the
+                 # $0 floor as "free" and ran hundreds of billed searches) or when their hit
+                 # prices span widely. Quote the range, never the floor alone.
+                 **({"varies": True} if varies else {}),
+                 **({"range_usd": [lo, hi]} if lo is not None else {}),
+                 **({"misses_billed": True} if billed_miss else {}),
                  "note": (((f"NOT free: misses are billed too. " if billed_miss else "")
                            + f"the children's range ${lo:g}–${hi:g} per hit, 0% markup; you pay the child that served "
                            f"AND every child tried before it that bills a miss ({len(billed_miss)} of {len(kids)} do), "

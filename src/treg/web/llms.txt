@@ -289,8 +289,8 @@ or `linkedin_url`) and treg runs the best child — your own keys first, then ch
 answers `{output, raw, _treg: {served_by, tried, charged_micro}}` with `X-Treg-Served-By`. A
 provider error OR a miss falls through to the next provider, cheapest first, within
 `X-Treg-Route-Max-Cost` (default $1 per call; misses on per-success providers are free, others bill
-them, so a routed row quotes `usd_per_call: null` rather than $0 — cap bulk runs) — send
-`X-Treg-Route-Waterfall: 0` to stop at the first miss. When the provider that served could not
+them, so a routed row quotes its children's `usd_range` and `usd_per_call: null` rather than $0 —
+cap bulk runs) — send `X-Treg-Route-Waterfall: 0` to stop at the first miss. When the provider that served could not
 apply a filter you sent, the answer says so in `X-Treg-Ignored-Filters` and `_treg.ignored_filters`
 (post-filter the rows, or say why they are off); send `X-Treg-Route-Strict-Filters: 1` to be refused
 with a 422 (nothing charged) instead of getting the looser answer. `catalog_get` on the routed id

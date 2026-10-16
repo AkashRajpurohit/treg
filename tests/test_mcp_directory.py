@@ -325,6 +325,20 @@ async def test_team_and_directory_catalog_search_results_and_prices_match(client
     assert "catalog_call_write" in directory["next"]
 
 
+@pytest.mark.parametrize('path', ['/mcp/', '/mcp/v2/'])
+async def test_a_routed_search_row_quotes_its_childrens_range(clients, path):
+    """A routed row whose children bill misses quotes `usd_per_call: null`; without the range
+    beside it the agent saw no price at all on the step where it chooses."""
+    async with paired_mcp_session() as client:
+        out = await _call_tool(client, "catalog_search", {"query": "find leads", "limit": 10},
+                               clients.headers["X-Treg-Token"], path=path)
+    row = next(r for r in out["results"] if r["endpoint_id"] == "treg.people.search")
+    low, high = row["usd_range"]
+    assert row["usd_per_call"] is None and row["misses_billed"] is True and low < high
+    child = next(r for r in out["results"] if r.get("usd_per_call") is not None)
+    assert child.get("usd_range") is None and child.get("misses_billed") is None
+
+
 async def test_team_and_directory_endpoint_details_and_balance_match(clients):
     from treg.application import catalog_stats
     from treg.infra.db import session_maker

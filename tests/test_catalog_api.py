@@ -1147,6 +1147,36 @@ def test_generic_display_prices_match_web_and_cli():
     assert _price_label(maximum) == _cost_usd(maximum) == _cost_label(maximum) == 'up to $0.064/call'
 
 
+async def test_a_routed_row_is_priced_as_its_childrens_range_on_every_surface(clients: AsyncClient, monkeypatch):
+    """A routed row's cost is its cheapest child's hit price. Read alone, a $0 floor printed "free"
+    on the web and CLI for jobs whose children bill their misses, so every label shows the range."""
+    from treg.routers.web import _price_label
+    from treg.cli import _cost_usd, _cost_label
+    rows = (await clients.get("/catalog/search", params={"q": "find leads"})).json()["results"]
+    cost = next(r for r in rows if r["id"] == "treg.people.search")["cost"]
+    low, high = cost["range_usd"]
+    assert cost["varies"] and cost["misses_billed"] and low < high
+    label = _price_label(cost)
+    assert label == _cost_usd(cost) == _cost_label(cost)
+    assert label.endswith("/success, misses billed") and "free" not in label
+    from fastapi.responses import HTMLResponse
+    from treg.routers import web
+    # the shelf's no-JS text, without needing a built dashboard around it
+    monkeypatch.setattr(web, "_spa_catalog_page", lambda *args: HTMLResponse(args[-1]))
+    page = (await clients.get("/catalog/people")).text
+    assert label in page
+
+
+def test_quota_rows_reads_per_result_not_per_call():
+    """A Moz row is one per target asked about or per row returned; it reserves and settles like
+    per_result, so a label "/call" undersold a 50-target call fifty times."""
+    from treg.routers.web import _price_label
+    from treg.cli import _cost_usd, _cost_label
+    cat = cs.load()
+    cost = cat.cost_view({"type": "quota_rows", "value": 2, "currency": "USD", "unit": "quota_row"}, "any")
+    assert _price_label(cost) == _cost_usd(cost) == _cost_label(cost) == "$2/result"
+
+
 async def test_every_comparison_page_in_the_sitemap_serves(clients):
     """A capability several providers serve on a shelf has a public comparison page
     (/catalog/<slug>/<key>), listed in the sitemap by the same rule the shelf uses for its comparison

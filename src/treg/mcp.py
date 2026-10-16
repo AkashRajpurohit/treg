@@ -363,6 +363,8 @@ class SearchResult(TypedDict, total=False):
     job: str | None              # a judged answer: the job (capability) this row does
     more_providers: int | None   # a judged answer, on a job's first row: vendors of it the page left out
     usd_per_call: float | None
+    usd_range: list[float] | None  # a routed row: its children's hit prices, low to high (usd_per_call is null when they vary)
+    misses_billed: bool | None     # a routed row: some children bill a miss too, so a call can cost more than one hit
     no_key_needed: bool | None
     added: str | None            # the UTC day the tool reached the catalog (YYYY-MM-DD); null on a routed row
     score: float | None          # the lexical score; null on a judged answer (no probability is shown)
@@ -532,6 +534,15 @@ def _bearer(ctx: Context) -> str:
     _caller_ip.set(client_ip.from_headers(headers, None) if headers else "")
     raw = headers.get("authorization") or headers.get("Authorization") or ""
     return raw.removeprefix("Bearer ").removeprefix("bearer ").strip()
+
+
+def _price_range(cost: dict) -> dict:
+    """A routed row's children's hit prices, beside `usd_per_call` (null when they vary): without
+    the range an agent saw no price at all, and the floor alone had read as "free"."""
+    span = cost.get("range_usd")
+    if not (isinstance(span, list) and len(span) == 2 and span[0] < span[1]):
+        return {}
+    return {"usd_range": span, **({"misses_billed": True} if cost.get("misses_billed") else {})}
 
 
 def _without_purchase_pointers(body: Any) -> Any:
@@ -912,6 +923,7 @@ async def _catalog_search_impl(
             **({"job": ep["capability"]} if page.judged and ep.get("capability") else {}),
             **({"more_providers": hidden[ep["id"]]} if page.judged and ep["id"] in hidden else {}),
             "usd_per_call": cat.advertised_usd(cost),
+            **_price_range(cost),
             # BOTH halves of tier 4's own truth, not just the price side: `platform_eligible` says
             # the row is priceable, `platform_key_for` says this deploy actually holds an enabled
             # key. Eligible-but-keyless rows used to advertise `no_key_needed: true` here and then
