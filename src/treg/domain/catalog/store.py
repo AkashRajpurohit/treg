@@ -1166,24 +1166,25 @@ def _padded(text: str) -> str:
     return " " + _SPLIT.sub(" ", text.lower()).strip() + " "
 
 
-# A word shorter than this matches whole (or with a plural "s"), never as the start of a longer
-# word: "exa" must not find "exact", nor "ads" "adsense".
+# A provider's name shorter than this matches whole (or with a plural "s"), never as the start of
+# a longer word: "exa" must not find "exact". Any other short word still matches a word's start,
+# so "web" finds "website" and "geo" "geolocation".
 WHOLE_WORD_BELOW = 4
 
 
-def _needles(variants: list[str]) -> list[str]:
+def _needles(variants: list[str], whole: bool = False) -> list[str]:
     """Each variant as it must appear at the START of a word: " search" matches "search" and
     "searches", never "research" (2026-10-10: a research-task status row tied with every search
-    tool on "web search" and its measured success put it first). A one-word variant shorter than
-    `WHOLE_WORD_BELOW` matches only whole, or with a plural "s". CJK has no spaces between words,
-    so a CJK variant keeps matching anywhere."""
+    tool on "web search" and its measured success put it first). With `whole` (the word is a short
+    provider name) the first variant matches only whole, or with a plural "s". CJK has no spaces
+    between words, so a CJK variant keeps matching anywhere."""
     out: list[str] = []
-    for v in variants:
+    for n, v in enumerate(variants):
         if _CJK.search(v):
             out.append(v)
             continue
         w = _SPLIT.sub(" ", v.lower()).strip()
-        if " " not in w and len(w) < WHOLE_WORD_BELOW:
+        if whole and n == 0:
             out.extend((f" {w} ", f" {w}s "))
         else:
             out.append(" " + w)
@@ -1230,7 +1231,9 @@ def _match(query: str, cat: Catalog, stems: bool = False):
     tokens = [t for t in raw if t not in _STOPWORDS and len(t) > 1] or raw
     if not tokens:
         return None
-    variants = [_needles([tok, *((_stem(tok),) if stems else ()), *cat.aliases.get(tok, ())]) for tok in tokens]
+    short = _short_provider_names(cat)
+    variants = [_needles([tok, *((_stem(tok),) if stems else ()), *cat.aliases.get(tok, ())], whole=tok in short)
+                for tok in tokens]
     # A token that IS a platform slug ("tiktok", "linkedin") is the caller's hard filter, but idf
     # prices it low — half the catalog serves the big platforms — so rows matching a rarer facet
     # word ("followers") outranked rows matching the asked-for platform. Double the weight where a
@@ -1382,6 +1385,12 @@ def provider_focus(query: str, cat: Catalog) -> tuple[set[str], str] | None:
     return named, " ".join(rest)
 
 
+def _short_provider_names(cat: Catalog) -> frozenset[str]:
+    """The one-word provider names under `WHOLE_WORD_BELOW` letters ("exa", "pdl", "moz")."""
+    return frozenset(phrase[0] for phrase, _ in provider_phrases(cat)
+                     if len(phrase) == 1 and len(phrase[0]) < WHOLE_WORD_BELOW)
+
+
 def with_routed_parents(scored: list[tuple[dict, float]], cat: Catalog) -> list[tuple[dict, float]]:
     """A routed parent (`treg.<capability>`) rides in whenever one of its children is in `scored`, at
     the best child's score: `find leads` matches `leadsforge.people.email.find` on the PROVIDER's
@@ -1433,7 +1442,8 @@ def score_extra(query: str, cat: Catalog,
     if m is None or not extra:
         return []
     tokens, _rows, _best, idf, required, need = m
-    variants = [_needles([tok, *cat.aliases.get(tok, ())]) for tok in tokens]
+    short = _short_provider_names(cat)
+    variants = [_needles([tok, *cat.aliases.get(tok, ())], whole=tok in short) for tok in tokens]
     boost = [2 if tok in cat.platforms else 1 for tok in tokens]
     out: list[tuple[dict, float]] = []
     for ep, fields in extra:

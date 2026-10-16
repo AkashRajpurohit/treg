@@ -98,6 +98,15 @@ def test_a_short_word_matches_whole_not_as_the_start_of_a_longer_one():
     assert concrete and all({"exa", "exas"} & set(w) for w in words)
 
 
+def test_any_other_short_word_still_starts_a_longer_word():
+    """Whole-word matching is for a short provider name only: "web" finds "website"."""
+    cat = catalog_store.load()
+    rows, _ = catalog_store.search("web", cat, 1000)
+    texts = [catalog_store._padded(" ".join(t for _, t in catalog_store._haystacks(ep, cat)))
+             for ep, _ in rows if ep.get("kind") != "routed"]
+    assert any(" website" in t and " web " not in t for t in texts)
+
+
 def test_a_provider_with_nothing_for_the_rest_reads_as_typed():
     """"perplexity" in a brand-visibility question is the AI engine, not a request for Perplexity's
     API: when the named provider has nothing the rest of the query reaches, nothing changes."""

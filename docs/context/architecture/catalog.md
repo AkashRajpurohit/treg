@@ -1917,10 +1917,11 @@ abstains ([search-experiment](search-experiment.md)).
 A query word matches only at the START of a word in a field (`store._needles`, haystacks stored
 word-padded by `_padded`): "search" matches "searches" but not "research", "ads" not "leads". A
 substring match tied a research-task status row with every search tool on "web search", and the
-evidence sort then put the free, always-200 status row first. A one-word variant shorter than four
-letters matches only whole, or with a plural "s" (`WHOLE_WORD_BELOW`): "exa" had matched "exact" in
-summaries and outranked every Exa row. CJK variants keep matching anywhere, since CJK text has no
-spaces between words.
+evidence sort then put the free, always-200 status row first. A query word that is a provider's
+one-word name shorter than four letters matches only whole, or with a plural "s"
+(`WHOLE_WORD_BELOW`): "exa" had matched "exact" in summaries and outranked every Exa row. Any other
+short word still matches a word's start, so "web" finds "website" and "geo" "geolocation". CJK
+variants keep matching anywhere, since CJK text has no spaces between words.
 
 **A provider named with a task** (`store.provider_focus`): "exa search", "people data labs company
 enrichment". A provider is named by its id or its display name as a token sequence, longest first;
