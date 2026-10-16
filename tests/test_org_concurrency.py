@@ -31,6 +31,11 @@ class Slots:
         self.charges = 0
         self.releases = 0
         self.renewed = asyncio.Event()
+        self.renewals = asyncio.Condition()
+        self.renewal_count = 0
+        # The guard's virtual monotonic clock: a lease deadline cannot pass because the test
+        # process stalled, only because a test advanced this. Each renewal advances one interval.
+        self.lease_clock = 1000.0
         self.acquire_result = None
         self.renew_result = None
         self.release_result = None
@@ -71,7 +76,11 @@ class Slots:
         return kv.OrgAdmissionResult("acquired")
 
     async def renew_slot(self, key, token, ttl_ms):
+        self.lease_clock += ttl_ms / 1000 / 3
         self.renewed.set()
+        async with self.renewals:
+            self.renewal_count += 1
+            self.renewals.notify_all()
         return self.renew_result or ("renewed" if token in self.owners.get(key, {}) else "lost")
 
     async def release_slot(self, key, token):
@@ -84,6 +93,12 @@ class Slots:
     @property
     def count(self):
         return sum(map(len, self.owners.values()))
+
+    async def outlive_leases(self, leases):
+        """Wait until renewals have carried the owner past `leases` whole leases."""
+        async with self.renewals:
+            await asyncio.wait_for(self.renewals.wait_for(
+                lambda: self.renewal_count > 3 * leases), 10)
 
 
 @pytest.fixture
@@ -99,6 +114,7 @@ def gate(monkeypatch):
     monkeypatch.setattr(flow, "_reader", flow.Reader())
     store = Slots()
     monkeypatch.setattr(flow, "_clock", lambda: store.clock)
+    monkeypatch.setattr(guard, "time", SimpleNamespace(monotonic=lambda: store.lease_clock))
     monkeypatch.setattr(kv, "store", lambda: store)
     return settings, store
 
@@ -319,7 +335,7 @@ async def test_unconfirmed_acquisition_allows_after_cleaning_ambiguous_token(gat
     async def ambiguous(*args):
         await original(*args)
         if reply == "late":
-            await asyncio.sleep(0.15)
+            store.lease_clock += guard._LEASE_S  # The reply lands after the lease's deadline.
             return "acquired"
         return "unavailable"
 
@@ -354,7 +370,7 @@ async def test_long_cleanup_renews_and_survives_anyio_cancellation(gate):
     slot = await guard.acquire(1, limit=1, version=1)
 
     async def close():
-        await asyncio.sleep(0.3)
+        await store.outlive_leases(2)
         assert store.count == 1
 
     with anyio.CancelScope() as scope:
@@ -637,7 +653,8 @@ async def test_stream_owns_slot_through_completion(clients, gate, monkeypatch, e
     task = asyncio.create_task(clients.get("/call/example/path"))
     try:
         await asyncio.wait_for(started.wait(), 2)
-        await asyncio.sleep(0.3)  # Outlive multiple leases before the stream ends.
+        if policy != "rate":
+            await store.outlive_leases(2)
         assert store.renewed.is_set() == (policy != "rate")
         assert store.count == (0 if policy == "rate" else 1)
         if policy == "rate":
@@ -763,7 +780,8 @@ async def test_funded_cancellation_keeps_cleanup_inside_slot(
             await asyncio.wait_for(entered.wait(), 2)
             assert counter.snapshot()["top"][0]["in_flight_max"] == 1
             assert counter.orgs[org].live == 1
-            await asyncio.sleep(0.3)
+            if policy != "rate":
+                await store.outlive_leases(2)
             assert store.count == (0 if policy == "rate" else 1)
             assert store.renewed.is_set() == (policy != "rate")
             proceed.set()
