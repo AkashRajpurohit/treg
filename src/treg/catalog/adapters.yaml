@@ -70,6 +70,13 @@ adapters:
     # Enrichment success does not report mailbox deliverability.
     out: {email: email}
     miss: "email == null"
+  zerobounce.people.email.find:
+    # Evidence only (an explicit catalog choice at its price); an undetermined `email: ""` is free.
+    route: false
+    accepts: [[first_name, last_name, domain]]
+    in:  {first_name: queryParams.first_name, last_name: queryParams.last_name, domain: queryParams.domain}
+    out: {email: email}
+    miss: "coalesce(email, null) == null"
   findymail.search.name:
     accepts: [[full_name, domain], [first_name, last_name, domain]]
     in:  {full_name: body.name, domain: body.domain}
