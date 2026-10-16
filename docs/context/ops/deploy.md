@@ -42,6 +42,22 @@ Fish Audio shared-key capacity monitoring requires both `TREG_PLATFORM_KEY_FISHA
 free API-credit probe; without it, capacity remains unknown rather than reading the unrelated
 personal wallet.
 
+## Additional public domains
+
+`TREG_PUBLIC_HOST_ALIASES` is a JSON array of bare hostnames accepted for same-host social-login
+callbacks, MCP hosts/origins and token audiences, and the hub self-relay guard. It defaults to an empty tuple. Each deployment supplies its complete alias list explicitly;
+setting it replaces the list rather than appending to it.
+Adding an alias does not change `TREG_PUBLIC_URL`, canonical links or provider-connect callbacks.
+Register each alias's `/auth/google/callback` and `/auth/github/callback` with the respective OAuth
+client before enabling it. The OAuth state and browser session cookies stay on that alias.
+
+Turnstile's widget hostname list must include every browser alias. Server-side hostname validation
+accepts the canonical host and every configured alias; a non-empty
+`TREG_TURNSTILE_HOSTNAMES` overrides this fallback and must itself list every accepted host.
+
+Apply and verify the complete alias configuration before deploying code that consumes it. Older
+builds ignore the extra setting; deploying the new code first can invalidate existing alias grants.
+
 ## Entry point (`__main__.py`)
 
 `python -m treg upgrade` runs the explicit release phase. `maintenance._upgrade_schema()` runs

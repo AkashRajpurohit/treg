@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from ... import crypto
-from ...config import PUBLIC_HOST_ALIASES, get_settings
+from ...config import get_settings
 from ...models import OAuthGrant, OAuthRefresh
 
 # How long an access token lives. Short, because a refresh token will exist to renew it and a leaked
@@ -123,7 +123,7 @@ def mcp_resource_audiences(version: str = "v1") -> set[str]:
     would 401 every pre-move grant forever, with refresh unable to recover. SYMMETRIC on purpose:
     grants minted on treg.to must equally survive a TREG_PUBLIC_URL rollback to the old name."""
     path = _mcp_path(version)
-    return {mcp_resource_url(version), *(f"https://{h}/{path}" for h in PUBLIC_HOST_ALIASES)}
+    return {mcp_resource_url(version), *(f"https://{h}/{path}" for h in get_settings().public_host_aliases)}
 
 
 def mcp_resource_version(resource: str) -> str | None:

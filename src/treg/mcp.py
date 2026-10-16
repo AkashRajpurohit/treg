@@ -61,7 +61,7 @@ from .application import catalog_find as find_app
 from .application import catalog_search as search_app
 from .application import search_experiment
 from .domain.catalog import store as catalog_store
-from .config import PUBLIC_HOST_ALIASES, get_settings
+from .config import get_settings
 from .feedback_contract import FeedbackCategory, FEEDBACK_DESCRIPTION, ReviewUsefulness, REVIEW_DESCRIPTION
 from .domain.catalog.stats import EndpointObservationReader
 from .infra import org_traffic
@@ -1990,7 +1990,7 @@ def _allowed_hosts() -> list[str]:
     # Every name the hosted service has answered to, symmetrically. A .mcp.json
     # pointed at either domain keeps working whichever one public_url currently names, which is
     # what makes an env-var rollback lossless (a treg.to config must survive a revert too).
-    hosts += list(PUBLIC_HOST_ALIASES)
+    hosts += list(get_settings().public_host_aliases)
     # The SDK compares Host values EXACTLY, and `example.com:443` is a valid spelling of the
     # default-port form some clients send — so every bare https hostname also allows its :443 twin.
     hosts += [f"{h}:443" for h in hosts if ":" not in h and h not in ("localhost", "127.0.0.1")]
@@ -2017,7 +2017,7 @@ def _allowed_origins(resource_version: str = "v1") -> list[str]:
     public = get_settings().public_url.rstrip("/")
     if public:
         origins.append(public)
-    origins += [f"https://{h}" for h in PUBLIC_HOST_ALIASES]
+    origins += [f"https://{h}" for h in get_settings().public_host_aliases]
     # Exact comparison again: allow the explicit-default-port spelling of every https origin.
     origins += [f"{o}:443" for o in origins
                 if o.startswith("https://") and ":" not in o.removeprefix("https://")]

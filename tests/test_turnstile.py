@@ -122,7 +122,17 @@ async def test_hostnames_default_to_the_public_url(monkeypatch):
     monkeypatch.setattr(get_settings(), "public_url", "https://treg.example/")
     assert turnstile.hostnames() == {"treg.example"}
     monkeypatch.setattr(get_settings(), "public_url", "https://treg.to")
-    assert turnstile.hostnames() == {"treg.to", "treg.superdesign.dev"}
+    assert turnstile.hostnames() == {"treg.to"}
+
+
+async def test_configured_alias_accepts_a_verified_widget_token(widget, monkeypatch):
+    monkeypatch.setattr(get_settings(), "turnstile_hostnames", "")
+    monkeypatch.setattr(get_settings(), "public_url", "https://registry.example")
+    monkeypatch.setattr(get_settings(), "public_host_aliases", ("alias.example",))
+    widget["answer"] = {"success": True, "action": "email_start", "hostname": "alias.example"}
+    assert await turnstile.verify("tok", action="email_start") == turnstile.PASS
+    widget["answer"]["hostname"] = "untrusted.example"
+    assert await turnstile.verify("tok", action="email_start") == turnstile.INVALID
 
 
 async def test_observe_changes_nothing_and_records_the_outcome(clients, widget, signups, monkeypatch):

@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from ..config import PUBLIC_HOST_ALIASES, get_settings
+from ..config import get_settings
 
 SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 TIMEOUT_S = 5.0
@@ -53,14 +53,14 @@ def misconfiguration() -> list[str]:
 
 
 def hostnames() -> frozenset[str]:
-    """Where a token may have been solved: the configured list, else the public host and, when it
-    is one of the known public aliases, all of them (the dashboard is served from each)."""
+    """Where a token may have been solved: the explicit list, else the public host and aliases."""
     s = get_settings()
     listed = {h.strip().lower() for h in s.turnstile_hostnames.split(",") if h.strip()}
     if listed:
         return frozenset(listed)
     public = (urlsplit(s.public_url).hostname or "").lower()
-    return frozenset(({public} | set(PUBLIC_HOST_ALIASES)) if public in PUBLIC_HOST_ALIASES else {public} - {""})
+    aliases = set(s.public_host_aliases)
+    return frozenset(({public} | aliases) - {""})
 
 
 async def siteverify(form: dict[str, str]) -> dict:

@@ -675,6 +675,17 @@ class Settings(BaseSettings):
     # treg's own public base URL — used to build the OAuth callback (must be whitelisted in the
     # provider's OAuth app). Self-hosting? Set TREG_PUBLIC_URL to your deployment's URL.
     public_url: str = "https://treg.to"
+    public_host_aliases: tuple[str, ...] = ()
+
+    @field_validator("public_host_aliases")
+    @classmethod
+    def _public_host_aliases_shape(cls, hosts: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(dict.fromkeys(h.lower().rstrip(".") for h in hosts))
+        if any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", h)
+               or ".." in h for h in normalized):
+            raise ValueError("public_host_aliases must contain hostnames without schemes, paths or ports")
+        return normalized
+
     # Proof to OpenAI's plugin directory that we control this domain. The portal generates a token
     # and fetches it from /.well-known/openai-apps-challenge; that endpoint must return THAT token
     # and nothing else — not JSON, not a list. Empty (the default) leaves the route 404, which is the
@@ -685,6 +696,7 @@ class Settings(BaseSettings):
     # <public_url>/auth/github/callback and set these; empty disables the GitHub button.
     github_client_id: str = ""
     github_client_secret: str = ""
+
     # Signs the session cookie (HMAC). Falls back to secret_key if unset. Set a real value in prod.
     session_secret: str = ""
     # Overridable for tests; real GitHub by default.
