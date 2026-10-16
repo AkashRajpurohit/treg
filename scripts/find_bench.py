@@ -576,6 +576,8 @@ def bench(cases: list[Case], *, engine: str, tier: str, cache: Path | None = Non
 
 
 def main(argv: list[str] | None = None) -> None:
+    from treg import bootstrap
+    bootstrap.configure_provider_labels()   # provider display names, as the server wires them
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cases", type=Path, required=True, help="YAML (labels inline) or JSONL (labels.yaml beside it)")
     ap.add_argument("--labels", type=Path, help="labels for a JSONL case file (default: labels.yaml beside it)")

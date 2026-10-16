@@ -1323,25 +1323,15 @@ def _scored(query: str, cat: Catalog, platform: str | None, keep: Callable[[dict
 
 
 # ---- a provider named in the query ---------------------------------------------------------------
-def provider_labels() -> dict[str, str]:
-    """Each provider's display name ("pdl" -> "People Data Labs"), read once from the provider
-    registry; an empty table where it cannot be read leaves only the provider ids to match."""
-    global _PROVIDER_LABELS
-    if _PROVIDER_LABELS is None:
-        try:
-            from ...oauth_providers import get as provider
-        except Exception:  # noqa: BLE001 - names are an aid to search, never a reason it fails
-            _PROVIDER_LABELS = {}
-        else:
-            _PROVIDER_LABELS = {}
-            for ep in load().endpoints:
-                p = provider(ep["provider"])
-                if p is not None:
-                    _PROVIDER_LABELS[ep["provider"]] = p.display_name
-    return _PROVIDER_LABELS
+_provider_label: Callable[[str], str] = lambda provider: provider
 
 
-_PROVIDER_LABELS: dict[str, str] | None = None
+def configure_provider_labels(label: Callable[[str], str]) -> None:
+    """Composition seam (`bootstrap`): a provider's display name ("pdl" -> "People Data Labs"),
+    read from the provider registry, which this domain does not import. Unconfigured, a provider is
+    named by its id alone."""
+    global _provider_label
+    _provider_label = label
 
 
 def provider_phrases(cat: Catalog) -> list[tuple[tuple[str, ...], str]]:
@@ -1353,12 +1343,11 @@ def provider_phrases(cat: Catalog) -> list[tuple[tuple[str, ...], str]]:
     cached = cat._provider_phrases
     if cached is not None:
         return cached
-    labels = provider_labels()
     platform_words = {tuple(_tokens(w)) for slug, p in cat.platforms.items()
                       for w in (slug.replace("-", " "), p.get("label", ""))}
     by_phrase: dict[tuple[str, ...], str] = {}
     for prov in sorted({ep["provider"] for ep in cat.endpoints} - {"treg"}):
-        for name in (prov, labels.get(prov, "")):
+        for name in (prov, _provider_label(prov)):
             phrase = tuple(_tokens(name))
             if (phrase and phrase not in platform_words
                     and any(t not in _STOPWORDS and len(t) >= 3 for t in phrase)):
