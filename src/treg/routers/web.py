@@ -3973,7 +3973,7 @@ async def leads_signals_page(request: Request):
 
 @app.get("/web-access", include_in_schema=False)
 async def web_access_page(request: Request):
-    """Landing page for the web-access launch ("Claude for Free Web Access"). Served like /leads-signals;
+    """Landing page for the web-access launch ("Free WebAccess for agents"). Served like /leads-signals;
     its benchmark and price comparison read /web-arena/api/leaderboard and fall back to a bundled snapshot."""
     return _static_page("web-access.html", request)
 
@@ -4088,7 +4088,7 @@ async def jev_xboost_judge(request: Request, db: AsyncSession = Depends(get_sess
 # chronological (newest first), not alphabetical.
 _BLOG_LAUNCHES: list[tuple[str, str, str, str]] = [
     # (slug, title, date, one-line blurb)
-    ("/web-access", "Claude for Free Web Access", "2026-10-15",
+    ("/web-access", "Free WebAccess for agents", "2026-10-15",
      "Free web search and page reads for your agent; when free fails, the next vendor answers."),
     ("/showcase", "Built with treg", "2026-10-12",
      "Apps whose agents reach the outside world through treg, the people who made them, and their launch posts."),

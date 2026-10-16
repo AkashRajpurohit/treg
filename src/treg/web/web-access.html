@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Claude for Free Web Access: free web search and page reads for agents | treg.to</title>
+<title>Free WebAccess for agents: free web search and page reads for agents | treg.to</title>
 <meta name="description" content="Your agent searches the web and reads any page for $0. When the free call comes back empty or blocked, treg tries the next vendor, so it still gets pages, sites, social posts, store listings and reviews through one API. Open source.">
 <link rel="canonical" href="{BASE}/web-access"/>
-<meta property="og:title" content="Claude for Free Web Access: free web search and page reads for agents | treg.to"/>
+<meta property="og:title" content="Free WebAccess for agents: free web search and page reads for agents | treg.to"/>
 <meta property="og:description" content="Free web search and page reads for your agent. When free fails, the next vendor answers. One API for pages, sites, social, stores and reviews."/>
 <meta property="og:url" content="{BASE}/web-access"/>
 <meta property="og:type" content="website"/>
@@ -311,7 +311,7 @@
     max-width: 1080px; margin: 0 auto; background: var(--paper); border-radius: 22px; overflow: hidden;
     box-shadow: 0 1px 2px rgba(20,18,12,.05), 0 30px 70px -40px rgba(20,18,12,.32);
   }
-  .tabs { display: flex; gap: 4px; padding: 10px; background: #FAF9F6; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  .tabs { display: flex; gap: 4px; padding: 10px; background: #FAF9F6; border-bottom: 1px solid var(--line); overflow-x: auto; justify-content: safe center; }
   .tabs button {
     flex: none; display: inline-flex; align-items: center; gap: 8px; border: 0; background: none; padding: 8px 14px; border-radius: 999px;
     font: 500 13.5px var(--text); color: #6A6864; cursor: pointer; position: relative; overflow: hidden;
@@ -455,7 +455,7 @@
 </nav>
 
 <header class="hero">
-  <h1 id="heroA"><span class="hw ag-line"><span class="ag" id="agWrap"><img id="agLogo" src="media/people-search/claude-code.png" alt=""><span id="agName">Claude</span></span> for</span><br><span class="hw hl">Free Web Access</span></h1>
+  <h1 id="heroA"><span class="hw">Free <span class="hl">WebAccess</span></span><br><span class="hw">for <span class="hero-agents"><img src="media/people-search/claude-code.png" alt="Claude Code" title="Claude Code"><img src="media/people-search/codex.png" alt="Codex" title="Codex"><img src="media/people-search/openclaw.png" alt="OpenClaw" title="OpenClaw"><img src="media/people-search/hermes.png" alt="Hermes" title="Hermes"></span></span></h1>
   <p class="sub">Your agent searches the web and reads any page <strong>for $0</strong>. When the free call comes back empty or blocked, treg tries the next vendor, so your agent still gets <strong>pages, sites, social posts, store listings and reviews</strong>, all through one API. Open source, no plan.</p>
   <div class="ctas">
     <a class="pill dark" href="/app?ref=web-access" id="ctaHero">Set up treg</a>
@@ -786,31 +786,8 @@ IC+ pricing · Volume discounts
   var nav = document.getElementById('nav');
   addEventListener('scroll', function () { nav.classList.toggle('scrolled', scrollY > 8); }, { passive: true });
 
-  /* hero: the rotating agent in "Claude for Free Web Access" */
-  var AGENTS = [
-    ['media/people-search/claude-code.png', 'Claude'],
-    ['media/people-search/codex.png', 'Codex'],
-    ['media/people-search/openclaw.png', 'OpenClaw'],
-    ['media/people-search/hermes.png', 'Hermes']
-  ];
-  AGENTS.forEach(function (a) { (new Image()).src = a[0]; });
-  (function () {
-    var h1 = document.getElementById('heroA');
-    h1.querySelectorAll('.hw').forEach(function (w, i) { setTimeout(function () { w.classList.add('in'); }, 250 + i * 320); });
-    if (reduced) return;
-    var wrap = document.getElementById('agWrap'), logo = document.getElementById('agLogo'),
-        name = document.getElementById('agName'), i = 0;
-    setInterval(function () {
-      wrap.classList.add('out');
-      setTimeout(function () {
-        i = (i + 1) % AGENTS.length;
-        logo.src = AGENTS[i][0]; name.textContent = AGENTS[i][1];
-        wrap.classList.remove('out'); wrap.classList.add('pre');
-        void wrap.offsetWidth;
-        wrap.classList.remove('pre');
-      }, 300);
-    }, 2600);
-  })();
+  /* hero: word-by-word entrance, like the film */
+  document.querySelectorAll('#heroA .hw').forEach(function (w, i) { setTimeout(function () { w.classList.add('in'); }, 250 + i * 320); });
 
   /* ---------- Setup CTAs: signed in → the app; signed out → the sign-in modal ---------- */
   var scrim = document.getElementById('signin-scrim');
