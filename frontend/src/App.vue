@@ -235,7 +235,7 @@ export default { ...controller, components: { ...controller.components, ...dialo
          platform calls only — own-key and own-tool calls are relayed without being stored). -->
     <CallDetailsDialog v-if="callView" />
     <TryEndpointDialog v-if="epTry" />
-    <!-- YOUR PICTURE (account menu) -->
+    <!-- YOUR AVATAR (account menu) -->
     <UserAvatarDialog v-if="avatarDialog" />
 
     <!-- Toasts, bottom right: a newer dashboard build is live, and the access reminder (fired when

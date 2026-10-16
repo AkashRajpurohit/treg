@@ -1,12 +1,12 @@
 <script>
 import { useDashboard } from '../../state/context'
-import Avatar from '../../components/ui/Avatar.vue'
+import AvatarEdit from '../../components/ui/AvatarEdit.vue'
 import { IMAGE_RULES, imageProblem, uploadImage } from '../../images'
 
-// The active team's picture (Team settings, owners and admins). Upload stages the file, then
-// PUT /orgs/{id}/avatar makes it the team's; a picture with no key clears it back to initials.
+// The active team's avatar (Team settings, owners and admins). Upload stages the file, then
+// PUT /orgs/{id}/avatar makes it the team's; no key clears it back to initials.
 export default {
-  components: { Avatar },
+  components: { AvatarEdit },
   setup: useDashboard,
   data: () => ({ taBusy: false, taErr: '', taOff: false, taHint: IMAGE_RULES.team_avatar.hint }),
   methods: {
@@ -25,13 +25,13 @@ export default {
       if (this.taErr) return
       this.taBusy = true
       try { await this.taSet((await uploadImage('team_avatar', file, this.headers())).key) }
-      catch (e) { if (e.status === 503) this.taOff = true; else this.taErr = e.detail || 'The picture could not be saved.' }
+      catch (e) { if (e.status === 503) this.taOff = true; else this.taErr = e.detail || 'The avatar could not be saved.' }
       finally { this.taBusy = false }
     },
     async taRemove() {
       this.taBusy = true; this.taErr = ''
       try { await this.taSet(null) }
-      catch (e) { this.taErr = e.detail || 'The picture could not be removed.' }
+      catch (e) { this.taErr = e.detail || 'The avatar could not be removed.' }
       finally { this.taBusy = false }
     },
   },
@@ -40,17 +40,15 @@ export default {
 
 <template>
 <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
-  <span class="lbl" style="margin:0">Team picture</span>
-  <p v-if="!uploadsOn || taOff" class="sub" style="margin:4px 0 0;font-size:12px">Picture uploads are not enabled on this registry. The team shows its initials.</p>
+  <span class="lbl" style="margin:0">Team avatar</span>
+  <p v-if="!uploadsOn || taOff" class="sub" style="margin:4px 0 0;font-size:12px">Avatar uploads are not enabled on this registry. The team shows its initials.</p>
   <template v-else>
-    <p class="sub" style="margin:4px 0 8px;font-size:12px">Shown in the team picker and on this page. {{taHint}}</p>
-    <div style="display:flex;gap:10px;align-items:center">
-      <Avatar :src="activeOrg && activeOrg.avatar_url" :name="activeName" :size="48" />
-      <input ref="taInput" type="file" accept="image/png,image/jpeg,image/webp" style="display:none" aria-label="Team picture file" @change="taUpload">
-      <button class="btn sm" :disabled="taBusy" @click="$refs.taInput.click()">{{taBusy ? 'Saving…' : 'Upload picture'}}</button>
-      <button v-if="activeOrg && activeOrg.avatar_url" class="btn sm" :disabled="taBusy" @click="taRemove">Remove picture</button>
+    <p class="sub" style="margin:4px 0 12px;font-size:12px">Shown in the team picker and on this page. {{taHint}}</p>
+    <div style="display:flex;gap:16px;align-items:center">
+      <AvatarEdit :src="activeOrg && activeOrg.avatar_url" :name="activeName" :size="56" :busy="taBusy" label="Team avatar" @file="taUpload" />
+      <button v-if="activeOrg && activeOrg.avatar_url" class="btn sm" :disabled="taBusy" @click="taRemove">Remove avatar</button>
     </div>
-    <p v-if="taErr" class="banner" role="alert" style="margin:8px 0 0">{{taErr}}</p>
+    <p v-if="taErr" class="banner" role="alert" style="margin:10px 0 0">{{taErr}}</p>
   </template>
 </div>
 </template>

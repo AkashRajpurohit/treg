@@ -227,7 +227,7 @@ land, and the address then names the tab. Opening Activity without a tab still l
 The Team page has a Showcase tab (owners and admins, `#orgs/showcase`): the team's /showcase
 leaderboard entries with their review status, "N of 5 used", apply and edit with an icon and up to
 four screenshots, consent checkboxes and withdraw; a 409 keeps the draft and offers a reload. Team
-settings uploads the team's picture; the account menu's "Your picture" dialog sets the person's
-own. Uploads are raw bodies to `POST /images/{kind}`; with uploads off (`/auth/me` `uploads:
-false`) the picture controls are hidden. `Avatar.vue` shows a picture or initials wherever a team
-or person is named. See [showcase](../architecture/showcase.md).
+settings sets the team's avatar and the account menu's "Your avatar" dialog the person's own,
+each from a round + on the avatar's corner (`AvatarEdit.vue`). Uploads are raw bodies to
+`POST /images/{kind}`; with uploads off (`/auth/me` `uploads: false`) the controls are hidden.
+`Avatar.vue` shows an avatar or initials wherever a team or person is named. See [showcase](../architecture/showcase.md).
