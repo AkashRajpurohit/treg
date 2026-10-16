@@ -119,6 +119,11 @@ def table_amount_micro(cost: dict, request: dict, input_schema: dict, unit_micro
                 _path(values, row["times"]), _spec_for(input_schema, str(row["times"])))
             if multiplier is None:
                 break
+            # `times_min` is the row's billed minimum (Kling bills 5 s for a 3 s clip): a shorter
+            # request reserves, and a table settle bills, the minimum.
+            low = row.get("times_min")
+            if isinstance(low, (int, float)) and not isinstance(low, bool) and multiplier < low:
+                multiplier = float(low)
             return _micro(float(row["value"]) * multiplier, unit_micro)
     return _micro(float(cost["fallback"]["value"]), unit_micro)
 

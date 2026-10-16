@@ -752,7 +752,7 @@ async:
 ```
 
 A `cost.table` also prices out as a range: at load time `_table_floor` computes the cheapest row
-(a `times` row at its field's declared `min`) into `cost.table_min`, and `cost_view` exposes it as
+(a `times` row at its `times_min`, else its field's declared `min`) into `cost.table_min`, and `cost_view` exposes it as
 `usd_min` beside `usd`, which stays the validated ceiling (what reserve and eligibility read). Every
 price surface - the wall, `treg catalog search`, the dashboard, `/access` - shows `$low-$high` for a
 table rather than the worst case alone. A table whose every row multiplies by a recognized meter
@@ -1094,7 +1094,9 @@ Rows match in file order. `when` is a subset comparison: every named field must 
 value after input defaults are applied, using exact forms. References are location-qualified dotted
 paths (`body.model`, `body.input.num_outputs`, `queryParams.mode`) so query/body collisions cannot
 silently price the wrong field. Every `when` field must be required or declare `default` in `input`.
-`times` multiplies by one numeric request field with a positive `max`. Narrow rows must precede broad
+`times` multiplies by one numeric request field with a positive `max`; an optional `times_min` is
+the row's billed minimum on that field (Kling bills five seconds for a three-second clip), so a
+shorter request reserves, settles under `settle: table`, and displays at the minimum. Narrow rows must precede broad
 ones; the validator rejects a later condition shadowed by an earlier subset, duplicate conditions,
 unknown row/fallback keys, non-finite values, values outside input enum/min/max, and simultaneous
 `cost.value` plus `cost.table`. `fallback` is a hand-written, explained global upper bound, checked

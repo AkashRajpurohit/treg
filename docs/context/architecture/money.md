@@ -437,7 +437,8 @@ with `when: response|terminal` and `amount.kind: table|usage|observed`; `settle(
 raw integer micro-USD and never writes the ledger. `table_amount_micro` bounds a `times` multiplier by
 the field's declared `min`/`max` (finite and always positive, whatever minimum is declared): an out-of-range value
 matches no row and prices at the fallback, so a caller can neither reserve zero nor bill past the
-validated ceiling. Both the normal response path and the async worker
+validated ceiling. An in-range value below the row's `times_min` (a provider's billed minimum)
+prices at that minimum. Both the normal response path and the async worker
 use it. Provider differences remain in catalog YAML; there are no provider billing adapters.
 An async row settles at the terminal answer when its price is a table, a `usage` meter, or a plain
 `per_call` price (`observed` amount, the fixed price as fallback): a provider that bills every

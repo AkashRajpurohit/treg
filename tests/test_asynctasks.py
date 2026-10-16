@@ -697,6 +697,37 @@ async def test_platform_openrouter_model_is_bound_to_the_selected_catalog_row(
     assert row.key_slot == "primary", "the task names the account that accepted it"
 
 
+async def test_a_video_shorter_than_its_billed_minimum_reserves_the_minimum(
+    clients: AsyncClient, monkeypatch, openrouter_platform,
+):
+    """A model that bills five seconds for a three-second clip declares `times_min: 5`: the hold
+    for a 3 s submission is five seconds' worth, not three, and a 6 s one is still six."""
+    endpoint = "openrouter.x.kwaivgi-kling-v3-0-pro"
+    cost = catalog_store.load().by_id[endpoint]["cost"]
+    rows = [{**row, "times_min": 5} if row.get("times") else row for row in cost["table"]]
+    monkeypatch.setitem(cost, "table", rows)
+    rate = rows[0]["value"]
+
+    async def fake_relay(*args, **kwargs):
+        return _response(201, {"id": f"video-{len(holds)}"})
+
+    monkeypatch.setattr(call_service, "relay", fake_relay)
+    org_id = (await clients.get("/orgs")).json()[0]["org_id"]
+    async with session_maker() as db:
+        await ledger.grant(db, org_id, amount_micro=5_000_000, once=False)
+        await db.commit()
+    holds = []
+    for seconds in (3, 6):
+        accepted = await clients.post(f"/call/{endpoint}", json={
+            "model": "kwaivgi/kling-v3.0-pro", "prompt": "A paper boat.", "duration": seconds,
+            "resolution": "720p", "aspect_ratio": "16:9",
+            "generate_audio": True})
+        assert accepted.status_code == 201, accepted.text
+        async with session_maker() as db:
+            holds = [h.amount_micro for h in (await db.execute(select(Hold))).scalars().all()]
+    assert sorted(holds) == sorted([round(rate * 5 * 1_000_000), round(rate * 6 * 1_000_000)])
+
+
 async def test_platform_model_selector_rejects_duplicate_json_keys(
     clients: AsyncClient, monkeypatch, openrouter_platform,
 ):
@@ -1370,6 +1401,13 @@ def test_times_multiplier_is_bounded_by_the_input_schema():
     assert price(2) == 100_000 and price(30) == 1_500_000
     assert price(0) == price(-3) == price(31) == price(100) == price(float("nan")) == 6_000_000
     assert price(float("inf")) == 6_000_000 and price("5") == 250_000  # strings coerce by type
+
+    # `times_min` is the row's billed minimum: an in-range value below it prices at the minimum.
+    cost["table"][0]["times_min"] = 4
+    assert price(2) == price(4) == 200_000 and price(5) == 250_000
+    assert price(0) == price(31) == 6_000_000  # out of range still prices at the fallback
+    cost["table"][0]["times_min"] = True  # malformed: ignored, never a multiplier of 1
+    assert price(2) == 100_000
 
 
 async def test_worker_ignores_terminal_looking_fields_on_error_responses(

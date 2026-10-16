@@ -466,9 +466,9 @@ def check_cost_table(cost: dict, input_schema: object, where: str, errors: list[
                 fail(errors, rwhere, f"times field '{times}' must declare a positive input max")
                 continue
             maximum *= float(upper)
-            # `times_min`: this row's own lower bound on the `times` field, when the model it names
-            # accepts less than the field-wide minimum. Display only (the price floor); it must sit
-            # inside the field's declared range.
+            # `times_min`: this row's billed minimum on the `times` field, when the model it names
+            # accepts or bills less than the field-wide minimum. The displayed floor, the reserve
+            # and a table settle all read it; it must sit inside the field's declared range.
             if "times_min" in row:
                 low = row.get("times_min")
                 field_min = spec.get("min")
