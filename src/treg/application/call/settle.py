@@ -120,7 +120,7 @@ def _brightdata_record_count(body: bytes) -> int | None:
         return None
     text = body.decode("utf-8", "replace").strip()
     if not text:
-        return None
+        return 0
     try:
         doc = json.loads(text)
     except ValueError:
@@ -514,13 +514,13 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
             charged_credits = -1
         if math.isfinite(charged_credits) and charged_credits >= 0 and rate:
             return _usd_to_micro(charged_credits * rate)
-    if not body:
-        return 0 if provider == "contactout" else None
     if provider == "brightdata" and mk.cost_type == "per_result" and mk.unit_micro > 0:
         # DERIVED by counting records — Bright Data's bill is per record delivered and the body is
         # the only place that number exists (see _brightdata_record_count for the shapes).
         n = _brightdata_record_count(body)
         return None if n is None else n * mk.unit_micro
+    if not body:
+        return 0 if provider == "contactout" else None
     try:
         doc = json.loads(body)
     except (ValueError, UnicodeDecodeError):
@@ -575,6 +575,9 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
         return None
     if provider == "companyenrich" and mk.cost_type == "per_result" and mk.unit_micro > 0:
         return _rows_billed_micro(mk, ep, _companyenrich_record_count(mk.endpoint_id, doc))
+    if (provider == "icypeas" and isinstance(doc, dict) and doc.get("success") is False
+            and not doc.get("item") and not doc.get("file")):
+        return 0
     if provider == "icypeas" and mk.cost_type == "per_result" and mk.unit_micro > 0:
         body = mk.request_data.get("body") if isinstance(mk.request_data, dict) else None
         # The scrape row carries the dearer profile rate; a company batch is 0.5 credit a hit.
@@ -585,6 +588,8 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
             return _rows_billed_micro(mk, ep, search_rows)
         return _rows_billed_micro(mk, ep, _icypeas_bulk_found_count(mk.endpoint_id, doc),
                                   Decimal("0.5") if company else None)
+    if provider == "serpstat" and isinstance(doc, dict) and doc.get("error"):
+        return 0
     if provider == "serpstat" and mk.cost_type == "per_result" and mk.unit_micro > 0:
         return _rows_billed_micro(mk, ep, _serpstat_result_count(doc))
     if provider == "spyfu" and mk.cost_type == "per_result" and mk.unit_micro > 0:
@@ -626,6 +631,10 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
                             Decimal("1"), rounding=ROUND_HALF_UP))
             except (InvalidOperation, ValueError, OverflowError):
                 pass
+        status = doc.get("status")
+        if amount is None and type(status) is int and status >= 400:
+            # HarvestAPI answers a full queue (429) or no backend (503) as a 200 without `cost`.
+            return 0
         # Missing or invalid charge evidence leaves the normal miss/base rules in force.
     if provider == "sumble":
         credits = doc.get("credits_used")
@@ -830,24 +839,18 @@ def _observed_cost_micro(mk: MarketplaceCall, body: bytes, headers=None) -> int 
     # (found live by the first routed waterfall, 2026-08-28: three of five misses were charged).
     if mk.cost_type == "per_success" and isinstance(doc, dict):
         cat = catalog_store.load()
+        if (rule := (cat.by_id.get(mk.endpoint_id) or {}).get("expect")):
+            try:
+                if _dig(doc, rule["json_path"]) != rule.get("equals"):
+                    return 0
+            except Exception:  # noqa: BLE001
+                pass
         adapter = cat.adapters.get(mk.endpoint_id)
         if adapter is not None and adapter.verified:
             try:
                 if adapter.is_miss(doc):
                     return 0
             except Exception:  # noqa: BLE001 — a predicate that cannot decide settles at the estimate
-                pass
-        # No adapter? Most `.x.` endpoints have none — 1330 of 1517 per_success rows, concentrated
-        # in the scrapers whose failure mode IS an HTTP 200 carrying an error code. Those providers
-        # publish a success rule and the catalog already records it as `expect`; it was read only by
-        # catalog_verify. Live 2026-08-29: justoneapi answered `{"code":301,"message":"COLLECT
-        # FAILED"}` — free on the vendor's own terms ("only a code-0 response is billed") — and treg
-        # settled $0.0295 against the caller.
-        elif (rule := (cat.by_id.get(mk.endpoint_id) or {}).get("expect")):
-            try:
-                if _dig(doc, rule["json_path"]) != rule.get("equals"):
-                    return 0
-            except Exception:  # noqa: BLE001 — same rule as above: undecidable settles at the estimate
                 pass
     return None
 

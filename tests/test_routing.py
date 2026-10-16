@@ -1356,8 +1356,7 @@ def test_a_per_success_endpoint_with_no_adapter_settles_on_the_providers_own_suc
     ok = b'{"code": 0, "data": {"users": [{"name": "Ada"}]}}'
     assert A._observed_cost_micro(mk, ok) is None, "a real hit still settles at the estimate"
 
-    # a nested rule form (dataforseo's task envelope) reads the same way — picking one that also
-    # has no adapter, since an adapter's own predicate takes precedence when there is one
+    # a nested rule form (dataforseo's task envelope) reads the same way
     dfs = [e for e in cat.by_id.values()
            if (e.get("expect") or {}).get("json_path") == "tasks.0.status_code"
            and cat.adapters.get(e["id"]) is None

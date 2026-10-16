@@ -1172,8 +1172,9 @@ billable, the recovery report): architecture/money.md.
 For synchronous providers that disclose the exact charge in the response, a paid cost may declare
 `reported_charge: {path: ..., unit: usd}` or use `unit: credit` when the provider has an `fx.yaml`
 credit rate. The catalog estimate still reserves a safe
-ceiling. A finite nonnegative response value settles the call at that amount; missing, invalid, or
-non-finite evidence falls back to the normal estimate/miss rules. `reported_charge` is generic
+ceiling. A finite nonnegative response value settles the call at that amount; a missing value in a
+body whose own `status` is 400 or more settles at zero; other missing, invalid, or non-finite
+evidence falls back to the normal estimate/miss rules. `reported_charge` is generic
 catalog metadata, not a provider-specific billing branch, and cannot be combined with `cost.settle`.
 
 `spooled_response: true` marks a synchronous endpoint whose answer inlines media too large for
@@ -1836,8 +1837,8 @@ Five rules worth keeping:
   `means` on the tools that declare it. Each scrape adapter's `miss` predicate reads that
   provider's own text field, so an empty page is a miss for every provider, not a hit.
 - **A failed `expect` rule is a miss.** A routed child's 2xx whose body fails the endpoint's own
-  `expect` success rule is a `miss` whatever the adapter reads off it, and keeps the charge the
-  provider reported.
+  `expect` success rule is a `miss` whatever the adapter reads off it; on a `per_success` row it is
+  free unless the provider reported a charge.
 - **`miss` semantics ride on the endpoint.** Some providers answer "asked and answered: no result"
   with an error status (PDL 404s a person it has no record of; Hunter's combined-find does the
   same). Endpoints with evidenced miss behaviour carry a `miss: {status, means}` block in their
