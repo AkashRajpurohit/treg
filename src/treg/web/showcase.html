@@ -154,6 +154,7 @@
     position: relative; z-index: 1; border: 0; background: none; font: 500 13.5px var(--text);
     color: #5F5D59; padding: 8px 15px; border-radius: 999px; cursor: pointer; transition: color .25s;
   }
+  .tabs[hidden] { display: none; }
   .tabs button[aria-selected="true"] { color: var(--ink); }
   .tabs .mark {
     position: absolute; top: 4px; bottom: 4px; left: 0; width: 0; border-radius: 999px;
@@ -226,7 +227,8 @@
   .board[hidden] { display: none; }
   .board .shead { align-items: center; }
   .board-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .ranks { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .ranks { list-style: none; margin: 0; padding: 0; }
+  .ranks .rank:last-child { border-bottom: 0; }
   .rank {
     display: grid; grid-template-columns: 44px 44px minmax(0, 1fr) auto auto; align-items: center; gap: 14px;
     padding: 14px 6px; border-bottom: 1px solid var(--line); opacity: 0; transform: translateY(8px);
@@ -245,6 +247,39 @@
   .rank .metric { font: 500 14px var(--text); color: #43413E; white-space: nowrap; text-align: right; }
   .rank .metric small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
   .ranks .empty { padding: 30px 6px; color: var(--muted); font-size: 15px; }
+  /* an empty board: the board's own icon, a title and one line, like the admin's empty states */
+  .ranks .blank { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 54px 20px 46px; }
+  .blank .bi { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); color: #43413E; margin-bottom: 14px; }
+  .blank .bi svg { width: 22px; height: 22px; }
+  .blank b { font: 600 16px var(--text); color: var(--ink); }
+  .blank span { margin-top: 6px; max-width: 420px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+  /* board tabs carry an icon; on a phone they fold into one dropdown */
+  .tabs button .ti { display: inline-flex; align-items: center; gap: 7px; }
+  .tabs button svg, .bpick svg { width: 15px; height: 15px; flex: none; }
+  .bpick { position: relative; display: none; }
+  .bpick > button {
+    display: flex; align-items: center; gap: 8px; width: 100%; height: 40px; padding: 0 12px 0 14px;
+    border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink); font: 500 14px var(--text); cursor: pointer;
+  }
+  .bpick > button .chev { margin-left: auto; color: var(--muted); transition: transform .2s var(--ease); }
+  .bpick > button[aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .bpick ul {
+    position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; min-width: max(100%, 220px); margin: 0; padding: 6px; list-style: none;
+    background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 12px 32px rgba(16,16,16,.12);
+  }
+  .bpick ul[hidden] { display: none; }
+  .bpick li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; font-size: 14px; color: #43413E; cursor: pointer; white-space: nowrap; }
+  .bpick li:hover, .bpick li.on { background: var(--card); }
+  .bpick li[aria-selected="true"] { color: var(--ink); font-weight: 600; }
+  .bpick li .ok { margin-left: auto; color: var(--green); visibility: hidden; }
+  .bpick li[aria-selected="true"] .ok { visibility: visible; }
+  @media (max-width: 760px) {
+    .board .shead { flex-direction: column; align-items: stretch; gap: 16px; }
+    .board-actions { flex-wrap: nowrap; }
+    .board-actions .tabs { display: none; }
+    .board-actions .bpick:not([hidden]) { display: block; flex: 1; min-width: 0; }
+    .board-actions .pill { flex: none; }
+  }
   .board .more { display: flex; margin: 18px auto 0; }
   .board .more[hidden] { display: none; }
   .board-note { margin: 14px 2px 0; color: var(--muted); font-size: 13px; }
@@ -514,6 +549,10 @@
     <h2>Leaderboard</h2>
     <div class="board-actions">
       <div class="tabs" role="tablist" aria-label="Leaderboard" id="boardTabs" hidden><span class="mark" id="boardMark" aria-hidden="true"></span></div>
+      <div class="bpick" id="boardPick" hidden>
+        <button type="button" aria-haspopup="listbox" aria-expanded="false" aria-label="Choose a leaderboard" id="boardPickBtn"></button>
+        <ul role="listbox" aria-label="Leaderboard" id="boardPickList" hidden></ul>
+      </div>
       <button type="button" class="pill dark" id="applyOpen"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="8" cy="8" r="6.6"/><path d="M8 5v6M5 8h6" stroke-linecap="round"/></svg>Submit yours</button>
     </div>
   </div>
@@ -868,6 +907,22 @@ var BOARD = (function () {
   var more = document.getElementById('moreRanks'), toast = document.getElementById('toast'), toastTimer;
   var UP = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 3.5 14 11H2z"/></svg>';
   var BOARDS = [['most_loved', 'Most loved'], ['most_active', 'Most active'], ['rising', 'Rising'], ['longest_streak', 'Longest streak']];
+  function svg(d) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>'; }
+  var BOARD_ICON = {
+    most_loved: svg('<path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>'),
+    most_active: svg('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'),
+    rising: svg('<path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>'),
+    longest_streak: svg('<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>')
+  };
+  var INBOX = svg('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>');
+  // A board with nobody on it yet is still gathering data, not a verdict.
+  var WAITING = {
+    most_loved: ['No upvotes yet', 'Upvote the apps you like. The most loved rise to the top.'],
+    most_active: ['Still counting calls', 'Apps show here once a full week of their calls is counted.'],
+    rising: ['Nothing rising yet', 'Apps show here when their calls grow fast from one week to the next.'],
+    longest_streak: ['No streaks yet', 'Apps show here once they have made calls on several days in a row.']
+  };
+  function blank(icon, title, text) { return '<li class="blank"><span class="bi">' + icon + '</span><b>' + title + '</b><span>' + text + '</span></li>'; }
   var ICONS = { streak: '🔥', rising: '🚀', providers: '🧩', calls: '📈' };
   var PAGE = 10, shown = PAGE, board = 'most_loved', data = null, byId = {}, mine = {};
   var me = { signed_in: false, can_vote: false };
@@ -904,7 +959,8 @@ var BOARD = (function () {
     var ids = slugs();
     list.classList.toggle('loved', board === 'most_loved');
     list.innerHTML = ids.length ? ids.slice(0, shown).map(function (id, i) { return row(id, i + 1, i); }).join('')
-      : '<li class="empty">' + (data.apps.length ? 'No app qualifies for this board yet.' : 'No apps yet. Built something with treg? Be the first to submit it.') + '</li>';
+      : data.apps.length ? blank(BOARD_ICON[board], WAITING[board][0], WAITING[board][1])
+      : blank(INBOX, 'No apps yet', 'Built something with treg? Be the first to submit it.');
     paintMore(ids.length);
   }
   more.addEventListener('click', function () {
@@ -913,6 +969,32 @@ var BOARD = (function () {
     list.insertAdjacentHTML('beforeend', ids.slice(from, shown).map(function (id, j) { return row(id, from + j + 1, j); }).join(''));
     track('showcase_board_more', { board: board }); paintMore(ids.length);
   });
+  // One choice, two controls: the tabs on a wide screen, the dropdown on a phone.
+  var pick = document.getElementById('boardPick'), pickBtn = document.getElementById('boardPickBtn'), pickList = document.getElementById('boardPickList');
+  function label(key) { for (var i = 0; i < BOARDS.length; i++) if (BOARDS[i][0] === key) return BOARDS[i][1]; return key; }
+  function paintPick() {
+    pickBtn.innerHTML = BOARD_ICON[board] + '<span>' + esc(label(board)) + '</span><span class="chev">' + svg('<path d="m6 9 6 6 6-6"/>') + '</span>';
+    pickList.querySelectorAll('li').forEach(function (o) { o.setAttribute('aria-selected', o.dataset.board === board ? 'true' : 'false'); });
+  }
+  function openPick(on) {
+    pickList.hidden = !on; pickBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+    pickList.querySelectorAll('li').forEach(function (o) { o.classList.toggle('on', on && o.dataset.board === board); });
+  }
+  function choose(key) {
+    if (key === board) return;
+    board = key; shown = PAGE; track('showcase_board', { board: board });
+    tabs.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-selected', x.dataset.board === key ? 'true' : 'false'); });
+    paintPick(); place(); paint();
+  }
+  pickBtn.addEventListener('click', function () { openPick(pickList.hidden); });
+  pickBtn.addEventListener('keydown', function (e) {
+    var keys = BOARDS.map(function (b) { return b[0]; }), at = keys.indexOf(board);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); choose(keys[(at + (e.key === 'ArrowDown' ? 1 : keys.length - 1)) % keys.length]);
+      if (!pickList.hidden) openPick(true);
+    } else if (e.key === 'Escape') openPick(false);
+  });
+  document.addEventListener('click', function (e) { if (!pick.contains(e.target)) openPick(false); });
   function place() {
     var on = tabs.querySelector('[aria-selected="true"]');
     if (on) { mark.style.width = on.offsetWidth + 'px'; mark.style.transform = 'translateX(' + on.offsetLeft + 'px)'; }
@@ -939,16 +1021,18 @@ var BOARD = (function () {
     data = res[0]; me = res[1]; mine = {}; (me.upvoted || []).forEach(function (id) { mine[id] = true; });
     data.apps.forEach(function (a) { byId[a.id] = a; });
     if (data.apps.length) {
-      tabs.hidden = false;
+      tabs.hidden = false; pick.hidden = false;
       BOARDS.forEach(function (bd, i) {
-        var t = el('button', { role: 'tab', 'aria-selected': i ? 'false' : 'true', 'data-board': bd[0] }, esc(bd[1]));
-        t.addEventListener('click', function () {
-          board = bd[0]; shown = PAGE; track('showcase_board', { board: board });
-          tabs.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-selected', x === t ? 'true' : 'false'); });
-          place(); paint();
-        });
+        var t = el('button', { role: 'tab', 'aria-selected': i ? 'false' : 'true', 'data-board': bd[0] },
+          '<span class="ti">' + BOARD_ICON[bd[0]] + esc(bd[1]) + '</span>');
+        t.addEventListener('click', function () { choose(bd[0]); });
         tabs.appendChild(t);
+        var o = el('li', { role: 'option', id: 'bp-' + bd[0], 'aria-selected': i ? 'false' : 'true', 'data-board': bd[0] },
+          BOARD_ICON[bd[0]] + '<span>' + esc(bd[1]) + '</span><span class="ok">' + svg('<path d="M20 6 9 17l-5-5"/>') + '</span>');
+        o.addEventListener('click', function () { choose(bd[0]); openPick(false); pickBtn.focus(); });
+        pickList.appendChild(o);
       });
+      paintPick();
       place(); window.addEventListener('resize', place);
       if (document.fonts) document.fonts.ready.then(place);
     }
