@@ -4098,7 +4098,7 @@ _BLOG_LAUNCHES: list[tuple[str, str, str, str]] = [
      "Your agent checks hiring, funding, job changes and social chatter on a schedule, and reports what's new."),
     ("/jev", "How to use Jev", "2026-09-20",
      "What Jev is and how to use it: live examples, use cases, code, and GTM automation recipes."),
-    ("/ugc", "AI UGC Videos for $0.67 a Clip", "2026-09-15",
+    ("/ugc", "AI UGC Videos for $2.67 a 10-Second Clip", "2026-09-15",
      "The five-step workflow: trending hooks, a JSON-prompt character, Seedance 2.5, a cloned voice."),
     ("/gpt6", "GPT-6 and treg.to", "2026-09-08",
      "Codex demo: one prompt, the market read, and the catalog of tools it called."),

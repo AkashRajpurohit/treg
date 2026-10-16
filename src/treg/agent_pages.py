@@ -517,7 +517,8 @@ USE_CASE_PAGES: dict[str, dict] = {
             ("How much does it cost to find a work email?",
              "Between a fraction of a cent and a few cents per found address, depending on the "
              "provider. The lowest live price is shown at the top of this page, and treg.to adds "
-             "no markup. Most providers here charge only on success, so a miss costs nothing."),
+             "no markup. Most providers here charge only on success, so a miss on those costs nothing; "
+             "each entry's cost note says whether its provider bills a miss."),
             ("Do I need a Hunter or Apollo account?",
              "No. treg.to calls the provider on its own key and bills your team's prepaid balance per "
              "call. If you already have a key for one of them, register it and those calls are "
@@ -2928,7 +2929,7 @@ AGENTS["grok-bot"] = {
          "list by industry, size or funding, find the decision maker at each one, find and verify a "
          "work email, and pull a recent news event for the opener. The whole sequence is on the "
          "workflows page above with the receipt from a real run. Each step is priced before the bot "
-         "spends, and a miss on a per-success provider costs nothing."),
+         "spends, and a miss costs nothing on the providers that charge only on success."),
         ("What research can a Grok Bot do with the catalog?",
          "Company research: funding rounds, headcount, job postings, tech stack and recent news by "
          "domain. People research: a LinkedIn profile, a person's recent posts, their work email. "

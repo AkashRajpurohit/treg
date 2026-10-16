@@ -1013,8 +1013,10 @@ The response has no id because Starlette owns it, but treg records the row and o
 `tool_called` event before re-raising. Failures before `execute_call`, plus body-stream failures after
 the handler returns its `StreamingResponse`, are not covered by that compensation path.
 
-A direct metered `/call/` honours **`X-Treg-Route-Max-Cost: <usd>`** as a hard per-call ceiling
-(`service._set_caller_max_cost` and `reserve._platform_reserve`): when the reserve with margin would exceed it the
+A direct metered `/call/` honours **`X-Treg-Route-Max-Cost: <usd>`** as a per-call ceiling on the reserve
+(`service._set_caller_max_cost` and `reserve._platform_reserve`), not on the settled charge: a row that
+settles on a provider-reported charge or metered usage can settle above it, and the front-door copy
+says so and names provider-side caps. When the reserve with margin would exceed it the
 call is refused **402** `error: route_max_cost` (`max_cost_micro`, `estimated_cost_micro`, no charge,
 audited `refused_by=balance` like every 402) — the same header and body shape the routed path uses,
 so one agent-side handler covers both. Unlike `/do/` there is NO default on a direct call: a caller

@@ -254,7 +254,7 @@ capability whose adapters passed verification. Call one like any endpoint:
 ```bash
 treg call treg.people.email.find --body '{"full_name": "Patrick Collison", "domain": "stripe.com"}'
 treg call treg.people.email.find --body '{"linkedin_url": "https://www.linkedin.com/in/patrickcollison"}' \
-  --header "X-Treg-Route-Max-Cost: 0.05"     # cap the per-call spend (default ceiling $1)
+  --header "X-Treg-Route-Max-Cost: 0.05"     # cap what the call may reserve (default $1)
 treg catalog get treg.people.email.find      # the ranked plan with prices — spends nothing
 ```
 
@@ -263,7 +263,8 @@ returns `{output, raw, _treg: {served_by, tried, charged_micro}}` plus `X-Treg-S
 `X-Treg-Providers-Tried`. A provider error falls back to the next candidate (at most two extra); a
 vendor 4xx is your request's fault and stops. A **miss** tries the next provider too (the waterfall,
 on by default), cheapest first, within `X-Treg-Route-Max-Cost` (default $1 per call); every
-attempt settles at its real price and misses on per-success providers are free. `X-Treg-Route-Waterfall: 0`
+attempt settles at its real price. A miss is free only where its provider does not bill one: the
+routed row's `miss_billed_by` lists the children that do. `X-Treg-Route-Waterfall: 0`
 stops at the first miss. `X-Treg-Route-Prefer` / `X-Treg-Route-Exclude` name providers. A filter the serving provider could not apply is named in `X-Treg-Ignored-Filters` (and `_treg.ignored_filters`); `X-Treg-Route-Strict-Filters: 1` refuses such a call with a 422 (unbilled) instead. Vendor endpoints are still relayed verbatim; only `treg.*` rows model an API.
 
 `X-Treg-Route-Verify: true` on `treg.people.email.find` checks a hit with `treg.people.email.verify`

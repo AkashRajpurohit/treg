@@ -97,8 +97,9 @@ resolves the tool by host and injects the credential:
 ### Retrying a call: `Idempotency-Key`
 
 Agents retry, and a retry must not be paid for twice. Most already cost nothing: a 5xx, a timeout or
-a network error is never billed, and result pricing settles on what the provider actually charged, so
-a lookup that finds nothing is free.
+a network error is never billed. A lookup that finds nothing costs what the provider charged for it:
+nothing on most per-success tools, but some providers bill an answered miss or an empty list, and the
+tool's cost note says which.
 
 The case that needs a key is narrower — treg reached the provider, the provider charged us, and the
 answer was lost on the way back to you. Send the SAME key when you repeat that call:
@@ -288,8 +289,9 @@ first-party endpoints generated from the providers of one capability.
 or `linkedin_url`) and treg runs the best child — your own keys first, then cheapest per hit — and
 answers `{output, raw, _treg: {served_by, tried, charged_micro}}` with `X-Treg-Served-By`. A
 provider error OR a miss falls through to the next provider, cheapest first, within
-`X-Treg-Route-Max-Cost` (default $1 per call; misses on per-success providers are free, others bill
-them, so a routed row quotes `usd_per_call: null` rather than $0 — cap bulk runs) — send
+`X-Treg-Route-Max-Cost` (default $1 per call; per-call and per-result providers bill their misses,
+and so do the per-success ones whose provider charges an answered miss; the routed row's
+`miss_billed_by` names them, and it quotes `usd_per_call: null` rather than $0, so cap bulk runs); send
 `X-Treg-Route-Waterfall: 0` to stop at the first miss. When the provider that served could not
 apply a filter you sent, the answer says so in `X-Treg-Ignored-Filters` and `_treg.ignored_filters`
 (post-filter the rows, or say why they are off); send `X-Treg-Route-Strict-Filters: 1` to be refused
@@ -387,10 +389,14 @@ Money notes for agents:
 - **What you were actually charged is the response header `X-Treg-Cost-Micro`** (integer
   micro-USD; `cost_usd` in the MCP `call` result), never anything in the provider's body. Store
   `X-Treg-Call-Id` with it — support can look a call up by that id.
-- **Hard ceiling before you spend:** send `X-Treg-Route-Max-Cost: <usd>` on a `/call/` request and
-  treg refuses with **402** `error: route_max_cost` (nothing charged) when the reserve would exceed
-  it. There is no default on direct calls; the header is the only cap. On `treg.<capability>`
-  routed calls it also bounds the whole waterfall (default $1 there).
+- **A ceiling on the reserve before you spend:** send `X-Treg-Route-Max-Cost: <usd>` on a `/call/`
+  request and treg refuses with **402** `error: route_max_cost` (nothing charged) when the reserve
+  would exceed it. It bounds the reserve, not the settled charge: a tool that settles on the
+  provider's reported charge or metered usage (a dearer source, video seconds, tokens) can settle
+  above it. Where the provider has its own spend cap, send that too: AnyAPI's `max_cost_usd`,
+  Apify's `maxTotalChargeUsd`. There is no default on direct calls. On `treg.<capability>` routed
+  calls it also bounds the waterfall (default $1 there): a child starts only when its reserve fits
+  what the children before it left.
 - A failed call (HTTP 4xx/5xx from the provider) is relayed unchanged and charged nothing; the
   CLI prints one stderr line with the status, whose answer it is, and the call id — and on a metered
   success, `treg: charged $<usd> · call id <id>` (stdout is always the exact body). **A script that

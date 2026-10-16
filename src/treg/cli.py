@@ -6021,7 +6021,7 @@ def _catalog_get(endpoint_id: str, cfg) -> None:
         else:
             _dim("  the same job from another provider.")
         _dim("  WORKS/SPEED are what treg has actually observed; HIT is how often the provider FOUND")
-        _dim("  something (per-success providers bill only on a hit); a ✓ age is the catalog's own")
+        _dim("  something (most per-success providers bill only on a hit); a ✓ age is the catalog's own")
         _dim("  verification stamp, not live traffic. Pick the one whose inputs match what you")
         _dim("  HAVE, then weigh reliability against price.")
     elif e.get("capability") and not routing:

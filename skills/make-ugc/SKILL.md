@@ -20,8 +20,9 @@ hook, an optional voiced demo clip, and `bill.md` with what each step cost.
   curl -fsSL https://treg.to/install.sh | sh
   treg login
   ```
-  `treg balance` before starting. A full run of 4 hook clips lands in the low single-digit dollars
-  at 720p; say the estimate before each paid step.
+  `treg balance` before starting. Seedance 2.5 meters each second of output: about $0.27 at 720p
+  and $0.12 at 480p, so 4 hook clips of 10-18 s cost about $11-$19 at 720p. Say the estimate
+  (seconds x rate) before each paid step.
 - **Two sibling skills** this one delegates to. Read each before its step, do not paraphrase them:
   - `portrait-clone` (the character): https://raw.githubusercontent.com/agentara/skills/refs/heads/main/skills/aigc/portrait-clone/SKILL.md
   - `ugc-talking-head-video` (the clips and captions): https://raw.githubusercontent.com/superdesigndev/treg/main/.agents/skills/ugc-talking-head-video/SKILL.md
@@ -109,6 +110,8 @@ verify yourself: voice likeness and lip-sync are judged by ear and eye, not by t
 - Every generation and reference upload goes through `treg call` and `treg host`. Never hand a
   vendor a paste-host link, and never hold a vendor key for this loop.
 - State the price before each paid step. When you call an endpoint directly rather than through
-  the runner, send treg's max-cost header so one task cannot exceed the price you quoted.
+  the runner, send treg's max-cost header: treg refuses a task whose reserve is above the price you
+  quoted. It does not cap the final charge: a task settles at the credits the provider reports,
+  which can be above the reserve (a reference video's seconds are metered too).
 - Rerun one thing at a time; there is no seed, and a rerun can regress something else.
 - The three stops are the product. A run that skips them makes clips nobody asked for.

@@ -59,9 +59,12 @@ Two response headers matter on every call:
 Neither lives in the provider's body, which treg relays unchanged — including its errors. A 4xx/5xx
 from the provider costs nothing. One request header matters when you resell with a budget:
 
-- **`X-Treg-Route-Max-Cost: <usd>`** — a hard ceiling for this one call. If the reserve would exceed
-  it treg answers **402** `error: route_max_cost` with `max_cost_micro` and `estimated_cost_micro`,
-  and nothing is charged. Direct calls have no default ceiling; only the header caps them.
+- **`X-Treg-Route-Max-Cost: <usd>`**: a ceiling on what this one call may reserve. If the reserve
+  would exceed it treg answers **402** `error: route_max_cost` with `max_cost_micro` and
+  `estimated_cost_micro`, and nothing is charged. It does not cap the settled charge: a tool that
+  settles on the provider's reported charge or metered usage can settle above it, so also send the
+  provider's own spend cap where it has one (AnyAPI `max_cost_usd`, Apify `maxTotalChargeUsd`).
+  Direct calls have no default ceiling.
 
 The catalog's `~$/call` figure is an estimate at the default page size: a `per_result` price with
 `unit: row` scales with your `limit`; with `unit: target` / `domain` / `keyword` it scales with how

@@ -301,7 +301,10 @@ A 409 means the original call is still running: retry shortly. A 410 `idempotenc
 it was charged but its answer was not kept: try `GET /calls/{call_id}/result`, or use a new key.
 A 410 `idempotency_outcome_unknown` means its outcome was not recorded: `GET /calls/{call_id}` shows the cost; use a new key.
 
-Most retries need none of this — a failed call was never billed.
+Most retries need none of this: an HTTP 4xx/5xx relayed from the provider, a timeout or a network
+error was never billed. A failure the provider reports inside a 2xx (`X-Treg-Upstream-Failed`) can
+be, at what the provider billed for the attempt, and so can a miss on a tool whose cost note says
+the provider charges one: retry those only with a changed request.
 
 Catalog entries marked `strict_query: true` accept only their declared query parameters, once each. Include required fields, use allowed values and omit the request body.
 
