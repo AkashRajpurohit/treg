@@ -174,6 +174,61 @@ async def test_akta_enrichment_monid_route_is_eligible_only_after_live_verificat
     assert row.enabled and row.agg_unit == "result" and row.single_result is True
 
 
+def test_disclosed_price_bounds_one_relayed_answer():
+    assert R.disclosed_micro(_route(agg_price_micro=2_000)) == 2_000
+    assert R.disclosed_micro(_route(agg_price_micro=None)) == 0
+    single = _route(agg_unit="result", single_result=True, agg_price_micro=12_000)
+    assert R.disclosed_micro(single, 3) == 12_000, "a single-record route is one priced event"
+    rows = _route(agg_unit="result", single_result=False, agg_price_micro=18_000)
+    assert R.disclosed_micro(rows, 2) == 36_000
+    assert R.disclosed_micro(rows, 0) == 0
+    for unreported in (None, "2", True, 2.5):
+        assert R.disclosed_micro(rows, unreported) == 18_000, "an unreported count prices one row"
+
+
+async def _sync_apollo_people_search(charge: int | None, *, listed: float | None = 0.0):
+    """The seeded Orthogonal route for catalog-free `apollo.people.search`, with an in-band charge
+    recorded by a previous verify."""
+    await reset_db()
+    candidate = {**next(x for x in R.load_seed() if x["endpoint_id"] == "apollo.people.search"
+                        and x["aggregator"] == "orthogonal"),
+                 "agg_price_usd": listed, "verified_at": "2026-10-12"}
+    now = R._dt("2026-10-13T00:00:00")
+    async with session_maker() as db:
+        await ensure_policies(db, has_key=lambda p: True)
+        await R.apply_sync(db, [candidate], catalog=catalog_store.load(), now=now)
+        row = await db.get(OverflowRoute, ("apollo.people.search", "orthogonal"))
+        row.agg_charge_micro = charge
+        await R.apply_sync(db, [candidate], catalog=catalog_store.load(), now=now)
+        await db.commit()
+        return await db.get(OverflowRoute, ("apollo.people.search", "orthogonal"))
+
+
+@pytest.mark.parametrize("listed,charge,price,enabled,reason", [
+    (0.0, None, 0, True, ""),                 # no evidence yet: the listing stands
+    (0.0, 2_000, 2_000, True, ""),            # a stale 0 the aggregator bills: repriced, still on
+    (None, 2_000, 2_000, True, ""),           # a missing listing price: priced from the charge
+    (0.005, 2_000, 5_000, True, ""),          # a charge below the listing never lowers it
+    (0.0, 20_000, 20_000, False, "free for us, aggregator $0.02 > $0.01"),  # repriced out of bounds
+])
+async def test_sync_reprices_a_route_at_the_charge_verify_recorded(listed, charge, price, enabled, reason):
+    row = await _sync_apollo_people_search(charge, listed=listed)
+    assert (row.agg_price_micro, row.enabled, row.disabled_reason) == (price, enabled, reason)
+
+
+async def test_sync_ignores_a_charge_on_a_multi_row_per_result_route():
+    await reset_db()
+    candidate = next(x for x in R.load_seed() if x["endpoint_id"] == "contactout.companies.search"
+                     and x["aggregator"] == "monid")
+    async with session_maker() as db:
+        await ensure_policies(db, has_key=lambda p: True)
+        await R.apply_sync(db, [candidate], catalog=catalog_store.load(), now=R._dt("2026-09-09T00:00:00"))
+        row = await db.get(OverflowRoute, ("contactout.companies.search", "monid"))
+        row.agg_charge_micro = 90_000  # five rows: a per-row price is not a per-call charge
+        await R.apply_sync(db, [candidate], catalog=catalog_store.load(), now=R._dt("2026-09-09T00:00:00"))
+        assert row.agg_price_micro == 18_000
+
+
 def test_route_for_orders_orthogonal_first():
     rs = [_route(aggregator="monid", enabled=True), _route(aggregator="orthogonal", enabled=True),
           _route(aggregator="orthogonal", endpoint_id="x", enabled=True), _route(aggregator="monid", enabled=False, endpoint_id="y")]

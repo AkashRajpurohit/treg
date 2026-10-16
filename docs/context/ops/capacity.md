@@ -29,6 +29,7 @@ sources:
   - src/treg/infra/upstream/aggregators/monid.py
   - src/treg/infra/upstream/aggregators/catalogs.py
   - src/treg/alembic/versions/0006_overflow_route.py
+  - src/treg/alembic/versions/0076_overflow_route_charge.py
   - tests/test_capacity_overflow_routes.py
   - tests/test_influencersclub_overflow.py
   - src/treg/worker.py
@@ -407,10 +408,10 @@ outer layers"). Money is never touched: capacity marks are ratestore rows, never
 **Overflow** = the *same* vendor endpoint served through a treg-owned **aggregator** account
 (Orthogonal first, Monid second) when our direct account is out. It is a credential rung
 (`platform-overflow`), not a vendor: not in the catalog, not searchable, no BYO key. The caller
-pays the aggregator's real price, 0% markup, disclosed in-band when it ships (step E).
+pays the aggregator's real price, 0% markup, never above the route's disclosed price (step E).
 
 - **`OverflowRoute`** (`overflowroute`, Alembic `0006`): one row per `(endpoint_id, aggregator)` -
-  the aggregator's slug/path spelling, its list price (micro-USD), `agg_unit` (call | result),
+  the aggregator's slug/path spelling, its price (micro-USD), `agg_unit` (call | result),
   `ratio` = aggregator price ÷ our per-event price, `single_result`, `last_verified_at`, and a
   DERIVED `enabled` with `disabled_reason`. Worker-owned; the call path will only read it.
 - **`routes.py`** — the rules, in one place (`eligible`): platform-eligible · policy allows
@@ -421,6 +422,15 @@ pays the aggregator's real price, 0% markup, disclosed in-band when it ships (st
   dry) · verified within 7 days. `match_catalogs` derives candidates from the aggregators' catalogs
   by exact `(host, method, path)` (Orthogonal) / `(provider, path)` (Monid); `apply_sync` upserts
   and re-derives `enabled`, and disables any row missing from the current sync.
+- **The price is the listing, corrected by the charge.** `agg_price_micro` is the seed's or the
+  live listing's price, raised to `agg_charge_micro` (Alembic `0076`) when that is higher:
+  `overflow verify` records the in-band charge of its relay call on every per-call route (or
+  single-record per-result route), whatever the shape verdict, and the next `overflow sync`
+  prices, discloses and judges the route at the charge (`charged_price_micro`), so a stale or
+  missing listing (a seeded $0 the aggregator bills) is corrected or, past the ratio or the
+  free-route ceiling, disabled. A charge never lowers a listed price. `sync --live` asks
+  Orthogonal's `/details` for a price its listing omits. The call path caps what the caller pays
+  at the disclosed price either way (`architecture/money.md` § Overflow money).
 - **Influencers Club discovery**: `request_priced` permits the two exact Orthogonal contracts
   `influencersclub.creators.search` and `.similar` to be admitted by an **absolute ceiling**
   instead of the ratio. `/v1/details` and live runs with 2 and 10 creators confirmed $0.03 per

@@ -580,9 +580,10 @@ maybe_overflow` runs a **child cycle** after the primary's settle released its h
    caller's original query + buffered body; the key comes from `Settings.overflow_key_<name>` and is
    never logged. Monid's async runs are polled (bounded).
 4. `parse` → vendor status + body + the real in-band cost. `_platform_settle(child,
-   observed_override=cost, overflow_spend=(aggregator, cost − treg's direct price))` charges **exactly
-   the aggregator's price, 0% markup**, and folds the day's spend delta into the same transaction -
-   the one allowlisted overflow write (`overflow_spend_in_settle`).
+   observed_override=min(cost, disclosed), overflow_spend=(aggregator, cost − treg's direct price))`
+   charges **the aggregator's price, 0% markup, never above the route price `catalog_get`
+   disclosed**, and folds the day's full spend delta into the same transaction - the one
+   allowlisted overflow write (`overflow_spend_in_settle`).
 5. The vendor's body goes back as the answer, `X-Treg-Served-Via: overflow:<name>`, `X-Treg-Cost-Micro`
    the child's charge, `X-Treg-Call-Id` the parent's. Two audit rows share the `call_ref`: the primary
    attempt with its real status and the child with `credential_tier="platform-overflow"`. The MCP

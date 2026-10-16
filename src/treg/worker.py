@@ -90,8 +90,15 @@ async def _overflow_sync(args) -> int:
         s = get_settings()
         async with httpx.AsyncClient(timeout=60) as c:
             orth = await catalogs.orthogonal_apis(c, s.overflow_key_orthogonal) if s.overflow_key_orthogonal else []
+            matched = R.match_catalogs(_our_endpoints(), orthogonal_apis=orth)
+            for row in matched:
+                # The listing omits some prices that `/details` states; a seeded price must not
+                # outlive the aggregator's own.
+                if row["aggregator"] == "orthogonal" and row.get("agg_price_usd") is None:
+                    row["agg_price_usd"] = R.listed_usd(await catalogs.orthogonal_price(
+                        c, s.overflow_key_orthogonal, row["agg_slug"], row["agg_path"]))
         seeded = {(x["endpoint_id"], x["aggregator"]): x for x in candidates}
-        for row in R.match_catalogs(_our_endpoints(), orthogonal_apis=orth):
+        for row in matched:
             key = (row["endpoint_id"], row["aggregator"])
             if key in seeded:
                 seeded[key].update({k: row[k] for k in ("agg_slug", "agg_path", "agg_price_usd") if row.get(k) is not None})
@@ -217,6 +224,13 @@ async def _overflow_verify(args) -> int:
                     continue
                 verdict = V.verdict(v)
                 tally[verdict] += 1
+                if v.relay_ok and v.cost_micro is not None and R.per_call_priced(row):
+                    # Evidence for the price, whatever the shape verdict: what the aggregator
+                    # billed for this call. `overflow sync` prices the route at no less.
+                    if v.cost_micro > (row.agg_price_micro or 0):
+                        print(f"price        {r.endpoint_id} via {r.aggregator} charged {v.cost_micro} "
+                              f"above the listed {row.agg_price_micro}; sync reprices it")
+                    row.agg_charge_micro = v.cost_micro
                 if verdict == "passed" or (verdict == "inconclusive" and v.direct_dry and v.relay_ok):
                     # Our own key dry and the relay served: the shape cannot be checked for OUR
                     # reason; without the stamp `overflow sync` would decay the route after 7 days -

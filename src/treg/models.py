@@ -1726,8 +1726,10 @@ class OverflowRoute(SQLModel, table=True):
     Filled by the worker's `treg-worker overflow sync` — never by hand, never by the call path.
     `enabled` is DERIVED by `domain.capacity.routes.eligible` at sync time (same unit, ratio ≤ 4,
     platform-eligible, policy allows, verified < 7 days ago); the call path only ever reads it.
-    Prices are the aggregator's list price in micro-USD: the caller pays exactly that, 0% markup,
-    disclosed in-band. See docs/PROVIDER-CAPACITY-PLAN.md §4.3.
+    Prices are the aggregator's list price in micro-USD, corrected upward at sync by
+    `agg_charge_micro` (the in-band charge `overflow verify` last saw); the caller pays the
+    aggregator's in-band charge, 0% markup, never above that disclosed price. See
+    docs/PROVIDER-CAPACITY-PLAN.md §4.3.
     """
 
     endpoint_id: str = Field(primary_key=True)
@@ -1746,6 +1748,7 @@ class OverflowRoute(SQLModel, table=True):
     matched_at: NaiveUTC | None = Field(default=None)
     last_verified_at: NaiveUTC | None = Field(default=None)
     updated_at: NaiveUTC = Field(default_factory=_now)
+    agg_charge_micro: int | None = Field(default=None)  # in-band charge of the last verify relay
 
 
 class OverflowSpend(SQLModel, table=True):

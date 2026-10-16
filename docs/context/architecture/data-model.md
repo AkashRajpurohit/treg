@@ -539,7 +539,8 @@ uses this metadata, never the encrypted token's shape.
   only - never a credential. See `ops/capacity.md`. Alembic revision `0005` creates these two tables.
 - **`OverflowRoute`** - one `(endpoint_id, aggregator)` pair: the same vendor endpoint served through a
   treg-owned aggregator account, with the aggregator's price, the price ratio, verification stamp and a
-  DERIVED `enabled`. Filled by `treg-worker overflow sync` only (Alembic `0006`); read-only for the call
+  DERIVED `enabled`. Filled by `treg-worker overflow sync` (Alembic `0006`); `overflow verify` writes the
+  stamp and the in-band charge it saw (`agg_charge_micro`, Alembic `0076`); read-only for the call
   path. See `ops/capacity.md`.
 - `Org.platform_overflow_disabled` - the team's overflow opt-out (Alembic `0008`). See `ops/capacity.md`.
 - **`OverflowSpend`** - per aggregator per UTC day: calls, the aggregator's charge, the delta against

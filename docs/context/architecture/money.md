@@ -1244,10 +1244,16 @@ This is a pre-reservation guard, not a rewrite of provider-reported settlement e
 
 The overflow child (`application.call.overflow`) is an ordinary metered cycle on its own hold
 (`{call_ref}:overflow`): `_platform_reserve` at the route's aggregator price, `_platform_settle` with
-`observed_override` = the aggregator's in-band charge - the caller pays exactly that, 0% markup -
-and `cost_source: "aggregator"` + `served_via` in the ledger `meta`, so `reconcile` needs no join.
-`OverflowSpend` (per aggregator per UTC day) is updated inside that same settle transaction; it is
-accounting for the per-aggregator daily budget, not a balance. That budget is
+`observed_override` = the aggregator's in-band charge - the caller pays exactly that, 0% markup,
+but never more than the route's disclosed price (`domain.capacity.routes.disclosed_micro`: the
+route price, times the aggregator's reported row count on a multi-row per-result route, one row
+when it reports none) - and `cost_source: "aggregator"` + `served_via` in the ledger `meta`, so
+`reconcile` needs no join. A charge above the disclosed price is treg's loss: the child's audit
+row keeps the full charge as `cost_observed_micro` beside the capped `cost_charged_micro`, and
+`OverflowSpend` (per aggregator per UTC day) records the full charge too, inside that same settle
+transaction; it is accounting for the per-aggregator daily budget, not a balance. A route disclosed
+at $0 is therefore free to the caller until `overflow verify` records the charge and `overflow sync`
+reprices it (`ops/capacity.md` § Overflow routes). That budget is
 `TREG_OVERFLOW_DAILY_BUDGET_USD`: the code default is $20 per aggregator. A deployment may set a
 different value in its private operational configuration. Shadow mode places no hold and charges
 nothing. Skip-direct places no parent hold and leaves `payer_org_id` empty; cancellation of the

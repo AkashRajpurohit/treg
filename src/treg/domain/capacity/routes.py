@@ -48,6 +48,34 @@ _FIXED_DISCOVERY_PATHS = {
 _FIXED_DISCOVERY_MAX_MICRO = 30_000
 
 
+def per_call_priced(route: OverflowRoute) -> bool:
+    """Is one relayed answer exactly one priced event: a per-call route, or a per-result route that
+    returns at most one record?"""
+    return route.agg_unit == "call" or bool(route.single_result)
+
+
+def disclosed_micro(route: OverflowRoute, result_count=None) -> int:
+    """The most the caller may pay for one relayed answer: the route's price as `catalog_get`
+    discloses it, times the aggregator's own row count on a multi-row per-result route. A count
+    the aggregator did not report prices one row (the hold), never an unbounded charge."""
+    price = max(0, int(route.agg_price_micro or 0))
+    if per_call_priced(route):
+        return price
+    rows = result_count if isinstance(result_count, int) and not isinstance(result_count, bool) else 1
+    return price * max(0, rows)
+
+
+def charged_price_micro(listed_micro: int | None, route: OverflowRoute) -> int | None:
+    """The route's price from its listing, corrected upward by the aggregator's in-band charge
+    that the last verification recorded (`agg_charge_micro`). A listing can be stale or missing
+    (a seeded 0 on a route the aggregator bills): the charge is what the aggregator actually
+    takes per call, so the route is priced, disclosed and judged by `eligible` at that."""
+    charge = route.agg_charge_micro
+    if charge is None or not per_call_priced(route):
+        return listed_micro
+    return charge if listed_micro is None or charge > listed_micro else listed_micro
+
+
 def request_priced(route: OverflowRoute) -> bool:
     """Does this exact fixed-fee contract require a request estimate for price admission?"""
     contract = _FIXED_DISCOVERY_PATHS.get(route.endpoint_id)
@@ -172,18 +200,18 @@ def match_catalogs(our_endpoints: list[dict], *, orthogonal_apis: list[dict] | N
             slug, e = hit
             out.append({"endpoint_id": ep["endpoint_id"], "provider": ep["provider"], "method": ep["method"],
                         "path": ep["path"], "aggregator": "orthogonal", "agg_slug": slug, "agg_path": e["path"],
-                        "agg_price_usd": _usd(e.get("price")), "agg_unit": "call"})
+                        "agg_price_usd": listed_usd(e.get("price")), "agg_unit": "call"})
         m = monid_index.get((ep["provider"], norm_path(ep["path"]))) or monid_index.get((ep["provider"], key[1]))
         if m:
             ptype = ((m.get("price") or {}).get("type") or "").upper()
             out.append({"endpoint_id": ep["endpoint_id"], "provider": ep["provider"], "method": ep["method"],
                         "path": ep["path"], "aggregator": "monid", "agg_slug": m["provider"],
-                        "agg_path": m["endpoint"], "agg_price_usd": _usd(m.get("price")),
+                        "agg_path": m["endpoint"], "agg_price_usd": listed_usd(m.get("price")),
                         "agg_unit": "result" if ptype == "PER_RESULT" else "call"})
     return out
 
 
-def _usd(price) -> float | None:
+def listed_usd(price) -> float | None:
     """'$0.03' | 'dynamic' | {'amount': {'value': .., 'currency': 'USD'}} → USD float or None."""
     if price is None:
         return None
@@ -231,10 +259,12 @@ async def apply_sync(db: AsyncSession, candidates: list[dict], *, catalog, now: 
             existing[key] = row
         row.agg_slug, row.agg_path = c["agg_slug"], c["agg_path"]
         row.agg_unit = c.get("agg_unit") or "call"
-        usd = c.get("agg_price_usd")
-        row.agg_price_micro = int(round(usd * 1_000_000)) if usd is not None else None
         if c.get("single_result") is not None:
             row.single_result = bool(c["single_result"])
+        listed = c.get("agg_price_usd")
+        row.agg_price_micro = charged_price_micro(
+            int(round(listed * 1_000_000)) if listed is not None else None, row)
+        usd = row.agg_price_micro / 1_000_000 if row.agg_price_micro is not None else None
         row.matched_at = _dt(c.get("matched_at")) or row.matched_at or now
         v = _dt(c.get("verified_at"))
         if v and (row.last_verified_at is None or v > row.last_verified_at):

@@ -1122,3 +1122,99 @@ async def test_icypeas_people_search_overflows_at_orthogonals_flat_fee(clients: 
     assert before - await _balance(clients) == 10_000
     assert seen[0].json == {"api": "icypeas", "path": "/api/find-people", "body": body}
     assert await _holds() == []
+
+
+# ---- the caller never pays above the disclosed route price -------------------------------------
+
+@pytest.mark.parametrize("price_micro,price_cents,charged", [
+    (0, 0.2, 0),        # a seeded $0 route the aggregator bills at $0.002: disclosed free, so free
+    (200, 1.0, 200),    # a $0.0002 route the aggregator bills at $0.01: the disclosed price
+    (2_000, 0.1, 1_000),  # a charge below the disclosed price is the charge
+])
+async def test_overflow_child_settles_at_most_the_disclosed_route_price(
+    clients: AsyncClient, overflow_on, monkeypatch, price_micro, price_cents, charged,
+):
+    await _route(endpoint_id=APOLLO_SEARCH_EP, provider="apollo", method="POST", path=APOLLO_SEARCH_PATH,
+                 price_micro=price_micro, ratio=None)
+    disclosed = (await clients.get(f"/catalog/endpoints/{APOLLO_SEARCH_EP}")).json()["endpoint"]
+    assert disclosed["overflow_price_usd"] == price_micro / 1_000_000
+    monkeypatch.setattr(call_service, "relay", _fake_relay(422, APOLLO_OUT_OF_CREDITS))
+    body = {"people": [{"id": "p1", "name": "hashed"}], "pagination": {"page": 1}}
+    envelope = {"success": True, "data": body, "priceCents": price_cents, "requestId": "run_cap"}
+    monkeypatch.setattr(O, "_send", _orthogonal([(200, envelope)], []))
+    before = await _balance(clients)
+    r = await clients.post(f"/call/{APOLLO_SEARCH_EP}", json={"q_keywords": "synthetic"})
+    assert r.status_code == 200, r.text
+    assert r.json() == body and r.headers["X-Treg-Served-Via"] == "overflow:orthogonal"
+    assert r.headers["X-Treg-Cost-Micro"] == str(charged)
+    assert before - await _balance(clients) == charged and await _holds() == []
+    actual = int(round(price_cents * 10_000))
+    spend = await _rows(OverflowSpend)
+    assert [(s.calls, s.cost_micro) for s in spend] == [(1, actual)], "treg's real aggregator cost, whole"
+    await audit.drain()
+    from treg.models import CallRecord
+    async with session_maker() as db:
+        child = (await db.execute(select(CallRecord).where(
+            CallRecord.credential_tier == "platform-overflow"))).scalars().one()
+    assert (child.cost_estimated_micro, child.cost_observed_micro, child.cost_charged_micro) == (
+        price_micro, actual, charged)
+
+
+async def test_verify_records_the_in_band_charge_on_a_per_call_route_only(clients, overflow_on, monkeypatch):
+    from types import SimpleNamespace
+    from treg import oauth_providers, worker
+    from treg.domain.capacity import verify as V
+    from treg.domain.catalog import store as catalog_store
+    eps = [e for e in catalog_store.load().endpoints if e.get("test_request")][:2]
+    async with session_maker() as db:
+        for ep, unit in zip(eps, ("call", "result")):
+            db.add(OverflowRoute(endpoint_id=ep["id"], aggregator="orthogonal", provider=ep["provider"],
+                                 method=ep["method"], path=ep["path"], agg_slug=ep["provider"], agg_path=ep["path"],
+                                 agg_price_micro=0, agg_unit=unit, single_result=False, ratio=None,
+                                 enabled=True, last_verified_at=utcnow_naive()))
+        await db.commit()
+    monkeypatch.setattr(oauth_providers, "get", lambda *_: None)
+
+    async def verify(client, route, **kwargs):
+        return V.Verification(route.endpoint_id, route.aggregator, None, 200, None, 2_000, None,
+                              note="relay ok, direct not attempted")
+    monkeypatch.setattr(V, "verify_route", verify)
+    args = SimpleNamespace(all=False, only=None, max_usd=0.02, renew_max_usd=1.0, budget_usd=15.0)
+    assert await worker._overflow_verify(args) == 0
+    async with session_maker() as db:
+        per_call = await db.get(OverflowRoute, (eps[0]["id"], "orthogonal"))
+        per_row = await db.get(OverflowRoute, (eps[1]["id"], "orthogonal"))
+    assert per_call.agg_charge_micro == 2_000 and per_call.agg_price_micro == 0, "verify records; sync reprices"
+    assert per_row.agg_charge_micro is None
+
+
+async def test_live_sync_reads_a_price_the_listing_omits_from_details(monkeypatch):
+    from types import SimpleNamespace
+    from treg import worker
+    from treg.infra.db import reset_db
+    from treg.infra.upstream.aggregators import catalogs
+    await reset_db()
+    monkeypatch.setenv("TREG_OVERFLOW_KEY_ORTHOGONAL", "ORTH-KEY")
+    get_settings.cache_clear()
+    seeded = next(x for x in R.load_seed() if x["endpoint_id"] == APOLLO_SEARCH_EP and x["aggregator"] == "orthogonal")
+    ours = next(e for e in worker._our_endpoints() if e["endpoint_id"] == APOLLO_SEARCH_EP)
+    listing = [{"slug": "apollo", "baseUrl": ours["base_url"],
+                "endpoints": [{"path": ours["path"], "method": "POST", "price": "dynamic"}]}]
+    asked = []
+
+    async def apis(client, key):
+        return listing
+
+    async def price(client, key, api, path):
+        asked.append((api, path))
+        return "$0.002"
+    monkeypatch.setattr(catalogs, "orthogonal_apis", apis)
+    monkeypatch.setattr(catalogs, "orthogonal_price", price)
+    try:
+        assert await worker._overflow_sync(SimpleNamespace(live=True)) == 0
+    finally:
+        get_settings.cache_clear()
+    assert asked == [("apollo", ours["path"])]
+    async with session_maker() as db:
+        row = await db.get(OverflowRoute, (APOLLO_SEARCH_EP, "orthogonal"))
+    assert seeded["agg_price_usd"] == 0.0 and row.agg_price_micro == 2_000, "the aggregator's own price wins"

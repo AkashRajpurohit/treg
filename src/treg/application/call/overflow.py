@@ -3,8 +3,8 @@
 When treg's OWN account for a provider fails a tier-4 call (a balance/quota signature, a burst-429
 that smoothing could not absorb, a connect error), serve the SAME vendor endpoint through a
 treg-owned aggregator account: reserve a child hold (own id `{call_ref}:overflow`) → one aggregator
-run, no DB open → settle the child at the aggregator's real price (0% markup) and fold the daily
-spend delta into that settle → return the vendor's body from the aggregator's envelope, disclosed via
+run, no DB open → settle the child at the aggregator's real price (0% markup), never above the
+route's disclosed price, and fold the daily spend delta (the full real price) into that settle → return the vendor's body from the aggregator's envelope, disclosed via
 `X-Treg-Served-Via`. One hop: an aggregator that fails is data (child released, aggregator marked
 unhealthy 15 min, typed 503 with alternatives), never a second aggregator. An aggregator's own
 per-request refusal (`contract`) is request-scoped: child released, nothing charged, no mark; the
@@ -34,6 +34,7 @@ from ...config import get_settings
 from ...infra.db import session_maker
 from ...domain.capacity import marks as capacity_marks
 from ...domain.capacity import overflow_spend as overflow_spend_ledger
+from ...domain.capacity import routes as overflow_routes
 from ...domain.capacity import signatures as capacity_signatures
 from ...domain.capacity.routes_view import view as routes_view
 from ...domain.capacity.verify import shape
@@ -123,6 +124,19 @@ def _child(mk: MarketplaceCall, route) -> MarketplaceCall:
                    unit_micro=agg,
                    settlement_basis={"when": "response", "amount": {"kind": "observed"},
                                      "fallback_micro": agg, "reserve_micro": agg})
+
+
+def _caller_charge(mk: MarketplaceCall, route, res: AggregatorResult) -> int | None:
+    """The aggregator's in-band charge, never above the price `catalog_get` disclosed for the
+    route: a stale listing (a seeded 0 the aggregator bills at $0.002) is treg's loss, not the
+    caller's. `OverflowSpend` keeps the full charge; the next verify and sync reprice the route."""
+    if res.cost_micro is None:
+        return None
+    cap = overflow_routes.disclosed_micro(route, res.extra.get("result_count"))
+    if res.cost_micro > cap:
+        log.warning("overflow via %s charged %d above the disclosed %d for %s; settling at the "
+                    "disclosed price", route.aggregator, res.cost_micro, cap, mk.endpoint_id)
+    return min(int(res.cost_micro), cap)
 
 
 def _response(res: AggregatorResult) -> UpstreamResponse:
@@ -356,7 +370,7 @@ async def _maybe_overflow_attempt(
     spend_adjustment = _overflow_spend_adjustment(budget)
     charged, observed = await _platform_settle(
         child, int(res.upstream_status or 200), res.upstream_body,
-        observed_override=res.cost_micro,
+        observed_override=_caller_charge(mk, route, res),
         overflow_spend=spend_adjustment)
     if spend_adjustment is None:
         await _preserve_unknown_budget(budget)
