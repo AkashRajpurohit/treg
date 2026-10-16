@@ -2,6 +2,26 @@
 title: Endpoint catalog — what you can DO with a connected key, and which provider should do it
 status: shipped
 sources:
+  - src/treg/catalog/blitzapi.yaml
+  - src/treg/catalog/examples/blitzapi.people.search.json
+  - src/treg/catalog/examples/blitzapi.people.employee-finder.json
+  - src/treg/catalog/examples/blitzapi.people.waterfall-icp.json
+  - src/treg/catalog/examples/blitzapi.companies.search.json
+  - src/treg/catalog/examples/blitzapi.companies.tam-by-jobs.json
+  - src/treg/catalog/examples/blitzapi.companies.tam-by-people.json
+  - src/treg/catalog/examples/blitzapi.jobs.search.json
+  - src/treg/catalog/examples/blitzapi.jobs.company.json
+  - src/treg/catalog/examples/blitzapi.people.enrich.json
+  - src/treg/catalog/examples/blitzapi.people.email.find.json
+  - src/treg/catalog/examples/blitzapi.people.phone.find.json
+  - src/treg/catalog/examples/blitzapi.people.email.reverse.json
+  - src/treg/catalog/examples/blitzapi.people.phone.reverse.json
+  - src/treg/catalog/examples/blitzapi.companies.enrich.json
+  - src/treg/catalog/examples/blitzapi.companies.domain-to-linkedin.json
+  - src/treg/catalog/examples/blitzapi.companies.linkedin-to-domain.json
+  - src/treg/catalog/examples/blitzapi.companies.employees.by-country.json
+  - src/treg/catalog/examples/blitzapi.companies.employees.by-department.json
+  - tests/test_blitzapi.py
   - scripts/catalog_added.py
   - scripts/catalog_backfill_added.py
   - .github/workflows/catalog-added.yml

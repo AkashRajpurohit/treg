@@ -391,6 +391,19 @@ async def _sixtyfour(c, key):
     return {"value": remaining, "unit": "credits", "note": "Organization credit balance"}
 
 
+async def _blitzapi(c, key):
+    d = await _get(c, "https://api.blitz-api.ai/v2/account/key-info",
+                   headers={"x-api-key": key})
+    remaining = d.get("records_remaining") if isinstance(d, dict) and d.get("valid") is True else None
+    if type(remaining) is not int or remaining < 0:
+        raise ValueError("BlitzAPI returned no valid remaining-record balance")
+    reset = d.get("next_reset_at")
+    rps = d.get("max_requests_per_seconds")
+    return {"value": remaining, "unit": "records",
+            "note": f"Monthly allowance resets {reset if isinstance(reset, str) else 'unknown'}; "
+                    f"per-endpoint limit {rps if type(rps) is int else 'unknown'} requests/s"}
+
+
 async def _dropleads(c, key):
     d = await _get(c, "https://prime.dropleads.io/api/v2/prime-db/credits/balance",
                    headers={"X-API-Key": key})
@@ -992,6 +1005,7 @@ BALANCE_ROUTES = {
     "harvestapi": _harvestapi,
     "fetchinio": _fetchinio,
     "sixtyfour": _sixtyfour,
+    "blitzapi": _blitzapi,
     "prospeo": _prospeo,
     "aiark": _aiark,
     "wiza": _wiza,
