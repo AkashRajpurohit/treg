@@ -3236,6 +3236,46 @@ def test_icypeas_company_scrape_bills_the_company_rate():
     assert call_settle._observed_cost_micro(mk, found) == 3 * mk.unit_micro  # 1.5 credits each
 
 
+_ERROR_IN_2XX = [
+    ("justoneapi", "GET", "/call/justoneapi.x.twitter-search-v1?keyword=example&searchType=Top&cursor=0",
+     None, b'{"code":301,"data":null,"message":"COLLECT FAILED, SEND REQUEST AGAIN"}'),
+    ("harvestapi", "GET", "/call/harvestapi.linkedin.user.profile?publicIdentifier=someone-example",
+     None, b'{"data":null,"error":"Too many queued requests (code_22)","status":429}'),
+    ("harvestapi", "GET", "/call/harvestapi.linkedin.user.profile?publicIdentifier=someone-example",
+     None, b'{"data":null,"error":"No active backend servers available.","status":503}'),
+    ("serpstat", "POST", "/call/serpstat.web.backlinks.summary",
+     {"id": "1", "method": "SerpstatBacklinksProcedure.getSummaryV2", "params": {"query": "example.com"}},
+     b'{"id":"1","error":{"code":-32016,"message":"Invalid domain"}}'),
+    ("icypeas", "POST", "/call/icypeas.people.email.find",
+     {"firstname": "Ada", "lastname": "Example", "domainOrCompany": "company.example"},
+     b'{"success":false,"validationErrors":[{"type":"FirstLastMandatoryDiscoveryError"}]}'),
+    ("brightdata", "POST", "/call/brightdata.x.tiktok-profiles?dataset_id=gd_l1villgoiiidt09ci&format=json",
+     [{"url": "https://www.tiktok.com/@someone-example"}], b""),
+]
+
+
+@pytest.mark.parametrize(("provider", "method", "path", "payload", "body"), _ERROR_IN_2XX)
+async def test_an_error_or_empty_2xx_is_not_a_billed_success(
+    clients: AsyncClient, monkeypatch, provider, method, path, payload, body,
+):
+    monkeypatch.setenv(f"TREG_PLATFORM_KEY_{provider.upper().replace('-', '_')}", "SYNTHETIC-KEY")
+    monkeypatch.setenv("TREG_PLATFORM_PROVIDERS", provider)
+    get_settings.cache_clear()
+    monkeypatch.setattr(call_service, "relay", _fake_relay(200, body))
+    try:
+        before = await _balance(clients)
+        response = await clients.request(method, path, json=payload)
+        assert response.status_code == 200, response.text
+        assert response.content == body
+        assert await _balance(clients) == before
+        telemetry = await _telemetry(clients)
+        assert telemetry["cost_estimated_micro"] > 0
+        assert telemetry["cost_observed_micro"] == 0
+        assert telemetry["cost_charged_micro"] == 0
+    finally:
+        get_settings.cache_clear()
+
+
 # ---------------------------------------------------------------------------------------------
 # A synchronous `settle: usage` endpoint (Jev through OpenRouter, added for the AI visibility tool)
 

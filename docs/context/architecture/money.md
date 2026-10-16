@@ -842,7 +842,7 @@ Provider-specific calculation stays outside the faithful relay.
 
 | Evidence | Settlement behavior |
 |---|---|
-| Generic catalog-reported charge | A paid synchronous cost may name `reported_charge.path` with unit `usd` or provider `credit`. A finite nonnegative response value, including zero, settles exactly; credit conversion is frozen from `fx.yaml` when the call resolves, while invalid or absent evidence falls through to the normal estimate/miss behavior |
+| Generic catalog-reported charge | A paid synchronous cost may name `reported_charge.path` with unit `usd` or provider `credit`. A finite nonnegative response value, including zero, settles exactly; credit conversion is frozen from `fx.yaml` when the call resolves, while invalid or absent evidence falls through to the normal estimate/miss behavior, except that a body whose own top-level `status` is 400 or more settles at zero |
 | Litescrape AI Overview | A response with `ai_overview: null` and `search_metadata.ai_overview_state: not_served` settles at zero, matching the provider's unbilled 200 miss. Other responses retain the catalog's success price. The live key balance confirmed the zero-cost miss. |
 | Tavily Search | Reserve one credit for Basic, Fast and Ultra-fast or two for Advanced and an auto-selected depth; an explicit Basic depth overrides automatic selection. Platform Search requires caller-supplied `include_usage: true` and settles finite nonnegative per-request `usage.credits`. Empty results remain a paid routing miss. Missing or malformed usage keeps the frozen reserve. BYOK is unmetered and need not request usage. The endpoint-specific rate table must be complete, positive and finite; catalog validation rejects bad declarations and runtime refuses the call before reserve or relay instead of pricing it at zero |
 | Tavily Extract | Reserve the requested URL count (bounded by the documented 20-URL maximum) at 0.2 credit per Basic or 0.4 per Advanced extraction. Settle that fractional allocation for each valid entry in `results`; `failed_results` and grouped `usage.credits` do not charge the caller. A documented empty results list is free; malformed evidence keeps the frozen reserve |
@@ -1290,8 +1290,8 @@ delayed account balance, so neither field is interpreted as per-call cost.
 
 ## Per-success response rules
 
-HTTP 200 alone does not prove a billable success. `settle.py` checks the routing adapter first,
-then the catalog's `expect` rule (`{json_path, equals}`), and otherwise falls back to the estimate.
+HTTP 200 alone does not prove a billable success. `settle.py` checks the catalog's `expect` rule
+(`{json_path, equals}`) first, then the routing adapter, and otherwise falls back to the estimate.
 `store.py` inherits provider-file `expect` rules onto endpoints so new routes retain the provider's
 success convention. An undecidable rule does not imply a free call.
 
