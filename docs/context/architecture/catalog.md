@@ -2296,7 +2296,7 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   goes to a title-aware search, not a free domain-only one that would answer the whole company.
   Only caller-supplied keys count (`rank(given=…)`), never keys reached through `derive`. Price
   decides among equals.
-  **Not on a one-subject lookup** (contract `one_subject: true`: `people.email.find`,
+  **Not on a one-subject lookup** (contract `one_subject: true`: `people.email.find`, `people.email.find.personal`,
   `people.phone.find`): every identity variant names the same person, so reading more of the
   caller's keys does not change the question. There expected cost per hit ranks first and
   specificity only breaks ties; specificity first had sent `{linkedin_url, full_name, domain}`
