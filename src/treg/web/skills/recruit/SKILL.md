@@ -36,7 +36,25 @@ install and sign in, then come back here.
 6. **Rank**, yourself: read each survivor against the criteria and write one line, in the user's
    words, on why they fit ("8 yrs Go at a payments scale-up, led a Kafka migration"). No line you
    can write, no rank. Keep the top N (default 20).
-7. **Contact**, for the top N only:
+7. **Evidence** (optional, cheap), for the top `E` of them (default 10). Gather cited facts, then
+   re-score: a claim the evidence backs moves a candidate up, one it contradicts moves them down.
+   Cap each candidate's evidence spend (default $0.05) and stop at the cap. Skip a source when the
+   person has nothing for it (no GitHub handle, no posts); never guess a handle.
+
+   | Evidence | Call | Use it for |
+   | --- | --- | --- |
+   | Recent LinkedIn posts | `anyapi.linkedin.profile_posts_full` with `{"url": "<profile>", "limit": 5}` (or `_thin`, whichever `treg catalog get` prices lower) | what they work on now, in their words |
+   | GitHub | `treg catalog search "github user profile"` for the user, then `crawl4ai.github.repo.profile` on their top repos | languages, stars, repos that match the job's skills |
+   | Talks and writing | `anyapi.youtube.search` and `anyapi.google.scholar`, query `"<name>" <topic>` | talks and papers on the job's topic; keep only results that name them |
+   | Open to move | `datagma.people.job-change.detect` (`fullName`, `companyName`, `jobTitle`); tenure from the search row; `akta.companies.news` once per current company, shared by everyone there | a recent move (less likely to move again), long tenure, layoffs or a funding gap at their company |
+
+   Read each answer before you cite it: a search result that does not name the person is not
+   evidence. The posts feed mixes in other people's posts; count only items whose `author.handle`
+   is the profile's own, from the last six months. The job-change check answers a `status`
+   (`NO_NEW_COMPANY` means still there). When a source refuses (a provider out of capacity), skip
+   it for the run; its refusal names alternatives, which you may use if they fit under the cap. `treg catalog get <id>` first if a call is new to you: the catalog changes, and the
+   price and parameters on the row win over this table.
+8. **Contact**, for the top N only:
 
    ```
    treg call treg.people.email.find.personal --data '{"linkedin_url":"…"}' --header 'X-Treg-Route-Verify: true' --header 'X-Treg-Route-Max-Cost: 0.30'
@@ -47,7 +65,7 @@ install and sign in, then come back here.
    verify header checks a hit in the same call (the mailbox; for a phone, that the line is live).
    Send only the LinkedIn URL: it is what every provider takes. Never re-send a lookup for the same
    person; every hit bills, repeats included.
-8. **Hand back** the shortlist and the run file, and state coverage plainly: "214 found, 61 kept,
+9. **Hand back** the shortlist and the run file, and state coverage plainly: "214 found, 61 kept,
    top 20: 14 emails, 9 live mobiles, $4.12".
 
 ## The run file
@@ -70,14 +88,21 @@ so a stopped run still says what it did. Money comes from the answers, never fro
      "reject_reasons": {"hiring company": 9, "location": 52, "seniority": 27, "job family": 14},
      "reject_samples": [{"name": "…", "linkedin_url": "…", "reason": "location: Munich"}]},
     {"stage": "rank",    "in": 61, "out": 20},
+    {"stage": "evidence", "people": 10, "cap_usd": 0.05, "charged_usd": 0.0,
+     "by_source": {"linkedin_posts": {"tried": 10, "found": 7, "charged_usd": 0.0}}},
     {"stage": "contact", "people": 20, "emails": 14, "phones": 9, "charged_usd": 0.0}
   ],
   "candidates": [
     {"rank": 1, "name": "…", "title": "…", "company": "…", "location": "…", "linkedin_url": "…",
-     "why_fit": "…",
+     "why_fit": "…", "score_before": 7, "score_after": 8,
+     "evidence": [
+       {"type": "linkedin_posts", "claim": "…", "source": "anyapi.linkedin.profile_posts_full",
+        "url": "…", "charged_usd": 0.0}
+     ],
+     "evidence_usd": 0.0,
      "email": {"value": "…", "verdict": "valid"},
      "phone": {"value": "…", "verdict": "live"},
-     "trail": [
+     "reach": [
        {"lookup": "email", "endpoint_id": "…", "vendor": "…", "outcome": "miss", "charged_usd": 0.0},
        {"lookup": "email", "endpoint_id": "…", "vendor": "…", "outcome": "hit", "charged_usd": 0.0},
        {"lookup": "email_check", "endpoint_id": "…", "verdict": "valid", "charged_usd": 0.0},
@@ -89,14 +114,18 @@ so a stopped run still says what it did. Money comes from the answers, never fro
 }
 ```
 
-- `trail` is one entry per row of `_treg.tried` (`endpoint_id`, `provider` as `vendor`, `outcome`,
+- `evidence` holds only what a call returned: `type` (`linkedin_posts`, `github`, `talks`,
+  `papers`, `job_change`, `tenure`, `company_news`), a one-line `claim`, the `source` endpoint id
+  (`search_row` for tenure), the `url` when there is one, and that call's `charged_usd`. A shared
+  company-news call is charged once, to the first candidate who used it.
+- `reach` is one entry per row of `_treg.tried` (`endpoint_id`, `provider` as `vendor`, `outcome`,
   `charged_micro` / 1e6 as `charged_usd`), then one for `_treg.verification` when a check ran
   (`served_by`, `verdict`, `cost_micro`). A skipped attempt keeps its `outcome: skipped`.
 - `email` / `phone` are `null` on a miss. `verdict` is the check's own word: an email `valid`,
   `invalid`, `catch_all`, `risky` or `unknown`; a phone `live`, `dead` or `unknown`. A live line is
   not proof it is this person's number; never call a phone "verified".
 - `reject_samples`: up to five per reason, so the reasons can be checked by eye.
-- `totals.charged_usd` is the sum of every `charged_usd` above, job and search included.
+- `totals.charged_usd` is the sum of every `charged_usd` above: job, search, evidence and contact.
 
 ## Before the first list
 
