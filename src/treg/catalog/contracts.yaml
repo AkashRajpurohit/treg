@@ -35,6 +35,7 @@ contracts:
       verified: {type: bool, note: "the provider says it checked the mailbox"}
     miss: "email == null"
     idempotent: true            # a lookup — error-fallback to the next provider is safe
+    one_subject: true           # every variant names one person: cost per hit ranks first
     # The provider's own claim, stored per call; a finder with no `verified` output stores none.
     verdict: {from: verified, words: [verified, unverified], map: {true: verified, false: unverified}}
     # Attached as `_treg.advice` when a hit's `verified` is not true. A find is a guess the provider
@@ -131,6 +132,7 @@ contracts:
       country_code: {type: str}
     miss: "phone == null"
     idempotent: true
+    one_subject: true           # every variant names one person: cost per hit ranks first
     # No phone provider reports a line check, so every hit carries this.
     advice_unverified: "This number was found, not confirmed live. Send X-Treg-Route-Verify: true and treg checks the line with a live network lookup (hlrlookup.people.phone.verify) in the same call. For a US number, trestleiq.people.contact.verify also checks that it belongs to this person."
     # `X-Treg-Route-Verify`: HLR's live check; a national-form number would be read as another country's.
