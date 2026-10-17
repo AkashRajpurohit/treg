@@ -17,6 +17,7 @@ from sqlalchemy.exc import DBAPIError, TimeoutError as PoolTimeoutError
 
 from ... import adsconv, archive
 from ...config import get_settings
+from ...domain.capacity import events as capacity_events
 from ...domain.capacity import marks as capacity_marks
 from ...domain.capacity import overflow_spend as overflow_spend_ledger
 from ...domain.capacity import signatures as capacity_signatures
@@ -1439,30 +1440,28 @@ async def _note_capacity_signal(mk: MarketplaceCall, status_code: int, headers, 
         signal = capacity_signatures.classify(mk.provider, status_code, headers, body[:4096])
         if signal is None:
             return None
+        where = {"provider": mk.provider, "slot": keyslots.capacity_slot(mk.key_slot),
+                 "endpoint_id": mk.endpoint_id, "kind": signal.kind, "status": status_code}
         if capacity_signatures.is_exhausting(signal):
             lock = await capacity_marks.strike(
                 mk.provider, endpoint_id=mk.endpoint_id, kind=signal.kind,
                 resets_at=signal.resets_at, slot=keyslots.capacity_slot(mk.key_slot),
                 note=f"{signal.kind} signature on {mk.endpoint_id}: {signal.detail[:80]}")
             capacity_view.invalidate()
-            if lock is not None and lock.is_active():
-                logging.getLogger("treg.capacity").warning(
-                    "platform account locked: %s until %s (%s on %s)",
-                    lock.key, lock.until, signal.kind, mk.endpoint_id)
-            else:
-                logging.getLogger("treg.capacity").info(
-                    "capacity strike on %s (%s on %s)", mk.provider, signal.kind, mk.endpoint_id)
-        elif signal.kind == "edge_block":  # not our account: no mark, but worth a warning
-            logging.getLogger("treg.capacity").warning(
-                "edge block on %s (%s): the vendor's CDN answered, not the vendor",
-                mk.provider, mk.endpoint_id)
+            # A signature meeting a lock already in place says nothing new: the request log
+            # carries each refused or relayed call, so only the transitions are events.
+            if lock is not None and lock.opened:
+                capacity_events.emit("lock_opened", **where, key=lock.key, lock_id=lock.lock_id,
+                                     strikes=lock.strikes, first_signal_at=lock.first_signal_at,
+                                     opened_at=lock.opened_at, until=lock.until)
+            elif lock is not None and not lock.is_active():
+                capacity_events.emit("strike", **where, key=lock.key, strikes=lock.strikes)
+        elif signal.kind == "edge_block":  # not our account: no mark, but worth a look
+            capacity_events.emit("edge_block", **where)
         elif signal.kind == "unrecorded":  # a vendor phrase the table lacks: for a person to record
-            logging.getLogger("treg.capacity").warning(
-                "unrecorded capacity-looking %d from %s on %s: body says %r",
-                status_code, mk.provider, mk.endpoint_id, signal.detail)
+            capacity_events.emit("unrecorded", **where, phrase=signal.detail)
         else:
-            logging.getLogger("treg.capacity").info(
-                "rate signal on %s: %s retry_after=%s", mk.provider, signal.kind, signal.retry_after_s)
+            capacity_events.emit("rate", **where, retry_after_s=signal.retry_after_s)
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 — the caller already has the provider's answer; a mark is a hint
@@ -1487,14 +1486,16 @@ async def _note_capacity_recovery(mk: MarketplaceCall) -> None:
             if await capacity_marks.clear(lock.key, lock_id=mk.probe_lock_id):
                 cleared = True
                 if lock.is_active():
-                    logging.getLogger("treg.capacity").warning(
-                        "platform account recovered: %s (probe on %s)", lock.key, mk.endpoint_id)
+                    capacity_events.emit(
+                        "lock_cleared", provider=mk.provider, slot=keyslots.capacity_slot(mk.key_slot),
+                        endpoint_id=mk.endpoint_id, key=lock.key, lock_id=lock.lock_id, via="probe",
+                        locked_s=int((_utcnow_naive() - (lock.opened_at or lock.first_signal_at))
+                                     .total_seconds()))
         if ((mk.probe_lock_id or "").startswith(capacity_marks.SWEEP_PROBE)
                 and await capacity_marks.clear_sweep_state(mk.provider, probe_id=mk.probe_lock_id)):
             cleared = True
-            logging.getLogger("treg.capacity").warning(
-                "platform account recovered: %s (probe on %s lifted the sweep's reading)",
-                mk.provider, mk.endpoint_id)
+            capacity_events.emit("lock_cleared", provider=mk.provider, slot=None,
+                                 endpoint_id=mk.endpoint_id, key=mk.provider, via="sweep_probe")
         if cleared:
             capacity_view.invalidate()
     except asyncio.CancelledError:

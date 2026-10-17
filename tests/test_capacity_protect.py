@@ -6,8 +6,11 @@ Tiers 1/2 (an org's own tool or key) never consult any of this."""
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import timedelta
 
+import pytest
 from httpx import AsyncClient
 from sqlmodel import select
 
@@ -16,7 +19,9 @@ from treg.config import get_settings
 from treg.application.call import service as call_service
 from treg.application.call import settle as call_settle
 from treg.application.call.types import UpstreamResponse
+from treg.infra import org_traffic
 from treg.infra.db import session_maker
+from treg.domain.capacity import events as capacity_events
 from treg.domain.capacity import marks as capacity_marks
 from treg.domain.capacity.marks import DEFAULT_LOCK, LOCK_NS, MAX_LOCK, Lock
 from treg.domain.capacity.policy import LatestState
@@ -95,6 +100,19 @@ async def test_exhausted_platform_account_is_refused_before_any_hold(clients: As
     assert row["status_code"] == 503 and row["refused_by"] == "capacity" and row["tool_name"] == EP
 
 
+async def test_a_capacity_refusal_names_the_provider_in_the_request_log(clients: AsyncClient, platform_on, caplog):
+    await _publish("tikhub", exhausted=True)
+    caplog.set_level(logging.INFO, logger=org_traffic.log.name)
+    org_traffic.log.addHandler(caplog.handler)
+    try:
+        assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 503
+    finally:
+        org_traffic.log.removeHandler(caplog.handler)
+    [row] = [json.loads(r.getMessage().split(" ", 1)[1]) for r in caplog.records
+             if r.name == org_traffic.log.name and r.getMessage().startswith("request ")]
+    assert (row["status"], row["provider"], row["refused_by"]) == (503, "tikhub", "capacity")
+
+
 async def test_own_key_is_never_affected_by_an_exhausted_platform_account(clients: AsyncClient, platform_on):
     await _publish("tikhub", exhausted=True)
     await clients.post("/secrets", json={"name": "tikhub", "value": "MKKEY"})  # tier 2
@@ -157,6 +175,52 @@ async def test_a_probe_that_fails_again_keeps_the_lock(clients: AsyncClient, pla
     assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 402, "the probe relays"
     assert (await _lock(lock.key)).lock_id == lock.lock_id
     assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 503
+
+
+@pytest.fixture
+def capacity_events_log(caplog):
+    caplog.set_level(logging.INFO, logger=capacity_events.log.name)
+    capacity_events.log.addHandler(caplog.handler)
+    try:
+        yield lambda: [json.loads(r.getMessage().split(" ", 1)[1]) for r in caplog.records
+                       if r.name == capacity_events.log.name]
+    finally:
+        capacity_events.log.removeHandler(caplog.handler)
+
+
+async def test_events_name_each_transition_once_and_never_the_body(
+        clients: AsyncClient, platform_on, monkeypatch, capacity_events_log):
+    lock = await _lock_by_two_signals(clients, monkeypatch, _fake_relay(402, b'{"detail":"Insufficient balance","q":"secret-query"}'))
+    capacity_marks._last_probe.clear()
+    assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 402, "a probe that fails again"
+    assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 503
+    monkeypatch.setattr(call_service, "relay", _fake_relay(200, b'{"ok":true}'))
+    capacity_marks._last_probe.clear()
+    assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 200
+    events = capacity_events_log()
+    assert [e["event"] for e in events] == ["strike", "lock_opened", "lock_cleared"], \
+        "the failed probe meets the lock in place: no second opening"
+    opened = events[1]
+    assert opened["provider"] == "tikhub" and opened["kind"] == "balance" and opened["status"] == 402
+    assert opened["key"] == lock.key and opened["lock_id"] == lock.lock_id and opened["until"]
+    assert events[2]["lock_id"] == lock.lock_id and events[2]["via"] == "probe"
+    assert events[2]["locked_s"] >= 0
+    assert "secret-query" not in json.dumps(events)
+
+
+async def test_a_lock_is_aged_from_its_opening_not_its_first_strike(
+        clients: AsyncClient, platform_on, monkeypatch, capacity_events_log):
+    await capacity_marks.strike("tikhub", endpoint_id=EP, kind="balance", resets_at=None,
+                                now=utcnow_naive() - timedelta(minutes=8))
+    monkeypatch.setattr(call_service, "relay", _fake_relay(402, OUT))
+    assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 402
+    lock = await _lock("tikhub")
+    assert lock.is_active() and lock.opened_at - lock.first_signal_at >= timedelta(minutes=7)
+    monkeypatch.setattr(call_service, "relay", _fake_relay(200, b'{"ok":true}'))
+    capacity_marks._last_probe.clear()
+    assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 200
+    [cleared] = [e for e in capacity_events_log() if e["event"] == "lock_cleared"]
+    assert cleared["locked_s"] < 60, "eight minutes of pending strike are not lock time"
 
 
 async def test_a_vendor_500_or_caller_400_neither_strikes_nor_clears(clients: AsyncClient, platform_on, monkeypatch):

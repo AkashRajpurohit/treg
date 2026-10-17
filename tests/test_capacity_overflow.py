@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 import httpx
@@ -20,6 +21,7 @@ from treg import audit, ratestore
 from treg.application.call import overflow as O
 from treg.application.call import service as call_service
 from treg.config import get_settings
+from treg.infra import org_traffic
 from treg.infra.db import session_maker
 from treg.domain.capacity.policy import LatestState
 from treg.domain.capacity.routes_view import view as routes_view
@@ -83,7 +85,19 @@ async def test_off_by_default_the_vendor_402_is_relayed_unchanged(clients: Async
     assert r.status_code == 402 and seen == [] and "X-Treg-Served-Via" not in r.headers
 
 
-async def test_findymail_shaped_402_on_tier4_runs_one_child_cycle(clients: AsyncClient, overflow_on, monkeypatch):
+@pytest.fixture
+def request_log(caplog):
+    caplog.set_level(logging.INFO, logger=org_traffic.log.name)
+    org_traffic.log.addHandler(caplog.handler)
+    try:
+        yield lambda: [json.loads(r.getMessage().split(" ", 1)[1]) for r in caplog.records
+                       if r.name == org_traffic.log.name and r.getMessage().startswith("request ")]
+    finally:
+        org_traffic.log.removeHandler(caplog.handler)
+
+
+async def test_findymail_shaped_402_on_tier4_runs_one_child_cycle(clients: AsyncClient, overflow_on, monkeypatch,
+                                                                  request_log):
     await _route(price_micro=3_000)
     monkeypatch.setattr(call_service, "relay", _fake_relay(402, b'{"detail":"Insufficient balance"}'))
     seen = []
@@ -116,6 +130,8 @@ async def test_findymail_shaped_402_on_tier4_runs_one_child_cycle(clients: Async
     assert len(mine) == 2, "primary attempt + child, sharing call_ref"
     tiers = {x.get("credential_tier") for x in mine}
     assert tiers == {"platform", "platform-overflow"}
+    [line] = request_log()
+    assert (line["status"], line["credential_tier"], line["refused_by"]) == (200, "platform-overflow", None)
 
 
 async def test_overflow_budget_reconciles_the_estimate_to_the_actual_cost(
@@ -445,7 +461,8 @@ async def test_overflow_cancel_uses_the_trusted_caller_for_both_holds(
     ])
 
 
-async def test_an_exhausted_account_with_a_route_skips_the_direct_attempt(clients: AsyncClient, overflow_on, monkeypatch):
+async def test_an_exhausted_account_with_a_route_skips_the_direct_attempt(clients: AsyncClient, overflow_on, monkeypatch,
+                                                                          request_log):
     """The ladder (plan §4): view says exhausted → no direct attempt, no parent hold → child cycle."""
     await _route(price_micro=3_000)
     now = utcnow_naive()
@@ -470,6 +487,9 @@ async def test_an_exhausted_account_with_a_route_skips_the_direct_attempt(client
     parent = r.headers["X-Treg-Call-Id"]
     kinds = sorted((e.kind, e.call_id or "") for e in await _rows(LedgerEntry) if e.kind != "grant")
     assert kinds == [("reserve", f"{parent}:overflow"), ("settle", f"{parent}:overflow")], "no parent hold at all"
+    [line] = request_log()
+    assert (line["provider"], line["credential_tier"], line["refused_by"]) == ("tikhub", "platform-overflow", None), \
+        "an answered request is not a capacity refusal"
     replay = await clients.get(f"/call/{EP}?aweme_id=7", headers={"Idempotency-Key": "k1"})
     assert replay.status_code == 200 and replay.headers.get("X-Treg-Idempotent-Replay") == "true"
     assert len(seen) == 1, "the replay never touched the aggregator"

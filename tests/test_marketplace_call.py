@@ -15,6 +15,7 @@ platform key must never appear in a response, an error, or an audit row.
 from __future__ import annotations
 
 import json
+import logging
 
 import httpx
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ import pytest
 from httpx import AsyncClient
 
 from treg import api as A, audit, oauth_providers
+from treg.infra import org_traffic
 from treg.domain import money as ledger
 from treg.domain.money import settlement as settlement_basis
 from treg.domain.catalog import store as catalog_store
@@ -481,14 +483,22 @@ def test_path_placeholders_fill_from_query_and_are_consumed():
     assert exc.value.status_code == 400 and "siteUrl" in exc.value.detail
 
 
-async def test_deny_rules_cover_marketplace_calls(clients: AsyncClient):
+async def test_deny_rules_cover_marketplace_calls(clients: AsyncClient, caplog):
     """Policy is evaluated on the RESOLVED upstream — an endpoint-id call can't dodge a host block."""
     await clients.post("/secrets", json={"name": "tikhub", "value": "MKKEY"})
     org_id = (await clients.get("/orgs")).json()[0]["org_id"]
     r = await clients.post(f"/orgs/{org_id}/deny", json={"host": "api.tikhub.io", "note": "no tikhub"})
     assert r.status_code == 200, r.text
-    r = await clients.get(f"/call/{EP}?aweme_id=7")
+    caplog.set_level(logging.INFO, logger=org_traffic.log.name)
+    org_traffic.log.addHandler(caplog.handler)
+    try:
+        r = await clients.get(f"/call/{EP}?aweme_id=7")
+    finally:
+        org_traffic.log.removeHandler(caplog.handler)
     assert r.status_code == 403
+    [line] = [json.loads(m.getMessage().split(" ", 1)[1]) for m in caplog.records
+              if m.name == org_traffic.log.name and m.getMessage().startswith("request ")]
+    assert (line["provider"], line["refused_by"]) == ("tikhub", "policy"), "the request log names the refusal"
 
 
 # ---- tier 4: treg's own key, billed to the org balance ------------------------------------------

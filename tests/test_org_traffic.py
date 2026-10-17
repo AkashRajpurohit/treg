@@ -638,6 +638,7 @@ async def test_resolved_own_tool_does_not_guess_catalog_identity(
     [row] = logs(caplog)
     assert row["tool_name"] == name and row["endpoint_id"] is None
     assert row["method"] == "GET" and row["replay_of"] is None
+    assert row["provider"] is None and row["credential_tier"] is None and row["refused_by"] is None
     assert "must-not-log" not in json.dumps(row) and "private-path" not in json.dumps(row)
     assert row["failure_kind"] is None
 
@@ -661,6 +662,9 @@ async def test_catalog_identity_survives_success_and_parameter_refusal(
     [row] = logs(caplog)
     assert row["endpoint_id"] == endpoint and row["tool_name"]
     assert row["method"] == "GET" and row["replay_of"] is None
+    assert row["provider"] == "tikhub"
+    assert row["credential_tier"] == ("platform" if valid else None)
+    assert row["refused_by"] == (None if valid else "request")
     assert bool(seen) == valid
 
 

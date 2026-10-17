@@ -701,6 +701,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
     if ep is not None:
         request.context.endpoint_id = ep["id"]
         request.context.tool_name = ep["id"]
+        request.context.provider = ep.get("provider")
     if hub_row is not None:
         request.context.tool_name = hub_row.tool_id
         # A hub tool: the runner runs every step through THIS use case again (child contexts,
@@ -846,6 +847,8 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             refused = ("capacity" if mkexc.kind == "provider_capacity"
                        else "paused" if mkexc.kind == "provider_paused"
                        else _refusal_kind(mkexc.status_code))
+            # Unresolved, so no credential tier; the provider is the catalog row's.
+            request.context.provider, request.context.refused_by = ep.get("provider"), refused
             audit.record_call(
                 org_id=caller.org_id, user_email=caller.email, tool_name=ep["id"],
                 method=request.method, path=rest, status_code=mkexc.status_code,
@@ -878,7 +881,9 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             request,
             call_ref,
         )
-    except CallFailure:
+    except CallFailure as exc:
+        # The router audits this refusal; the root request log names it the same way.
+        request.context.refused_by = _refusal_kind(exc.status_code)
         raise
 
     # The caller's own request bytes, read ONCE when it is safe to buffer them, so a failure can be
@@ -925,6 +930,8 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
         child has one too, on the same call_ref); the dashboard sees ONE event per request, and
         not a refusal for a request that was answered (2,012 of one night's 4,455 "refusals" were)."""
         status = outcome.response.status
+        # The root request log, too, reports the answer the caller got, not the direct attempt.
+        request.context.credential_tier, request.context.refused_by = "platform-overflow", None
         return props | {"status_code": status, "outcome": _outcome(status, None, answered=True),
                         "refused_by": None, "tier": "platform-overflow",
                         "served_via": f"overflow:{outcome.aggregator}", "charged_micro": charged,
@@ -950,6 +957,10 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
         # carries its telemetry (which endpoint, which credential tier, what it cost): still
         # fire-and-forget, because the money itself already landed synchronously in the ledger.
         request.state.call_audited = True  # the refusal fallback in _mark_treg_own_errors stands down
+        # The root request log's outcome: whose account answered and whether treg refused first.
+        request.context.refused_by = refused_by
+        if mk is not None:
+            request.context.provider, request.context.credential_tier = mk.provider, mk.tier
         telemetry: dict = {"call_ref": call_ref}
         if meta.tags:
             # Own-tool calls carry tags too: a builder's usage report has to account for every call

@@ -25,10 +25,11 @@ related:
 resolved Caller and is bypassed by MCP's in-process HTTP client; Render edge logs are outside the
 application's control. This deliberately small application log covers both HTTP and MCP roots.
 `structured_logging.get_logger` supplies a plain stderr handler only for the named
-`treg.org_traffic` and `treg.org_flow_control` event loggers when they have no configured handlers.
+`treg.org_traffic`, `treg.org_flow_control` and `treg.capacity_events` event loggers when they have
+no configured handlers.
 Their levels remain inherited from `treg` or root; no root level, handler or format is changed.
 The default handlers prevent wrapping and duplicate propagation through MCP's root console
-formatter. Consequently root handler routing, filters and formatting do not apply to these two
+formatter. Consequently root handler routing, filters and formatting do not apply to these
 streams. Configure handlers and filters on the named loggers to customize their destinations;
 existing named handlers, levels and propagation settings are preserved. Custom formatters
 should keep each JSON record on one physical line.
@@ -51,6 +52,14 @@ used. A same-named own tool keeps its own identity, with no guessed catalog endp
 targets, exits before resolution, and idempotent replays leave unresolved target fields null;
 use `replay_of` to find the original call. No lookup is added just to populate a log.
 `method` is a standard HTTP method or null; an MCP adapter preflight has no HTTP method.
+`provider`, `credential_tier` and `refused_by` are the root call's audit facts, copied the same way:
+the catalog row's provider, whose credential answered (`platform`, `credential`, `tool`, ...) and
+treg's own refusal kind (`capacity`, `balance`, `request`, `policy`, ...). A catalog call refused
+during resolution or authorization has a provider and refusal but no tier; one that overflow
+answered logs `platform-overflow` and no refusal, the answer the caller got rather than the direct
+attempt. Own tools and unresolved targets log nulls.
+A routed or hub root names no provider: its children are separate calls with separate audit rows.
+They let a per-provider success rate on treg's own accounts be read from these lines alone.
 No paths, query strings, headers, IPs, user agents, user names, emails, credential values,
 request/response bodies or exception text are added. Caller-supplied identity headers are never
 used for attribution. The new fields do not add counter dimensions or change the log prefix.
@@ -109,8 +118,9 @@ uses constant work and storage per request, and includes cancelled/failed reques
 Illustrative synthetic examples (normal logger prefixes omitted):
 
 ```text
-request {"worker_pid":123,"surface":"call","adapter":"call","org_id":42,"api_key_id":7,"call_ref":"0123456789abcdef0123456789abcdef","status":503,"outcome":"completed","failure_kind":"db_pool","method":"GET","tool_name":"example","endpoint_id":null,"replay_of":null,"handler_ms":800.2}
-request {"worker_pid":123,"surface":"mcp","adapter":"call","org_id":null,"api_key_id":null,"call_ref":null,"method":null,"tool_name":null,"endpoint_id":null,"replay_of":null,"status":null,"outcome":"preflight","handler_ms":null}
+request {"worker_pid":123,"surface":"call","adapter":"call","org_id":42,"api_key_id":7,"call_ref":"0123456789abcdef0123456789abcdef","status":503,"outcome":"completed","failure_kind":"db_pool","method":"GET","tool_name":"example","endpoint_id":null,"replay_of":null,"provider":null,"credential_tier":null,"refused_by":null,"handler_ms":800.2}
+request {"worker_pid":123,"surface":"call","adapter":null,"org_id":42,"api_key_id":7,"call_ref":"fedcba9876543210fedcba9876543210","status":503,"outcome":"completed","failure_kind":null,"method":"GET","tool_name":"example.read","endpoint_id":"example.read","replay_of":null,"provider":"example","credential_tier":null,"refused_by":"capacity","handler_ms":4.1}
+request {"worker_pid":123,"surface":"mcp","adapter":"call","org_id":null,"api_key_id":null,"call_ref":null,"method":null,"tool_name":null,"endpoint_id":null,"replay_of":null,"provider":null,"credential_tier":null,"refused_by":null,"status":null,"outcome":"preflight","handler_ms":null}
 org_concurrency rejected org_id=42 limit=8 config_version=3 status=429
 org_flow_control_rate_limited {"worker_pid":123,"org_id":42,"call_ref":null,"capability":"pause","capabilities":["pause","rate","concurrency"],"status":429,"config_version":3,"rps":2,"burst":4,"retry_after_s":1,"suppressed_since_last_log":0}
 org_traffic_top {"worker_pid":123,"window_s":60,"overflow_requests":0,"overflow_in_flight":0,"overflow_completed":0,"top":[{"org_id":42,"requests":120,"completed":118,"in_flight_max":8,"status_429":3,"status_503":2,"p95_ms":1024}],"window_end_unix_s":1800000060.0}
