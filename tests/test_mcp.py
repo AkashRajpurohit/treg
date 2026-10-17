@@ -1197,11 +1197,7 @@ async def test_catalog_query_arrays_use_the_endpoints_declared_wire_encoding(mon
 async def test_call_sends_form_urlencoded_body_when_endpoint_specifies_bodytype_form(monkeypatch):
     """Endpoints with `input.bodyType: form` must send the body as application/x-www-form-urlencoded,
     not JSON. JustOneAPI's weixin-search-article endpoints failed with HTTP 415 "Unsupported media
-    type" because treg sent JSON bodies to an upstream that required form-urlencoded.
-
-    Incident: zouchangfu@fellou.ai (org fellou-2), 2026-10-17, ~13 failures on
-    justoneapi.x.weixin-search-article-v1 and justoneapi.x.weixin-search-article-v2.
-    """
+    type" because treg sent JSON bodies to an upstream that required form-urlencoded."""
     from treg.domain.catalog import store as cs
     from treg import mcp as _mcp
 
