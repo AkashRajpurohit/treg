@@ -1194,6 +1194,66 @@ async def test_catalog_query_arrays_use_the_endpoints_declared_wire_encoding(mon
     assert captured["params"] == [("ad_reached_countries", '["US"]')]
 
 
+async def test_call_sends_form_urlencoded_body_when_endpoint_specifies_bodytype_form(monkeypatch):
+    """Endpoints with `input.bodyType: form` must send the body as application/x-www-form-urlencoded,
+    not JSON. JustOneAPI's weixin-search-article endpoints failed with HTTP 415 "Unsupported media
+    type" because treg sent JSON bodies to an upstream that required form-urlencoded."""
+    from treg.domain.catalog import store as cs
+    from treg import mcp as _mcp
+
+    cat = cs.load()
+    ep = cat.by_id.get("justoneapi.x.weixin-search-article-v1")
+    assert ep is not None, "test endpoint must exist in catalog"
+    assert (ep.get("input") or {}).get("bodyType") == "form", "test relies on bodyType: form"
+
+    captured = {}
+
+    class _Client:
+        headers: dict = {}
+
+        async def request(self, method, path, **kwargs):
+            import httpx
+            captured.update(method=method, path=path, **kwargs)
+            return httpx.Response(200, json={"code": 0, "data": []}, request=httpx.Request(method, path))
+
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _api(_token):
+        yield _Client()
+
+    async def _org(_client):
+        return 1, "team", None
+
+    monkeypatch.setattr(_mcp, "_api", _api)
+    monkeypatch.setattr(_mcp, "_resolve_org", _org)
+    ctx = type("Ctx", (), {"headers": {"authorization": "Bearer test"}})()
+    await _mcp.call("justoneapi.x.weixin-search-article-v1", params={
+        "keyword": "人工智能",
+        "publishTimeType": "ALL",
+        "sortType": "COMPREHENSIVE",
+        "currentPage": "1",
+        "offset": "0",
+    }, ctx=ctx)
+
+    # The body must be form-urlencoded, not JSON
+    assert "content" in captured, "body must be sent as raw content, not kw['json']"
+    assert "json" not in captured, "must not send as JSON when bodyType is form"
+
+    # Verify the Content-Type header
+    headers = captured.get("headers", {})
+    ct = headers.get("content-type", headers.get("Content-Type", ""))
+    assert ct == "application/x-www-form-urlencoded", f"wrong Content-Type: {ct}"
+
+    # Verify the body is properly form-encoded
+    from urllib.parse import parse_qs
+    body = captured["content"].decode()
+    parsed = parse_qs(body)
+    assert parsed.get("keyword") == ["人工智能"]
+    assert parsed.get("publishTimeType") == ["ALL"]
+    assert parsed.get("currentPage") == ["1"]
+
+
 async def test_an_unset_query_param_is_omitted_rather_than_sent_as_None(clients):
     """`None` means "no value", and `?limit=None` is not that — it is a string an upstream parses."""
     assert (await clients.post("/tools", json={"name": "echo", "base_url": "http://upstream"})).status_code == 200

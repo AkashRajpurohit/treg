@@ -46,7 +46,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, replace
 from typing import Annotated, Any, TypedDict
-from urllib.parse import parse_qsl, quote, urlsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 import httpx
 from mcp.server import MCPServer
@@ -1483,6 +1483,15 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
         if the_body is not None:
             if isinstance(the_body, str):
                 kw["content"] = the_body.encode()
+            elif ep is not None and (ep.get("input") or {}).get("bodyType") == "form":
+                # The endpoint declares its body as application/x-www-form-urlencoded. Encode the
+                # dict as form data rather than JSON — upstreams that expect form reject JSON with
+                # HTTP 415 "Unsupported media type" (e.g. JustOneAPI's weixin-search-article).
+                kw["content"] = urlencode({k: str(v).lower() if isinstance(v, bool) else v
+                                           for k, v in the_body.items()}, doseq=True).encode()
+                extra_headers.setdefault("content-type", "application/x-www-form-urlencoded")
+                if "headers" not in kw:
+                    kw["headers"] = extra_headers
             else:
                 kw["json"] = the_body
         if form is not None or uploads:

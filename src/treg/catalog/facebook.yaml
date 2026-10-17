@@ -92,7 +92,7 @@ endpoints:
         link: {type: string, required: false, note: "URL to attach — Meta renders its own preview", example: "https://example.com/post"}
         published: {type: boolean, required: false, note: "false creates an unpublished post you can schedule or promote", example: true}
         scheduled_publish_time: {type: integer, required: false, note: "Unix timestamp, 10 minutes to 6 months out; requires published=false"}
-      bodyType: form
+      bodyType: json
       note: "needs pages_manage_posts (treg's `post` capability — a connection made with `read` will 403) and the Page token (select this Page on the connection). Photos and video go to /{page_id}/photos and /{page_id}/videos instead"
     cost: {type: free, value: 0, currency: USD, unit: call, note: included with the connected account / platform rate limits apply}
     unverified: "write action — this publishes to a real Page; requires a deliberate manual test, never an automated verify run"
