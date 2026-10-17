@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from ... import ratestore
@@ -70,6 +70,9 @@ class Lock:
     first_signal_at: datetime
     until: datetime | None      # None while only strikes are pending
     note: str = ""
+    # True only on the row `strike` itself turned active: the transition an operator is told about.
+    # Never stored, so a row read back from the store is never an opening.
+    opened: bool = field(default=False, compare=False)
 
     def is_active(self, now: datetime | None = None) -> bool:
         return self.until is not None and (now or utcnow_naive()) < self.until
@@ -108,7 +111,8 @@ async def strike(provider: str, *, endpoint_id: str | None, kind: str,
             until = None
             if immediate or strikes >= 2:
                 until = min(resets_at or now + DEFAULT_LOCK, now + MAX_LOCK)
-            lock = Lock(key, provider, secrets.token_hex(8), strikes, first_at, until, note[:200])
+            lock = Lock(key, provider, secrets.token_hex(8), strikes, first_at, until, note[:200],
+                        opened=until is not None)
             await ratestore.kv_put(db, LOCK_NS, key, lock.to_json(), ttl_s=LOCK_TTL_S)
             await db.commit()
     except Exception:  # noqa: BLE001 - a lock is a hint for the next call, never this call's fate

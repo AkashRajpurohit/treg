@@ -11,6 +11,7 @@ sources:
   - src/treg/domain/capacity/signatures.py
   - src/treg/domain/capacity/verify.py
   - src/treg/domain/capacity/marks.py
+  - src/treg/domain/capacity/events.py
   - tests/test_capacity_protect.py
   - src/treg/infra/upstream/limiter.py
   - src/treg/domain/capacity/overflow_spend.py
@@ -469,7 +470,7 @@ pays the aggregator's real price, 0% markup, disclosed in-band when it ships (st
   Two guards against
   the next such vendor: `unrecorded`,
   a signal kind for a 4xx no row matched whose body still names credits/quota/balance (pattern =
-  the table's own phrases plus generic nouns) - never a mark, only a log line and
+  the table's own phrases plus generic nouns) - never a mark, only an `unrecorded` event and
   `capacity_signal=unrecorded` on `tool_called`; and the coverage guard in
   `tests/test_capacity_overflow_routes.py`, which fails when a `platform_key_*` provider has neither
   a table row nor an acknowledged gap. `edge_block` is the odd one out: the vendor's CDN refused the
@@ -561,6 +562,17 @@ The breaker is deliberately slow to open and quick to close: a false lock costs 
 one costs one relayed vendor error. A vendor with auto top-up whose balance hovers near zero
 answers a genuine quota 429 once in thousands of calls; one strike must not take the provider
 away from everyone.
+
+The breaker tells an operator through `capacity {json}` lines (`events.py`, logger
+`treg.capacity_events`), one per event: `strike` (pending), `lock_opened` (written once, by the
+strike that turned the row active), `lock_cleared` (a probe's 2xx, `via` `probe` or `sweep_probe`,
+with `locked_s`), `unrecorded` (with the tripwire's phrase), `edge_block` and `rate`. Each carries
+`provider`, `slot`, `endpoint_id`, `kind` and the upstream `status`; never the vendor's body. A
+signature meeting a lock already in place emits nothing: the `request` line (`org-traffic.md`)
+carries every refused or relayed call with its `provider`, `credential_tier` and `refused_by`. An
+expired guessed hold that is still dry opens again on its next two strikes, so a lock that nobody
+lifts reopens about hourly. Overflow's marks write no events: an aggregator's failure is not treg's
+account running dry. Alerting on these lines is deployment configuration, not code here.
 
 ## Protect, part two (step D′) — burst smoothing
 

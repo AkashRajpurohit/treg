@@ -163,7 +163,8 @@ def identify(scope: dict, org_id: int, *, enter: bool = False,
 
 
 def describe(scope: dict, *, tool_name: str | None, endpoint_id: str | None,
-             replay_of: str | None) -> None:
+             replay_of: str | None, provider: str | None = None,
+             credential_tier: str | None = None, refused_by: str | None = None) -> None:
     """Copy already-resolved application metadata without inspecting request bytes or ORM objects."""
     try:
         observation = scope.get("state", {}).get("org_traffic")
@@ -171,6 +172,9 @@ def describe(scope: dict, *, tool_name: str | None, endpoint_id: str | None,
             observation.tool_name = tool_name
             observation.endpoint_id = endpoint_id
             observation.replay_of = replay_of
+            observation.provider = provider
+            observation.credential_tier = credential_tier
+            observation.refused_by = refused_by
     except Exception:
         pass
 
@@ -188,6 +192,9 @@ class Observation:
     tool_name: str | None = None
     endpoint_id: str | None = None
     replay_of: str | None = None
+    provider: str | None = None
+    credential_tier: str | None = None
+    refused_by: str | None = None
 
     def finish(self, status: int | None, outcome: str, *, call_ref: str | None = None,
                failure_kind: str | None = None) -> None:
@@ -204,6 +211,8 @@ class Observation:
                           "failure_kind": failure_kind,
                           "method": self.method, "tool_name": self.tool_name,
                           "endpoint_id": self.endpoint_id, "replay_of": self.replay_of,
+                          "provider": self.provider, "credential_tier": self.credential_tier,
+                          "refused_by": self.refused_by,
                           "handler_ms": round(elapsed, 3) if elapsed is not None else None})
 
 
@@ -286,7 +295,8 @@ def mcp_adapter(name: str):
                     _emit("request", {"surface": "mcp", "adapter": name, "org_id": None,
                                       "api_key_id": None, "call_ref": None,
                                       "method": None, "tool_name": None, "endpoint_id": None,
-                                      "replay_of": None,
+                                      "replay_of": None, "provider": None,
+                                      "credential_tier": None, "refused_by": None,
                                       "status": None, "outcome": outcome, "handler_ms": None})
         return observed
     return decorate

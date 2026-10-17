@@ -846,6 +846,8 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             refused = ("capacity" if mkexc.kind == "provider_capacity"
                        else "paused" if mkexc.kind == "provider_paused"
                        else _refusal_kind(mkexc.status_code))
+            # Unresolved, so no credential tier; the provider is the catalog row's.
+            request.context.provider, request.context.refused_by = ep.get("provider"), refused
             audit.record_call(
                 org_id=caller.org_id, user_email=caller.email, tool_name=ep["id"],
                 method=request.method, path=rest, status_code=mkexc.status_code,
@@ -950,6 +952,10 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
         # carries its telemetry (which endpoint, which credential tier, what it cost): still
         # fire-and-forget, because the money itself already landed synchronously in the ledger.
         request.state.call_audited = True  # the refusal fallback in _mark_treg_own_errors stands down
+        # The root request log's outcome: whose account answered and whether treg refused first.
+        request.context.refused_by = refused_by
+        if mk is not None:
+            request.context.provider, request.context.credential_tier = mk.provider, mk.tier
         telemetry: dict = {"call_ref": call_ref}
         if meta.tags:
             # Own-tool calls carry tags too: a builder's usage report has to account for every call
