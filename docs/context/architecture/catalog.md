@@ -1655,6 +1655,9 @@ needing an async crawl id).
 A provider whose POST routes take `application/x-www-form-urlencoded` may read the credential from
 the form body and reject a query token with a misleading auth error (Just One API). For
 `bodyType: form` entries `catalog_verify.py` and `catalog_verify_extended.py` move it into the body.
+`bodyType: form` means form only: a JSON body sent to such a row gets a 400 naming the fix
+before any upstream trip (nothing is rewritten), and the MCP `call` tool form-encodes an object
+body for it. A row whose upstream also takes JSON declares `json`.
 A provider's other quirks live on its rows as `note`, `enum` or `example`, never here.
 
 ## Choosing between providers (`domain/catalog/stats.py`)

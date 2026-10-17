@@ -2086,6 +2086,14 @@ async def _resolve_marketplace_call(
         raise ResolutionFailed(
             "method_mismatch", status_code=400,
             detail=f"{ep['id']} is {ep['method']} — add --method {ep['method']}")
+    # A form-only upstream answers a JSON body with an opaque 415; refuse it here with the fix
+    # instead. Nothing is rewritten, and a row whose upstream also takes JSON declares `json`.
+    if (has_body and (ep.get("input") or {}).get("bodyType") == "form"
+            and "json" in _request_headers(request_headers).get("content-type", "").lower()):
+        raise ResolutionFailed(
+            "catalog_parameter_invalid", status_code=400,
+            detail=f"{ep['id']} takes an application/x-www-form-urlencoded body, not JSON: send "
+                   "the same fields as key=value&key=value with that Content-Type")
 
     try:
         methods = connection_authorization.select_endpoint_methods(

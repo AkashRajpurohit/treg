@@ -1487,7 +1487,8 @@ async def _call_impl(endpoint_id: str, params: dict | list | None = None,
                 # The endpoint declares its body as application/x-www-form-urlencoded. Encode the
                 # dict as form data rather than JSON — upstreams that expect form reject JSON with
                 # HTTP 415 "Unsupported media type" (e.g. JustOneAPI's weixin-search-article).
-                kw["content"] = urlencode(the_body, doseq=True).encode()
+                kw["content"] = urlencode({k: str(v).lower() if isinstance(v, bool) else v
+                                           for k, v in the_body.items()}, doseq=True).encode()
                 extra_headers.setdefault("content-type", "application/x-www-form-urlencoded")
                 if "headers" not in kw:
                     kw["headers"] = extra_headers

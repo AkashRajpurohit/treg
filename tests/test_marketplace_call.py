@@ -438,6 +438,14 @@ async def test_method_mismatch_is_a_400_hint(clients: AsyncClient):
     assert "GET" in r.json()["detail"]
 
 
+async def test_a_json_body_to_a_form_endpoint_is_a_400_hint(clients: AsyncClient):
+    """JustOneAPI's WeChat search answers JSON with an opaque 415; the caller hears the fix instead."""
+    await clients.post("/secrets", json={"name": "justoneapi", "value": "K"})
+    r = await clients.post("/call/justoneapi.x.weixin-search-article-v1", json={"keyword": "ai"})
+    assert r.status_code == 400
+    assert "x-www-form-urlencoded" in r.json()["detail"]
+
+
 async def test_provider_name_404_points_at_the_marketplace(clients: AsyncClient):
     """`treg call tikhub /path` (no such tool) keeps failing, but no longer dead-ends."""
     r = await clients.get("/call/tikhub/api/v1/foo")
