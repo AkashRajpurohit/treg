@@ -116,8 +116,8 @@ endpoints:
       body:
         url: {type: string, required: true, format: uri, example: "https://example.com"}
         format: {type: string, required: false, enum: [both, md, html], default: both, example: md}
-        proxy: {type: string, required: false, enum: [none, isp, residential], default: none, note: "exit network for sites that block datacenters"}
-        country: {type: string, required: false, note: "two-letter exit country for isp/residential, e.g. us"}
+        proxy: {type: string, required: false, enum: [none, isp, residential], default: none, note: "Costs more: isp 0.30 credits, residential 0.60 (plain page 0.15). Use only for a site that blocked a plain request, and try isp before residential."}
+        country: {type: string, required: false, note: "Two-letter exit country for isp or residential, e.g. us, gb. A country without isp addresses is served through residential at 0.60."}
         parse: {type: object, required: false, note: "true for all, or pick {links, media, metadata, tables}"}
       note: "Most pages answer in 1-2 s; a page that needs a real browser takes 10-30 s, and a failed page ends within about 55 s. A PDF URL returns the PDF's text as Markdown. Images and other binary files answer 422 binary-body within about a second, free. Blocked (403), unreachable (502) and fleet-busy (503) answers are free; retry a 503 after a few seconds."
     test_request: {body: {url: "https://example.com", format: md}}
@@ -131,7 +131,7 @@ endpoints:
       source_url: https://api.crawl4ai.com/v1/prices
       checked: '2026-10-08'
       confidence: verified
-      note: "treg's account price: a flat 0.15 credits per page at every effort (archived, plain, PDF, browser, hard); failures free. The x-c4-cost header settles the charge (0.150 observed live 2026-10-08 at efforts 0, 1, 2 and 3)."
+      note: "treg's account price: 0.15 credits per page at every effort (archived, plain, PDF, browser, hard); with proxy: isp 0.30, residential 0.60 (also a country with no isp addresses). Blocked and failed pages are free. The x-c4-cost header settles the charge (0.150 observed live 2026-10-08 at efforts 0, 1, 2 and 3; 0.30 isp and 0.60 residential observed live 2026-10-17 for gb)."
     verified: '2026-10-05'
     added: '2026-10-06'
     docs_url: https://crawl4ai.com/llms.txt
