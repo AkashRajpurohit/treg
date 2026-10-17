@@ -2224,7 +2224,10 @@ to choose (`docs/CAPABILITY-ROUTING-PLAN.md`). Everything else in the catalog st
   under a 20000 envelope). A
   MISS tries the next candidate — the waterfall is ON by default (decided
   2026-08-28: the endpoint's job is to find the thing, and misses on the per-success children are
-  free); `X-Treg-Route-Waterfall: 0` stops at the first miss. **A child never settles its own
+  free); `X-Treg-Route-Waterfall: 0` stops at the first miss. A child that charges nothing (not
+  billable, or a provider-reported zero such as a free miss) releases its hold at once, before the
+  next child reserves: holding it to the end made a balance that covers each child in turn answer
+  a false 402 mid-waterfall. **A billed child never settles its own
   hold**: it leaves it open in the parent's `deferred_settles` list (`settle.DeferredSettle`) with
   the amount its settle would charge, and `run_routed` closes every one exactly once at the end
   (`settle.close_deferred`, one transaction): settled at that real price when the routed call

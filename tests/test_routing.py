@@ -2024,3 +2024,34 @@ def test_a_contract_default_the_caller_did_not_send_is_not_an_ignored_filter():
     quote = [cand(c.endpoint["id"], c.price_micro, ()) for c in plan]
     assert [c.endpoint["id"] for c in rank(plan, given={"keywords"})] == \
         [c.endpoint["id"] for c in rank(quote)] == ["seranking.google.keywords.volume", "dataforseo.google.keywords.volume"]
+
+
+async def test_a_missed_child_releases_its_hold_before_the_next_child_reserves(
+    clients: AsyncClient, enrichment_on, monkeypatch,
+):
+    """A balance that covers one child at a time, not two. A free miss used to keep its hold open
+    until the routed call closed, so the next child's reserve answered a false 402 mid-waterfall."""
+    org_id = (await clients.get("/orgs")).json()[0]["org_id"]
+    async with session_maker() as db:
+        await ledger.reserve(db, org_id, "leave room for one child", await _balance(clients) - 25_000)
+    miss_tomba = (200, {"data": {"email": None, "score": None, "verification": {"status": None}}})
+    seen = []
+    monkeypatch.setattr(call_service, "relay", _relay_by_provider({
+        "tomba": [miss_tomba],
+        "findymail": [(200, {"contact": {"name": "Patrick Collison", "email": "patrick@stripe.com"}})],
+    }, seen))
+    before = await _balance(clients)
+    r = await clients.post(f"/call/{ROUTED}", json={"full_name": "Patrick Collison", "domain": "stripe.com"},
+                           headers={"X-Treg-Route-Prefer": "tomba,findymail"})
+    assert r.status_code == 200, r.text
+    assert [t["outcome"] for t in r.json()["_treg"]["tried"]] == ["miss", "hit"]
+    assert before - await _balance(clients) == int(r.headers["X-Treg-Cost-Micro"]) == 19_800
+    async with session_maker() as db:
+        holds = (await db.execute(select(Hold))).scalars().all()
+    assert len(holds) == 1 and holds[0].amount_micro > 25_000, "only the drain is open; every child closed once"
+    async with session_maker() as db:
+        entries = (await db.execute(select(LedgerEntry))).scalars().all()
+    call_id = r.headers["X-Treg-Call-Id"]
+    assert sorted((e.call_id, e.kind) for e in entries if (e.call_id or "").startswith(call_id)) == [
+        (f"{call_id}:r0", "release"), (f"{call_id}:r0", "reserve"),
+        (f"{call_id}:r1", "reserve"), (f"{call_id}:r1", "settle")]
