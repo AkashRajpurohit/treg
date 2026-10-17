@@ -44,7 +44,7 @@ endpoints:
     example_response: examples/sixtyfour.people.email.find.work.json
 
   - id: sixtyfour.people.email.find.personal
-    capability: people.email.find
+    capability: people.email.find.personal
     platform: people
     domain: contacts
     scope: any_account
