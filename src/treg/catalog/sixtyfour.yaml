@@ -69,6 +69,7 @@ endpoints:
     added: '2026-10-16'
     untestable: "A useful fixture would disclose a real person's personal email; the example is a structural fixture with reserved fake contact data."
     example_response: examples/sixtyfour.people.email.find.personal.json
+    test_request: {body: {lead: {linkedin_url: "https://www.linkedin.com/in/routing-fixture"}, mode: PERSONAL}}
 
   - id: sixtyfour.people.phone.find
     capability: people.phone.find
