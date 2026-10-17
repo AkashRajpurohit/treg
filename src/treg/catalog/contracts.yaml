@@ -57,8 +57,10 @@ contracts:
     filters: {}
     output:
       email: {type: str, required: true, note: "a personal mailbox (gmail, outlook, …), not the work address"}
+      verified: {type: bool, note: "the provider says it checked the mailbox"}
     miss: "email == null"
     idempotent: true
+    one_subject: true           # every variant names one person: cost per hit ranks first
     # A personal find is a guess tied to a profile: one finder's hits have belonged to someone else.
     advice_unverified: "A personal email is found, not confirmed to belong to this person or to accept mail. Send X-Treg-Route-Verify: true and treg checks it with treg.people.email.verify in the same call, or run that check yourself before outreach."
     check: {endpoint: treg.people.email.verify, field: email, prefer: [bounceban]}
