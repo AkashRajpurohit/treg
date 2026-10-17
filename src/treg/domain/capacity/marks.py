@@ -70,6 +70,7 @@ class Lock:
     first_signal_at: datetime
     until: datetime | None      # None while only strikes are pending
     note: str = ""
+    opened_at: datetime | None = None  # when the row turned active; a lock's age starts here
     # True only on the row `strike` itself turned active: the transition an operator is told about.
     # Never stored, so a row read back from the store is never an opening.
     opened: bool = field(default=False, compare=False)
@@ -80,14 +81,16 @@ class Lock:
     def to_json(self) -> dict:
         return {"key": self.key, "provider": self.provider, "lock_id": self.lock_id,
                 "strikes": self.strikes, "first_signal_at": self.first_signal_at.isoformat(),
-                "until": self.until.isoformat() if self.until else None, "note": self.note}
+                "until": self.until.isoformat() if self.until else None, "note": self.note,
+                "opened_at": self.opened_at.isoformat() if self.opened_at else None}
 
     @classmethod
     def from_json(cls, d: dict) -> "Lock":
         return cls(d["key"], d["provider"], d["lock_id"], int(d.get("strikes", 0)),
                    datetime.fromisoformat(d["first_signal_at"]),
                    datetime.fromisoformat(d["until"]) if d.get("until") else None,
-                   d.get("note", ""))
+                   d.get("note", ""),
+                   datetime.fromisoformat(d["opened_at"]) if d.get("opened_at") else None)
 
 
 async def strike(provider: str, *, endpoint_id: str | None, kind: str,
@@ -112,7 +115,7 @@ async def strike(provider: str, *, endpoint_id: str | None, kind: str,
             if immediate or strikes >= 2:
                 until = min(resets_at or now + DEFAULT_LOCK, now + MAX_LOCK)
             lock = Lock(key, provider, secrets.token_hex(8), strikes, first_at, until, note[:200],
-                        opened=until is not None)
+                        opened_at=now if until is not None else None, opened=until is not None)
             await ratestore.kv_put(db, LOCK_NS, key, lock.to_json(), ttl_s=LOCK_TTL_S)
             await db.commit()
     except Exception:  # noqa: BLE001 - a lock is a hint for the next call, never this call's fate

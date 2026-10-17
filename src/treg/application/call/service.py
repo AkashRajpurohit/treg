@@ -701,6 +701,7 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
     if ep is not None:
         request.context.endpoint_id = ep["id"]
         request.context.tool_name = ep["id"]
+        request.context.provider = ep.get("provider")
     if hub_row is not None:
         request.context.tool_name = hub_row.tool_id
         # A hub tool: the runner runs every step through THIS use case again (child contexts,
@@ -880,7 +881,9 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
             request,
             call_ref,
         )
-    except CallFailure:
+    except CallFailure as exc:
+        # The router audits this refusal; the root request log names it the same way.
+        request.context.refused_by = _refusal_kind(exc.status_code)
         raise
 
     # The caller's own request bytes, read ONCE when it is safe to buffer them, so a failure can be
@@ -927,6 +930,8 @@ async def _execute_call(request: _ApplicationRequest, upstream_client: httpx.Asy
         child has one too, on the same call_ref); the dashboard sees ONE event per request, and
         not a refusal for a request that was answered (2,012 of one night's 4,455 "refusals" were)."""
         status = outcome.response.status
+        # The root request log, too, reports the answer the caller got, not the direct attempt.
+        request.context.credential_tier, request.context.refused_by = "platform-overflow", None
         return props | {"status_code": status, "outcome": _outcome(status, None, answered=True),
                         "refused_by": None, "tier": "platform-overflow",
                         "served_via": f"overflow:{outcome.aggregator}", "charged_micro": charged,

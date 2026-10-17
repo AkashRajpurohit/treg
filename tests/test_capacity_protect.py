@@ -208,6 +208,21 @@ async def test_events_name_each_transition_once_and_never_the_body(
     assert "secret-query" not in json.dumps(events)
 
 
+async def test_a_lock_is_aged_from_its_opening_not_its_first_strike(
+        clients: AsyncClient, platform_on, monkeypatch, capacity_events_log):
+    await capacity_marks.strike("tikhub", endpoint_id=EP, kind="balance", resets_at=None,
+                                now=utcnow_naive() - timedelta(minutes=8))
+    monkeypatch.setattr(call_service, "relay", _fake_relay(402, OUT))
+    assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 402
+    lock = await _lock("tikhub")
+    assert lock.is_active() and lock.opened_at - lock.first_signal_at >= timedelta(minutes=7)
+    monkeypatch.setattr(call_service, "relay", _fake_relay(200, b'{"ok":true}'))
+    capacity_marks._last_probe.clear()
+    assert (await clients.get(f"/call/{EP}?aweme_id=7")).status_code == 200
+    [cleared] = [e for e in capacity_events_log() if e["event"] == "lock_cleared"]
+    assert cleared["locked_s"] < 60, "eight minutes of pending strike are not lock time"
+
+
 async def test_a_vendor_500_or_caller_400_neither_strikes_nor_clears(clients: AsyncClient, platform_on, monkeypatch):
     monkeypatch.setattr(capacity_marks, "STRIKE_MIN_GAP", timedelta(0))
     monkeypatch.setattr(call_service, "relay", _fake_relay(402, OUT))

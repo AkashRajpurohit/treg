@@ -565,8 +565,9 @@ away from everyone.
 
 The breaker tells an operator through `capacity {json}` lines (`events.py`, logger
 `treg.capacity_events`), one per event: `strike` (pending), `lock_opened` (written once, by the
-strike that turned the row active), `lock_cleared` (a probe's 2xx, `via` `probe` or `sweep_probe`,
-with `locked_s`), `unrecorded` (with the tripwire's phrase), `edge_block` and `rate`. Each carries
+strike that turned the row active, stored as the lock's `opened_at`), `lock_cleared` (a probe's
+2xx, `via` `probe` or `sweep_probe`, with `locked_s` counted from `opened_at`, not the first
+pending strike), `unrecorded` (with the tripwire's phrase), `edge_block` and `rate`. Each carries
 `provider`, `slot`, `endpoint_id`, `kind` and the upstream `status`; never the vendor's body. A
 signature meeting a lock already in place emits nothing: the `request` line (`org-traffic.md`)
 carries every refused or relayed call with its `provider`, `credential_tier` and `refused_by`. An

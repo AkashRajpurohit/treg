@@ -54,8 +54,10 @@ use `replay_of` to find the original call. No lookup is added just to populate a
 `method` is a standard HTTP method or null; an MCP adapter preflight has no HTTP method.
 `provider`, `credential_tier` and `refused_by` are the root call's audit facts, copied the same way:
 the catalog row's provider, whose credential answered (`platform`, `credential`, `tool`, ...) and
-treg's own refusal kind (`capacity`, `balance`, `request`, ...). A catalog call refused during
-resolution has a provider and refusal but no tier; own tools and unresolved targets log nulls.
+treg's own refusal kind (`capacity`, `balance`, `request`, `policy`, ...). A catalog call refused
+during resolution or authorization has a provider and refusal but no tier; one that overflow
+answered logs `platform-overflow` and no refusal, the answer the caller got rather than the direct
+attempt. Own tools and unresolved targets log nulls.
 A routed or hub root names no provider: its children are separate calls with separate audit rows.
 They let a per-provider success rate on treg's own accounts be read from these lines alone.
 No paths, query strings, headers, IPs, user agents, user names, emails, credential values,

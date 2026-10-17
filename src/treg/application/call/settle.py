@@ -1453,7 +1453,7 @@ async def _note_capacity_signal(mk: MarketplaceCall, status_code: int, headers, 
             if lock is not None and lock.opened:
                 capacity_events.emit("lock_opened", **where, key=lock.key, lock_id=lock.lock_id,
                                      strikes=lock.strikes, first_signal_at=lock.first_signal_at,
-                                     until=lock.until)
+                                     opened_at=lock.opened_at, until=lock.until)
             elif lock is not None and not lock.is_active():
                 capacity_events.emit("strike", **where, key=lock.key, strikes=lock.strikes)
         elif signal.kind == "edge_block":  # not our account: no mark, but worth a look
@@ -1489,7 +1489,8 @@ async def _note_capacity_recovery(mk: MarketplaceCall) -> None:
                     capacity_events.emit(
                         "lock_cleared", provider=mk.provider, slot=keyslots.capacity_slot(mk.key_slot),
                         endpoint_id=mk.endpoint_id, key=lock.key, lock_id=lock.lock_id, via="probe",
-                        locked_s=int((_utcnow_naive() - lock.first_signal_at).total_seconds()))
+                        locked_s=int((_utcnow_naive() - (lock.opened_at or lock.first_signal_at))
+                                     .total_seconds()))
         if ((mk.probe_lock_id or "").startswith(capacity_marks.SWEEP_PROBE)
                 and await capacity_marks.clear_sweep_state(mk.provider, probe_id=mk.probe_lock_id)):
             cleared = True
